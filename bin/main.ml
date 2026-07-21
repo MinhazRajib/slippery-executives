@@ -1,15 +1,15 @@
 (** Sandbox entry point.
 
-    Run with: dune exec bin/main.exe -- Ada *)
+    Run with: dune exec bin/main.exe -- 150.25 *)
 
 open! Core
-open Sandbox_hello
+open Sandbox_types
 
 let () =
-  let name =
+  let price =
     if Array.length (Sys.get_argv ()) > 1
-    then (Sys.get_argv ()).(1)
-    else "world"
+    then Price.of_string (Sys.get_argv ()).(1)
+    else Price.of_int_cents 10000
   in
-  print_endline (Hello.greeting (Hello.of_name name))
+  print_endline (Price.to_string_dollar price)
 ;;
