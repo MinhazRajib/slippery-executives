@@ -5,7 +5,7 @@
     fixed-point price in cents, {!Size} is an order quantity, and
     {!Alpha_instruction} is one parsed row of an uploaded alpha-output file.
     Re-export each new module here so the whole library is reachable through
-    the top-level {!Sandbox_types} module. *)
+    the top-level {!Execlab_types} module. *)
 
 module Alpha_instruction = Alpha_instruction
 module Price = Price

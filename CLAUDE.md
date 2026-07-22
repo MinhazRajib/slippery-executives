@@ -1,6 +1,11 @@
-# CLAUDE.md — sandbox
+# CLAUDE.md — execlab
 
 ## About this project
+
+**Read `context.md` first** — it has the full project context: what
+we're building (a historical execution benchmarking platform), the
+complete plan, every design decision with rationale, current progress,
+and the roadmap. This file covers only build/style conventions.
 
 A blank OCaml project set up in the Jane Street style: `Core` as the
 standard library, `ppx_jane` for deriving, `dune` for builds, and expect
@@ -83,7 +88,7 @@ Match the existing style; don't introduce alternatives without a reason. When cr
 
 - Only open if made for opening (`Let_syntax`, `O`, `Composition_infix`)
 - `_intf.ml` for shared types
-- Make a top-level lib module (see `lib/types/src/sandbox_types.ml`)
+- Make a top-level lib module (see `lib/types/src/execlab_types.ml`)
 - Small lib = one module
 - Don't alias modules (if must: keep name same)
 
@@ -133,8 +138,8 @@ Libraries follow a uniform pattern:
 
 ```
 (library
- (name sandbox_<x>)
- (public_name sandbox.<x>)
+ (name execlab_<x>)
+ (public_name execlab.<x>)
  (libraries <deps>)
  (preprocess (pps ppx_jane)))
 ```
@@ -143,8 +148,8 @@ Tests:
 
 ```
 (library
- (name sandbox_<x>_test)
- (libraries sandbox_<x> expect_test_helpers_core core)
+ (name execlab_<x>_test)
+ (libraries execlab_<x> expect_test_helpers_core core)
  (inline_tests)
  (preprocess (pps ppx_jane)))
 ```
@@ -156,7 +161,7 @@ dune discovers libraries automatically as long as they have a `dune` file.
 ```
 lib/
   types/
-    src/     core domain types (Sandbox_types: Price, Side, Size, Symbol, ...)
+    src/     core domain types (Execlab_types: Price, Side, Size, Symbol, ...)
     test/    expect tests for it
 bin/
   main.ml    example executable

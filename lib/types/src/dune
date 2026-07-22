@@ -1,6 +1,6 @@
 (library
- (name sandbox_types)
- (public_name sandbox.types)
+ (name execlab_types)
+ (public_name execlab.types)
  (libraries core)
  (preprocess
   (pps ppx_jane)))

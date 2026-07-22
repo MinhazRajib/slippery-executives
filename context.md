@@ -255,8 +255,8 @@ the clock, activates instructions, and calls algorithms — the original
 plan omitted it; don't.
 
 Each lib follows the CLAUDE.md layout (`lib/<x>/src` + `lib/<x>/test`,
-library `sandbox_<x>` / `sandbox.<x>`) with a top-level re-export
-module like `lib/types/src/sandbox_types.ml`.
+library `execlab_<x>` / `execlab.<x>`) with a top-level re-export
+module like `lib/types/src/execlab_types.ml`.
 
 ## Current state (as of 2026-07-22, commit 8e9a4df)
 

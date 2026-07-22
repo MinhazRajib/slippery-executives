@@ -1,6 +1,6 @@
 (library
- (name sandbox_types_test)
- (libraries sandbox_types expect_test_helpers_core core)
+ (name execlab_types_test)
+ (libraries execlab_types expect_test_helpers_core core)
  (inline_tests)
  (preprocess
   (pps ppx_jane)))

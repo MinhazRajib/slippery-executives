@@ -1,9 +1,9 @@
-(** Sandbox entry point.
+(** Execlab entry point.
 
     Run with: dune exec bin/main.exe -- 150.25 *)
 
 open! Core
-open Sandbox_types
+open Execlab_types
 
 let () =
   let price =
