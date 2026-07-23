@@ -8,3 +8,5 @@ module Level = Level
 module Liquidity = Liquidity
 module Bbo = Bbo
 module Fill = Fill
+module Order_type = Order_type
+module Time_in_force = Time_in_force

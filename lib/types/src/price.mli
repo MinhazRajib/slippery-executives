@@ -21,8 +21,9 @@ include Comparable.S with type t := t
 val of_int_cents : int -> t
 
 (** [of_float_exn f] creates a price from a float dollar amount. Raises if
-    the float does not represent an exact number of cents. Prefer
-    [of_int_cents] when possible to avoid float issues. *)
+    the float does not represent an exact number of cents (allowing a tiny
+    tolerance for float representation noise, so e.g. [1.15] is accepted).
+    Prefer [of_int_cents] when possible to avoid float issues. *)
 val of_float_exn : float -> t
 
 (** {2 Accessors} *)
@@ -50,19 +51,13 @@ val ( * ) : t -> int -> t
     seller, a lower price is more aggressive (willing to accept less).
 
     [is_more_aggressive side ~price ~than] returns [true] when [price] would
-    execute before [than] in a price-priority order book.
-
-    Currently unimplemented — raises [Failure]. Filling this in is one of the
-    project's exercises. *)
+    execute before [than] in a price-priority order book. *)
 val is_more_aggressive : Side.t -> price:t -> than:t -> bool
 
 (** Would an order on the given side trade against a resting order at
     [resting_price]? A buy order is marketable if its price >= the resting
     ask price. A sell order is marketable if its price <= the resting bid
-    price.
-
-    Currently unimplemented — raises [Failure]. Filling this in is one of the
-    project's exercises. *)
+    price. *)
 val is_marketable : Side.t -> price:t -> resting_price:t -> bool
 
 (** {2 Display} *)
