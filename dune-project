@@ -9,8 +9,8 @@
 (license MIT)
 
 (package
- (name sandbox)
- (synopsis "A blank OCaml project in the Jane Street style")
+ (name execlab)
+ (synopsis "A historical execution benchmarking laboratory")
  (depends
   (ocaml
    (>= 5.2.0))

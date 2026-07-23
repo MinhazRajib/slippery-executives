@@ -17,6 +17,10 @@ val empty : t
     empty. *)
 val spread : t -> Price.t option
 
+(** Buy means the bid side of the book and Sell means the ask side *)
 val price : t -> Side.t -> Price.t option
+
+(** Buy means the bid side of the book and Sell means the ask side *)
 val size : t -> Side.t -> Size.t option
+
 val to_string : t -> string

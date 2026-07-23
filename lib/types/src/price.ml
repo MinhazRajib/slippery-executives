@@ -11,14 +11,23 @@ let cents_per_dollar = 100
 let of_int_cents n = n
 let to_int_cents t = t
 
+(* Exact-cent floats don't scale to exact integers (1.15 *. 100. =
+   114.99999999999999), so we accept anything within [tolerance] of a whole
+   number of cents. Representation noise is ~1e-8 cents at realistic prices;
+   genuine sub-cent inputs are off by >= 0.1 cents. *)
+let tolerance = 1e-6
+
 let of_float_exn f =
-  let cents = Float.round_nearest (f *. Float.of_int cents_per_dollar) in
-  let int_cents = Float.to_int cents in
-  if Float.( <> ) (Float.of_int int_cents) cents
+  let scaled = f *. Float.of_int cents_per_dollar in
+  let cents = Float.round_nearest scaled in
+  if Float.( > ) (Float.abs (scaled -. cents)) tolerance
   then
     raise_s
       [%message
         "Price.of_float_exn: not representable as exact cents" (f : float)];
+  let int_cents = Float.to_int cents in
+  if Float.( <> ) (Float.of_int int_cents) cents
+  then raise_s [%message "Price.of_float_exn: out of range" (f : float)];
   int_cents
 ;;
 

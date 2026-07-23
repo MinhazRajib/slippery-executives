@@ -1,5 +1,5 @@
 (executable
  (name main)
- (libraries sandbox_types core)
+ (libraries execlab_types core)
  (preprocess
   (pps ppx_jane)))
