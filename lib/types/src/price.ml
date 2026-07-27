@@ -25,10 +25,8 @@ let of_float_exn f =
     raise_s
       [%message
         "Price.of_float_exn: not representable as exact cents" (f : float)];
-  let int_cents = Float.to_int cents in
-  if Float.( <> ) (Float.of_int int_cents) cents
-  then raise_s [%message "Price.of_float_exn: out of range" (f : float)];
-  int_cents
+  (* [Float.to_int] raises on NaN and out-of-range inputs. *)
+  Float.to_int cents
 ;;
 
 let to_float t = Float.of_int t /. Float.of_int cents_per_dollar
@@ -60,4 +58,10 @@ let to_string = to_string_dollar
 let of_string s =
   let s = String.chop_prefix_if_exists s ~prefix:"$" in
   of_float_exn (Float.of_string s)
+;;
+
+(* [Float.to_int] raises on NaN and out-of-range inputs, so no extra guard is
+   needed here. *)
+let of_float_round_nearest f =
+  Float.to_int (Float.round_nearest (f *. Float.of_int cents_per_dollar))
 ;;

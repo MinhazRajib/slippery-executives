@@ -1,15 +1,29 @@
-(** Execlab entry point.
+(** Execlab entry point: parse an alpha-output CSV file and print the
+    validated trade instructions.
 
-    Run with: dune exec bin/main.exe -- 150.25 *)
+    Run with: dune exec bin/main.exe -- examples/demo_alpha.csv *)
 
 open! Core
 open Execlab_types
 
 let () =
-  let price =
-    if Array.length (Sys.get_argv ()) > 1
-    then Price.of_string (Sys.get_argv ()).(1)
-    else Price.of_int_cents 10000
-  in
-  print_endline (Price.to_string_dollar price)
+  match Sys.get_argv () with
+  | [| _; filename |] ->
+    let contents = In_channel.read_all filename in
+    (match Execlab_alpha.Parser.parse contents with
+     | Ok (parsed : Execlab_alpha.Parser.t) ->
+       printf
+         "Parsed %d instructions from %s:\n\n"
+         (List.length parsed.instructions)
+         filename;
+       List.iter parsed.instructions ~f:(fun instruction ->
+         print_s [%sexp (instruction : Alpha_instruction.t)])
+     | Error error ->
+       print_s
+         [%message
+           "Rejected alpha file" (filename : string) (error : Error.t)];
+       exit 1)
+  | _ ->
+    eprintf "usage: main.exe <alpha_output.csv>\n";
+    exit 2
 ;;

@@ -1,5 +1,5 @@
 (executable
  (name main)
- (libraries execlab_types core)
+ (libraries execlab_types execlab_alpha core)
  (preprocess
   (pps ppx_jane)))

@@ -71,6 +71,28 @@ let%expect_test "of_float_exn accepts exact cent values" =
     |}]
 ;;
 
+let%expect_test "of_float_round_nearest rounds to the nearest cent" =
+  (* Exact half-cents round toward positive infinity ([Float.round_nearest]
+     is [floor (x +. 0.5)]), hence the +1/0 asymmetry below. *)
+  List.iter [ 395.538; 394.9927; 150.25; 0.005; -0.005 ] ~f:(fun f ->
+    printf
+      "%.4f -> %d cents\n"
+      f
+      (Price.to_int_cents (Price.of_float_round_nearest f)));
+  [%expect
+    {|
+    395.5380 -> 39554 cents
+    394.9927 -> 39499 cents
+    150.2500 -> 15025 cents
+    0.0050 -> 1 cents
+    -0.0050 -> 0 cents
+    |}];
+  Expect_test_helpers_core.require_does_raise (fun () ->
+    Price.of_float_round_nearest Float.nan);
+  [%expect
+    {| (Invalid_argument "Int.of_float: argument (nan) is out of range or NaN") |}]
+;;
+
 let%expect_test "of_float_exn rejects sub-cent values" =
   List.iter [ 150.001; 150.009; 99.999 ] ~f:(fun f ->
     Expect_test_helpers_core.require_does_raise (fun () ->

@@ -26,6 +26,18 @@ val of_int_cents : int -> t
     Prefer [of_int_cents] when possible to avoid float issues. *)
 val of_float_exn : float -> t
 
+(** [of_float_round_nearest f] creates a price from a float dollar amount,
+    rounding to the nearest cent. Sub-cent precision is deliberately
+    discarded: [of_float_round_nearest 395.538] is $395.54.
+
+    Use this only at data-ingestion boundaries (e.g. loading vendor OHLCV
+    bars, whose prices legitimately carry sub-cent digits — see
+    [data/README.md]). For values that should already be exact cents, use
+    {!of_float_exn} so mistakes raise instead of rounding silently.
+
+    Raises on non-finite input. *)
+val of_float_round_nearest : float -> t
+
 (** {2 Accessors} *)
 
 (** Returns the price as an integer number of cents. *)
