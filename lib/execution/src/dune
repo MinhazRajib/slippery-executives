@@ -1,0 +1,6 @@
+(library
+ (name execlab_execution)
+ (public_name execlab.execution)
+ (libraries execlab_types execlab_market core)
+ (preprocess
+  (pps ppx_jane)))
