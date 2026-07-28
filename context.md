@@ -232,9 +232,57 @@ comparison.
    constructor); context checks (symbol supported, market hours,
    capital) live in the parser/validator layer which has the config.
 6. **Open questions.** Whether to add a `Money.t` (int cents) distinct
-   from `Price.t` for cash/notional; whether `deadline = arrival_time`
-   is legal (i.e. means immediate-or-cancel); `Liquidity` naming
-   settled as `Taker | Maker`.
+   from `Price.t` for cash/notional (decide when the portfolio engine
+   lands); whether `Time_in_force` stays a separate `Child_order` field
+   or nests inside `Order_type.Limit`'s payload; extracting the
+   market-hours constants (duplicated in `alpha_instruction.ml` and
+   `trading_day.ml`) into a shared `Market_hours` module. Settled:
+   `Liquidity` is `Taker | Maker`; `deadline = arrival_time` is legal;
+   statistics about prices are `float` while tradeable prices are
+   `Price.t`; `Size.t` is the unit "shares" (used for bar volume too).
+
+## UI design (hand-sketched 2026-07-28)
+
+Seven screens; wizard flow is
+`Day -> Alpha -> Algo -> Confirm -> Simulate -> Results`.
+
+1. **Main dashboard** — ExecLabs branding, a big "Run Simulation"
+   button, Recent Runs (e.g. "NVDA 3/15 TWAP 81.5% captured") and Best
+   Runs lists. Login/auth is a later concern.
+2. **Choose market day** — calendar showing only (symbol, date) pairs
+   we have data for, with a preview chart of the data leading up to
+   that day. Day is chosen *first* so every later step can validate
+   against it.
+3. **Upload alpha CSV** — drag-and-drop; immediately shows the parsed
+   instruction table, or line-numbered errors.
+4. **Select algorithm** — TWAP / VWAP / POV / IS with per-algorithm
+   parameter forms and plain-language explanations.
+5. **Review & start** — summary of day / alpha / algorithm, start
+   button.
+6. **Simulator (live)** — sim clock with playback controls (pause,
+   1x/2x/10x), percent-of-day progress, price chart, parent-order
+   panel (filled/total), child-order blotter, event log.
+7. **Results/analytics** — the metric tree, plus a *same-strategy
+   leaderboard* comparing algorithms on this exact day+alpha (e.g.
+   VWAP 80.7% / TWAP 60.6% / POV 30% alpha captured), with "retest
+   with a different algo" and "new sim" actions.
+
+Design consequences (bind these before building the driver):
+
+- The engine must support both *instant* batch runs (baselines,
+  retests) and *paced playback* with a speed multiplier: the engine
+  exposes step-on-demand; a playback controller owns cadence. Never
+  bake wall-clock pacing into the simulation core.
+- "Retest" reruns a stored config with a different algorithm, so runs
+  (config + results) need lightweight persistence (sexp files are
+  fine) — this also feeds Recent/Best runs and the leaderboard.
+- The MVP leaderboard is *local, same-strategy, cross-algorithm*; the
+  fixed-alpha multiplayer variant arrives with the server later.
+- `Data_loader` needs a discovery function (list available
+  symbols/dates) to drive the calendar screen.
+- The client is a GUI; likely stack is a Bonsai web app (Bonsai and
+  frontend-design skills live in `.claude/skills`). The MVP stays
+  CLI-driven until the core works end to end.
 
 ## Planned module map (adapted from the original plan)
 
@@ -258,47 +306,75 @@ Each lib follows the CLAUDE.md layout (`lib/<x>/src` + `lib/<x>/test`,
 library `execlab_<x>` / `execlab.<x>`) with a top-level re-export
 module like `lib/types/src/execlab_types.ml`.
 
-## Current state (as of 2026-07-22, commit 8e9a4df)
+## Current state (as of 2026-07-28, commit 65618cb)
 
-Done:
-- `lib/types` builds and is pushed: `Price` (fixed-point cents,
-  side-aware `is_more_aggressive`/`is_marketable`), `Side`, `Size`,
-  `Symbol`, `Order_id` + `Generator`, `Level`, `Bbo`, `Liquidity`
-  (`Taker | Maker`), `Fill` (redesigned, event-log `to_string`),
-  `Alpha_instruction` (bare record only).
-- `bin/main.exe` is a trivial Price demo. CI workflow exists.
-- Remote `origin` uses SSH (HTTPS had no credentials).
+Done — all merged to `main`, build/tests/formatting green:
+- `lib/types` complete and fully expect-tested: `Price` (fixed-point
+  cents; `of_float_exn` validates exact cents, `of_float_round_nearest`
+  deliberately quantizes vendor data), `Side`, `Size` (the unit
+  "shares"; has `to_float`), `Symbol` (uppercase-enforcing), `Order_id`
+  + sequential `Generator`, `Level`, `Bbo` (side = side of the *book*),
+  `Liquidity` (`Taker | Maker`), `Fill` (with `time` and `liquidity`),
+  `Order_type` (`Market | Limit of Price.t`), `Time_in_force`
+  (`Day | IOC`), `Alpha_instruction` (private record, `Ofday` times,
+  `Size.t` quantity, `create` validating quantity/ordering/market
+  hours).
+- `lib/alpha`: `Parser.parse : string -> t Or_error.t` works and is
+  tested. Hardening backlog is open: no header-row support,
+  first-error-only reporting (should collect all via
+  `Or_error.combine_errors`), no per-field whitespace stripping —
+  `Data_loader.parse` is the worked example of all three patterns.
+- `lib/market` complete and tested: `Market_bar` (private, OHLC
+  invariants), `Trading_day` (exactly 390 strictly-ascending bars,
+  09:30–15:59), `Data_loader` (header check, line-numbered errors
+  collected all-at-once, sequence rules delegated to `Trading_day`),
+  `Day_stats` (VWAP via typical price, volume profile, realized
+  volatility scaled to daily by sqrt(390)).
+- `data/`: six symbols (AAPL, GOOG, META, MSFT, NFLX, TSLA) x ~11 days
+  of real 1-minute bars (all-symbol common window 2026-07-09..07-20;
+  AAPL/MSFT windows shifted), canonical per-day files + raw originals;
+  format spec in `data/README.md`.
+- `bin/main.exe` parses an alpha CSV and prints validated instructions
+  (demo); sample files in `examples/`.
+- Team split so far: one of us owns the market/execution track, the
+  other owns the parser and the upcoming analytics track.
 
-Known weak spots / immediate debt:
-- `Alpha_instruction`: no doc comments, no derives, `quantity : int`
-  (should be `Size.t`), still `Time_ns.t` not `Ofday.t`, field still
-  named `timestamp` not `arrival_time`, and no `create` validation —
-  decision 5 is designed but unimplemented.
-- `Price.of_float_exn` silently rounds instead of raising on inexact
-  cents (rounds *before* the exactness check) — known bug, kept as a
-  test-writing exercise.
-- Tests: only one (`test_price.ml`, one case). Everything needs expect
-  tests.
-- `Symbol` doc claims uppercase but `of_string` doesn't normalize.
+Known debt:
+- Parser hardening (above).
+- Market-hours constants duplicated in `alpha_instruction.ml` and
+  `trading_day.ml` (see open questions).
+- No automated test loads the real `data/` files (dune test sandbox);
+  verified manually via the loader.
 
 ## Roadmap (near-term, in order)
 
-1. Finish `Alpha_instruction` per decisions 2 & 5; fix the
-   `of_float_exn` bug with a test that documents it.
-2. Expect tests across `lib/types` (price arithmetic/display, side
-   round-trips, fill sexp + to_string, bbo spread).
-3. `Market_bar` in a new `lib/market`: OHLCV record, smart constructor
-   validating `low <= open,close <= high`, non-negative volume.
-4. Data loader: load bundled CSV bars by symbol/date; validate ordered
-   timestamps, no duplicates, market hours; derive historical VWAP,
-   volume profile, realized volatility. Acquire and commit one real
-   symbol/day of 1-minute data early.
-5. Alpha CSV parser (`lib/alpha`): lines → `Alpha_instruction.t list
-   Or_error.t` via `create`; string-splitting is fine, no CSV library.
-6. `Child_order` / `Parent_order` / order manager (`lib/execution`),
-   using the request-vs-live pattern; `Time_in_force`, `Cancel_reason`.
-7. Simulation driver + Engine A fill model behind the two-function
-   interface; algorithms see only the previous bar.
-8. TWAP + immediate-execution baseline; portfolio/P&L; first slippage
-   report. ← end-to-end MVP milestone
-9. VWAP, POV, IS; TCA suite; then server/multiplayer; then Engine B.
+1. **Joint design session for `lib/execution`** (do this before any
+   code): `Child_order` (request-vs-live split; settle the TIF
+   question), `Parent_order` state machine, order manager rules
+   (activation at arrival, overfill prevention, deadline expiry),
+   `Algorithm_intf` (`on_bar` sees only the *previous* bar; returns
+   submit/cancel actions; first-class modules, not functors), and the
+   `Market_hours` + `Money.t` open questions.
+2. Friend track: parser hardening (transcribe `Data_loader`'s
+   patterns), then `lib/analytics` — `Portfolio.apply_fill`, average
+   cost, realized/unrealized P&L, mark-to-market; encode the
+   accounting identity (gross = net + shortfall components) as expect
+   tests.
+3. Market/execution track: implement `lib/execution`, then Engine A —
+   the bar-rules fill model behind the two-function interface, with a
+   `Config.t` of named knobs (synthetic half-spread, participation
+   cap, impact), tagging every fill `Taker`/`Maker`.
+4. Simulation driver (build together): steps bars, advances the clock,
+   activates instructions, calls the algorithm, routes actions to the
+   fill engine, feeds fills to the portfolio. Step-on-demand core with
+   separate batch and paced-playback drivers (see UI consequences).
+5. TWAP + immediate-execution baseline -> first end-to-end slippage
+   report on real data. <- MVP milestone
+6. Run persistence (config + results as sexp files), the
+   same-strategy local leaderboard, and the TCA suite (the metric
+   tree: shortfall = spread + impact + timing + opportunity + fees).
+7. VWAP, POV, implementation shortfall algorithms.
+8. Client UI (the seven screens; likely Bonsai) and server/multiplayer
+   (Async RPC at the one client<->server seam); then Engine B, the
+   synthetic exchange reusing jsip's book/matching engine with the
+   historical path as the fundamental.
