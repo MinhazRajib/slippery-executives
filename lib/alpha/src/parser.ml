@@ -4,7 +4,7 @@ open! Execlab_types
 type t = { instructions : Alpha_instruction.t list }
 [@@deriving sexp, bin_io, compare, equal]
 
-(* take a line and parse it into alpha instruction*)
+(* take a line and parse it into alpha instruction *)
 let parse_line_exn ~line_number line =
   match String.split line ~on:',' with
   | [ arrival_time; symbol; side; quantity; deadline ] ->

@@ -1,9 +1,8 @@
 open! Core
 open! Execlab_types
 
-type t = { instructions :  Alpha_instruction.t list}
+type t = { instructions : Alpha_instruction.t list }
 [@@deriving sexp, bin_io, compare, equal]
-
 
 (*expected format:
     arrival_time,symbol,side,quantity,deadline

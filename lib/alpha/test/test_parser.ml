@@ -2,12 +2,15 @@ open! Core
 open! Execlab_types
 open Execlab_alpha
 
-let parse_and_print csv = print_s [%sexp (Parser.parse csv : Parser.t Or_error.t)]
+let parse_and_print csv =
+  print_s [%sexp (Parser.parse csv : Parser.t Or_error.t)]
+;;
 
 let%expect_test "parse valid csv" =
   parse_and_print
     "09:30:00,AAPL,BUY,100,10:15:00\n09:30:01,GOOG,SELL,200,10:15:01";
-  [%expect {|
+  [%expect
+    {|
     (Ok
      ((instructions
        (((arrival_time 09:30:00.000000000) (symbol AAPL) (side Buy)
@@ -19,7 +22,8 @@ let%expect_test "parse valid csv" =
 
 let%expect_test "side is case-insensitive" =
   parse_and_print "09:30:00,AAPL,buy,100,10:15:00";
-  [%expect {|
+  [%expect
+    {|
     (Ok
      ((instructions
        (((arrival_time 09:30:00.000000000) (symbol AAPL) (side Buy)
@@ -29,7 +33,8 @@ let%expect_test "side is case-insensitive" =
 
 let%expect_test "trailing newline is fine" =
   parse_and_print "09:30:00,AAPL,BUY,100,10:15:00\n";
-  [%expect {|
+  [%expect
+    {|
     (Ok
      ((instructions
        (((arrival_time 09:30:00.000000000) (symbol AAPL) (side Buy)
@@ -64,7 +69,8 @@ let%expect_test "bad time is an error" =
 
 let%expect_test "deadline before arrival is an error" =
   parse_and_print "10:15:00,AAPL,BUY,100,09:30:00";
-  [%expect {|
+  [%expect
+    {|
     (Error
      ("Arrival time must be before or equal to deadline"
       (arrival_time 10:15:00.000000000) (deadline 09:30:00.000000000)))
@@ -78,7 +84,8 @@ let%expect_test "zero quantity is an error" =
 
 let%expect_test "outside market hours is an error" =
   parse_and_print "03:00:00,AAPL,BUY,100,10:15:00";
-  [%expect {|
+  [%expect
+    {|
     (Error
      ("Arrival time must be after or equal to 09:30:00"
       (arrival_time 03:00:00.000000000)))
