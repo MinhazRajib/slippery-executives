@@ -18,3 +18,4 @@ val of_int : int -> t
 val ( - ) : t -> t -> t
 val ( + ) : t -> t -> t
 val ( * ) : t -> int -> t
+val to_float : t -> float
