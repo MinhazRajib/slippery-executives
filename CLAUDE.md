@@ -66,6 +66,11 @@ Match the existing style; don't introduce alternatives without a reason. When cr
 
 ### Testing
 
+- Test-first: for logic with computable answers (fill rules, schedules,
+  stats, accounting identities), write the test with *hand-computed*
+  expected output BEFORE implementing. Watch it fail, then make the
+  diff vanish. Never write empty `[%expect {||}]` blocks and blindly
+  promote whatever comes out — the prediction is the spec.
 - Make readable; use expect tests; tests in a separate dir
 - Test-only stuff in `For_testing`
 - Test files are named `test_<module>.ml` and live in `lib/<x>/test/`.

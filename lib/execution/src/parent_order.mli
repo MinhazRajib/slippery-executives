@@ -48,6 +48,14 @@ val add_child_exn : t -> Child_order.t -> t
     id. *)
 val apply_fill_exn : t -> Fill.t -> t
 
+(** Cancels one child. Raises unless [Active], if no child has this id, or if
+    that child is not live. *)
+val cancel_child_exn
+  :  t
+  -> order_id:Order_id.t
+  -> reason:Cancel_reason.t
+  -> t
+
 (** Deadline passed: cancels every live child with [Deadline_expired] — an
     expired parent leaves no live orders in the market. Raises unless
     [Active]. *)

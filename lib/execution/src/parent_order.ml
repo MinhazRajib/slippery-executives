@@ -105,6 +105,25 @@ let apply_fill_exn t (fill : Fill.t) =
   { t with children; filled; status }
 ;;
 
+let cancel_child_exn t ~order_id ~reason =
+  require_status t ~expected:Active ~here:"cancel_child_exn";
+  if not
+       (List.exists t.children ~f:(fun child ->
+          Order_id.equal child.Child_order.id order_id))
+  then
+    raise_s
+      [%message
+        "Parent_order.cancel_child_exn: unknown order id"
+          (order_id : Order_id.t)];
+  let children =
+    List.map t.children ~f:(fun child ->
+      if Order_id.equal child.Child_order.id order_id
+      then Child_order.cancel_exn child ~reason
+      else child)
+  in
+  { t with children }
+;;
+
 let expire_exn t =
   require_status t ~expected:Active ~here:"expire_exn";
   let children =
