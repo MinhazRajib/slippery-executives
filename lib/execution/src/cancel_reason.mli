@@ -7,4 +7,5 @@ type t =
   | Passive_timeout
   | Deadline_expired
   | End_of_day
+  | Ioc_remainder
 [@@deriving sexp, bin_io, compare, equal, enumerate, hash, string]
