@@ -1,6 +1,11 @@
 (library
  (name execlab_analytics_test)
- (libraries execlab_analytics execlab_types expect_test_helpers_core core)
+ (libraries
+  execlab_analytics
+  execlab_market
+  execlab_types
+  expect_test_helpers_core
+  core)
  (inline_tests)
  (preprocess
   (pps ppx_jane)))
