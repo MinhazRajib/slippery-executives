@@ -447,55 +447,21 @@ let candle_chart (replay : Replay.t) ~slots ~stop ~fills =
         [ Vdom.Node.text (sprintf "%.2f" last_close) ]
     ]
   in
-  (* Buys are upward triangles, sells downward, sized by quantity. *)
   let fill_markers =
     List.filter_map fills ~f:(fun (fill : Fill.t) ->
       let m = Replay.minute_of_time replay fill.time in
       if m < offset || m > stop
       then None
-      else (
-        let qty = Size.to_int fill.size in
-        let s =
-          Float.clamp_exn
-            (Float.sqrt (Float.of_int qty) /. 8.)
-            ~min:2.5
-            ~max:7.
-        in
-        let cx = x m in
-        let cy = y (Price.to_float fill.price) in
-        let up, color =
-          match fill.side with
-          | Side.Buy -> true, Styles.green
-          | Sell -> false, Styles.red
-        in
-        let points =
-          if up
-          then
-            sprintf
-              "%s,%s %s,%s %s,%s"
-              (fs cx)
-              (fs (cy -. s))
-              (fs (cx -. s))
-              (fs (cy +. s))
-              (fs (cx +. s))
-              (fs (cy +. s))
-          else
-            sprintf
-              "%s,%s %s,%s %s,%s"
-              (fs cx)
-              (fs (cy +. s))
-              (fs (cx -. s))
-              (fs (cy -. s))
-              (fs (cx +. s))
-              (fs (cy -. s))
-        in
+      else
         Some
           (svg
-             "polygon"
-             [ attr "points" points
-             ; attr "fill" color
-             ; attr "stroke" "#ffffff"
-             ; attr "stroke-width" "0.6"
+             "circle"
+             [ attr "cx" (fs (x m))
+             ; attr "cy" (fs (y (Price.to_float fill.price)))
+             ; attr "r" "1.8"
+             ; attr "fill" "#ffffff"
+             ; attr "stroke" Styles.accent
+             ; attr "stroke-width" "0.8"
              ]
              [ tooltip
                  (sprintf
@@ -504,12 +470,12 @@ let candle_chart (replay : Replay.t) ~slots ~stop ~fills =
                     (match fill.side with
                      | Side.Buy -> "BUY"
                      | Sell -> "SELL")
-                    qty
+                    (Size.to_int fill.size)
                     (Price.to_string_dollar fill.price)
                     (match fill.liquidity with
                      | Taker -> "taker"
                      | Maker -> "maker"))
-             ])))
+             ]))
   in
   svg
     "svg"
@@ -520,113 +486,14 @@ let candle_chart (replay : Replay.t) ~slots ~stop ~fills =
     (grid @ time_axis @ candles @ (vwap_line :: now_line) @ fill_markers)
 ;;
 
-(* ---------- execution schedule chart: target vs actual ---------- *)
-
-let schedule_chart (replay : Replay.t) ~stop =
-  let n = Array.length replay.bars in
-  let w = 920. in
-  let h = 168. in
-  let max_y = Float.max 1. (replay.target_by_minute.(n - 1) *. 1.05) in
-  let x i = Float.of_int i /. Float.of_int (n - 1) *. w in
-  let y v = 6. +. ((max_y -. v) /. max_y *. (h -. 24.)) in
-  let svg name attrs children = Vdom.Node.create_svg name ~attrs children in
-  let attr = Vdom.Attr.create in
-  let tooltip text = svg "title" [] [ Vdom.Node.text text ] in
-  let polyline ~stroke ~dash ~width ~upto ~value ~title =
-    let pts =
-      List.init (upto + 1) ~f:(fun i ->
-        sprintf "%s,%s" (fs (x i)) (fs (y (value i))))
-      |> String.concat ~sep:" "
-    in
-    svg
-      "polyline"
-      ([ attr "points" pts
-       ; attr "fill" "none"
-       ; attr "stroke" stroke
-       ; attr "stroke-width" width
-       ]
-       @
-       if String.is_empty dash then [] else [ attr "stroke-dasharray" dash ]
-      )
-      [ tooltip title ]
-  in
-  let target =
-    polyline
-      ~stroke:Styles.accent_bright
-      ~dash:"4 3"
-      ~width:"1"
-      ~upto:(n - 1)
-      ~value:(fun i -> replay.target_by_minute.(i))
-      ~title:"target cumulative quantity"
-  in
-  let actual =
-    polyline
-      ~stroke:Styles.green
-      ~dash:""
-      ~width:"1.6"
-      ~upto:stop
-      ~value:(fun i -> Float.of_int replay.actual_by_minute.(i))
-      ~title:"filled cumulative quantity"
-  in
-  let vertical i ~stroke ~opacity ~title =
-    svg
-      "line"
-      [ attr "x1" (fs (x i))
-      ; attr "x2" (fs (x i))
-      ; attr "y1" "0"
-      ; attr "y2" (fs h)
-      ; attr "stroke" stroke
-      ; attr "stroke-width" "1"
-      ; attr "stroke-opacity" opacity
-      ]
-      [ tooltip title ]
-  in
-  let windows =
-    List.concat_map replay.parents ~f:(fun parent ->
-      [ vertical
-          parent.arrival_minute
-          ~stroke:Styles.accent
-          ~opacity:"0.45"
-          ~title:"order activates"
-      ; vertical
-          parent.deadline_minute
-          ~stroke:Styles.red
-          ~opacity:"0.4"
-          ~title:"deadline"
-      ])
-  in
-  let playhead =
-    vertical stop ~stroke:Styles.text ~opacity:"0.25" ~title:"now"
-  in
-  let label frac =
-    let v = max_y *. (1. -. frac) in
-    svg
-      "text"
-      [ attr "x" (fs (w -. 4.))
-      ; attr "y" (fs (y v -. 3.))
-      ; attr "text-anchor" "end"
-      ; attr "fill" Styles.faint
-      ; attr "font-size" "9"
-      ]
-      [ Vdom.Node.text (Int.to_string_hum ~delimiter:',' (Float.to_int v)) ]
-  in
-  svg
-    "svg"
-    [ attr "viewBox" (sprintf "0 0 %s %s" (fs w) (fs h))
-    ; attr "preserveAspectRatio" "none"
-    ; Styles.s "width:100%;height:168px;display:block;"
-    ]
-    (windows @ [ target; actual; playhead; label 0.; label 0.5 ])
-;;
-
 (* ---------- tables and log ---------- *)
 
 let parents_table (rows : Replay.parent_row list) =
   let row_view (row : Replay.parent_row) =
     let side, side_color =
       match row.side with
-      | Side.Buy -> "BUY", Styles.green
-      | Sell -> "SELL", Styles.red
+      | Side.Buy -> "BUY", Styles.text
+      | Sell -> "SELL", Styles.text
     in
     let status_color =
       match row.status with
@@ -677,62 +544,6 @@ let parents_table (rows : Replay.parent_row list) =
   |}
 ;;
 
-let fills_table (fills : Fill.t list) =
-  let recent = List.rev fills in
-  let row_view (fill : Fill.t) =
-    let side, side_color =
-      match fill.side with
-      | Side.Buy -> "B", Styles.green
-      | Sell -> "S", Styles.red
-    in
-    let liq_color =
-      match fill.liquidity with
-      | Liquidity.Taker -> Styles.orange
-      | Maker -> Styles.green
-    in
-    let time = String.prefix (Time_ns.Ofday.to_string fill.time) 5 in
-    let tr =
-      Styles.s
-        "display:flex;align-items:center;gap:12px;padding:4px \
-         10px;border-bottom:1px solid rgba(255,255,255,0.04);"
-    in
-    let time_style = Styles.s (Styles.dim_cell ^ "width:44px;") in
-    let side_style =
-      Styles.s
-        (sprintf
-           "color:%s;font-weight:700;width:14px;%s"
-           side_color
-           Styles.mono)
-    in
-    let qty = Styles.s (Styles.cell ^ "width:46px;text-align:right;") in
-    let price = Styles.s (Styles.cell ^ "width:70px;text-align:right;") in
-    {%html|
-      <div %{tr}>
-        <span %{time_style}>#{time}</span>
-        <span %{side_style}>#{side}</span>
-        <span %{qty}>%{Size.to_int fill.size#Int}</span>
-        <span %{price}>#{Price.to_string_dollar fill.price}</span>
-        <span %{Styles.dot liq_color}></span>
-      </div>
-    |}
-  in
-  let empty =
-    let style = Styles.s (Styles.dim_cell ^ "padding:8px 10px;") in
-    {%html|<div %{style}>Waiting for fills...</div>|}
-  in
-  let scroll =
-    Styles.s "max-height:280px;overflow-y:auto;scrollbar-width:thin;"
-  in
-  {%html|
-    <div %{Styles.panel ""}>
-      <div %{Styles.panel_title}>Recent fills</div>
-      %{header_row [ 44, "time"; 14, "s"; 46, "qty"; 70, "price"; 20, "liq" ]}
-      %{if List.is_empty recent then empty else Vdom.Node.none}
-      <div %{scroll}>*{List.map recent ~f:row_view}</div>
-    </div>
-  |}
-;;
-
 let event_log (events : Replay.event list) =
   let recent = List.rev events in
   let line_view (event : Replay.event) =
@@ -751,7 +562,7 @@ let event_log (events : Replay.event list) =
   let body =
     Styles.s
       "padding:4px 0 8px \
-       0;max-height:150px;overflow-y:auto;scrollbar-width:thin;"
+       0;max-height:220px;overflow-y:auto;scrollbar-width:thin;"
   in
   {%html|
     <div %{Styles.panel ""}>
@@ -919,15 +730,8 @@ let sim_view
             </div>
             %{candle_chart replay ~slots ~stop:minute ~fills}
           </div>
-          <div %{Styles.panel ""}>
-            <div %{Styles.panel_title}>
-              Execution schedule · target (dashed) vs filled
-            </div>
-            %{schedule_chart replay ~stop:minute}
-          </div>
         </div>
         <div %{col}>
-          %{fills_table fills}
           %{parents_table rows}
           %{results_panel replay ~complete
               ~clock_close:(Replay.clock_string replay ~minute:last)}
@@ -1002,8 +806,8 @@ let setup_view ~algo ~set_algo ~start =
   let instruction_row (instruction : Alpha_instruction.t) =
     let side, side_color =
       match instruction.side with
-      | Side.Buy -> "BUY", Styles.green
-      | Sell -> "SELL", Styles.red
+      | Side.Buy -> "BUY", Styles.text
+      | Sell -> "SELL", Styles.text
     in
     let arrival =
       String.prefix (Time_ns.Ofday.to_string instruction.arrival_time) 5
