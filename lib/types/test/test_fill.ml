@@ -15,8 +15,7 @@ let fill =
 
 let%expect_test "to_string reads like an event-log line" =
   print_endline (Fill.to_string fill);
-  [%expect
-    {| 10:15:08.000000000 BUY 700 NVDA @ $150.26 (Taker, fill 3, order 42) |}]
+  [%expect {| 10:15:08 BUY 700 NVDA @ $150.26 (Taker, fill 3, order 42) |}]
 ;;
 
 let%expect_test "sexp and notional" =
