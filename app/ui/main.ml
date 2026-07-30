@@ -982,6 +982,18 @@ let setup_view ~theme ~is_dark ~algo ~set_algo ~start ~toggle_theme =
 
 (* ---------- the app ---------- *)
 
+(* The overscroll area above/below the app shows the document's own
+   background, so theme flips must recolor <html>/<body> too. *)
+let set_page_background =
+  let set color =
+    let open Js_of_ocaml in
+    let background = Js.string color in
+    Dom_html.document##.documentElement##.style##.background := background;
+    Dom_html.document##.body##.style##.background := background
+  in
+  Effect.of_sync_fun set
+;;
+
 let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let screen, set_screen = Bonsai.state Screen.Setup graph in
   let algo, set_algo = Bonsai.state "twap" graph in
@@ -1041,7 +1053,11 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and start
   and restart in
   let theme = if is_dark then Styles.dark else Styles.paper in
-  let toggle_theme = set_is_dark (not is_dark) in
+  let toggle_theme =
+    let next = if is_dark then Styles.paper else Styles.dark in
+    let%bind.Effect () = set_is_dark (not is_dark) in
+    set_page_background next.Styles.page_bg
+  in
   let body =
     match screen, replay with
     | Screen.Sim, Some r ->
