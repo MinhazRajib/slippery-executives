@@ -1,11 +1,10 @@
 (** The common interface every execution algorithm implements — the socket
     that makes TWAP, VWAP, POV, and implementation shortfall swappable and
-    therefore comparable under identical conditions.
-
-    On every simulation tick the driver hands the algorithm a {!Context}
-    describing what it may know, and the algorithm answers with {!Action}s.
-    Algorithms are stateful: [on_bar] threads a [state] value (e.g. TWAP's
-    slice schedule) through the run. *)
+    therefore comparable under identical conditions. On every simulation tick
+    the driver hands the algorithm a {!Context} describing what it may know,
+    and the algorithm answers with {!Action}s. Algorithms are stateful:
+    [on_bar] threads a [state] value (e.g. TWAP's slice schedule) through the
+    run. *)
 
 open! Core
 open! Execlab_types

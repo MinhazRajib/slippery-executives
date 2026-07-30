@@ -3,33 +3,9 @@ open! Execlab_types
 open! Execlab_market
 open Execlab_execution
 
-(* The simplest possible algorithm: submit the parent's full remaining
-   quantity as a market order on the first bar, then do nothing. This is a
-   preview of the immediate-execution baseline, and it proves the interface
-   is usable: state threads through [on_bar], config-free. *)
-module Immediate = struct
-  type state = { submitted : bool }
-
-  let name = "immediate"
-  let init ~parent:(_ : Parent_order.t) = { submitted = false }
-
-  let on_bar state (context : Algorithm_intf.Context.t) =
-    if state.submitted
-    then state, []
-    else (
-      let parent = context.parent in
-      let request =
-        Or_error.ok_exn
-          (Child_order.Request.create
-             ~symbol:parent.instruction.Alpha_instruction.symbol
-             ~side:parent.instruction.Alpha_instruction.side
-             ~quantity:(Parent_order.remaining parent)
-             ~order_type:Order_type.Market
-             ~time_in_force:Time_in_force.IOC)
-      in
-      { submitted = true }, [ Algorithm_intf.Action.Submit request ])
-  ;;
-end
+(* Exercises the interface through the real [Immediate] baseline: state
+   threads through [on_bar], and packing/unpacking the first-class module
+   works. *)
 
 let parent =
   let instruction =

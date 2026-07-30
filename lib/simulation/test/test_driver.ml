@@ -46,8 +46,8 @@ let instruction ~arrival ~deadline ~quantity =
        ~deadline:(Time_ns.Ofday.of_string deadline))
 ;;
 
-let run instructions =
-  Driver.run ~day ~instructions ~algorithm:(module Twap) ()
+let run ?(algorithm = (module Twap : Algorithm_intf.S)) instructions =
+  Driver.run ~day ~instructions ~algorithm ()
 ;;
 
 let summarize (result : Driver.t) =
@@ -127,5 +127,20 @@ let%expect_test "two parents run side by side without interfering" =
     parent: Completed filled=1000
     parent: Completed filled=500
     fills=115 shares=1500 distinct_prices=(15002)
+    |}]
+;;
+
+let%expect_test "the immediate baseline pays for its impatience" =
+  (* Same instruction TWAP completes at 150.02: Immediate slams the full
+     1,000 in at once and pays 2c of impact -> one fill at 150.04. *)
+  summarize
+    (run
+       ~algorithm:(module Immediate)
+       [ instruction ~arrival:"10:05:00" ~deadline:"11:00:00" ~quantity:1000
+       ]);
+  [%expect
+    {|
+    parent: Completed filled=1000
+    fills=1 shares=1000 distinct_prices=(15004)
     |}]
 ;;
