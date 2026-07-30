@@ -484,11 +484,21 @@ let legend (replay : Replay.t) ~minute ~fills ~show_fills ~toggle_fills =
     let stats_style =
       Styles.s "margin-left:auto;display:flex;gap:16px;align-items:center;"
     in
+    (* The benefit vs immediate is a whole-day number; revealing it
+       mid-replay would spoil the ending. *)
+    let benefit =
+      if minute >= Replay.last_minute replay
+      then
+        [ money_stat
+            ~label:"Execution benefit"
+            replay.results.total_value_add_cents
+        ]
+      else []
+    in
     {%html|
       <span %{stats_style}>
         %{money_stat ~label:"Total P&L" open_pnl}
-        %{money_stat ~label:"Execution benefit"
-            replay.results.total_value_add_cents}
+        *{benefit}
       </span>
     |}
   in
