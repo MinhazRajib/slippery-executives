@@ -1,0 +1,35 @@
+(executable
+ (name main)
+ (modes js)
+ (js_of_ocaml
+  (flags
+   (:standard --effects=cps)))
+ (libraries
+  core
+  bonsai
+  bonsai.extra
+  bonsai_web
+  virtual_dom
+  execlab_types
+  execlab_market
+  execlab_execution
+  execlab_simulation
+  execlab_alpha)
+ (preprocess
+  (pps ppx_jane bonsai.ppx_bonsai ppx_html js_of_ocaml-ppx)))
+
+(rule
+ (target embedded_data.ml)
+ (deps
+  (:day ../../data/TSLA/2026-07-09.csv)
+  (:alpha ../../examples/demo_alpha_tsla.csv))
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "let tsla_day = {csv|")
+    (cat %{day})
+    (echo "|csv}\n")
+    (echo "let demo_alpha = {csv|")
+    (cat %{alpha})
+    (echo "|csv}\n")))))
