@@ -35,6 +35,38 @@ let bps_view value =
 
 let hhmm ofday = String.prefix (Time_ns.Ofday.to_string ofday) 5
 
+let dollars_signed cents =
+  (if cents < 0 then "-$" else "+$")
+  ^ Float.to_string_hum
+      ~delimiter:','
+      ~decimals:2
+      (Float.abs (Float.of_int cents /. 100.))
+;;
+
+(* Money readout colored by sign: profit green, loss red. *)
+let money_stat ~label:text value_cents =
+  let color =
+    if value_cents > 0
+    then Styles.green
+    else if value_cents < 0
+    then Styles.red
+    else Styles.secondary
+  in
+  let label_style =
+    Styles.s ("color:" ^ Styles.faint ^ ";font-size:12px;")
+  in
+  let value_style =
+    Styles.s
+      ("color:" ^ color ^ ";font-size:13px;font-weight:600;" ^ Styles.mono)
+  in
+  {%html|
+    <span>
+      <span %{label_style}>#{text}</span>
+      <span %{value_style}>#{dollars_signed value_cents}</span>
+    </span>
+  |}
+;;
+
 (* ---------- controls ---------- *)
 
 let pill ~active ~on_click label =
@@ -394,7 +426,7 @@ let chart (replay : Replay.t) ~minute ~fills ~show_fills =
      @ tick_rows)
 ;;
 
-let legend (replay : Replay.t) ~show_fills ~toggle_fills =
+let legend (replay : Replay.t) ~minute ~fills ~show_fills ~toggle_fills =
   let item ~color ~line label =
     let swatch =
       if line
@@ -433,7 +465,7 @@ let legend (replay : Replay.t) ~show_fills ~toggle_fills =
     let color = if show_fills then "#ffffff" else Styles.secondary in
     let style =
       Styles.s
-        ("margin-left:auto;background:"
+        ("background:"
          ^ bg
          ^ ";color:"
          ^ color
@@ -446,11 +478,26 @@ let legend (replay : Replay.t) ~show_fills ~toggle_fills =
       </button>
     |}
   in
+  let stats =
+    let last = replay.bars.(minute).Market_bar.close in
+    let open_pnl = Replay.open_pnl_cents ~fills ~last in
+    let stats_style =
+      Styles.s "margin-left:auto;display:flex;gap:16px;align-items:center;"
+    in
+    {%html|
+      <span %{stats_style}>
+        %{money_stat ~label:"Total P&L" open_pnl}
+        %{money_stat ~label:"Execution benefit"
+            replay.results.total_value_add_cents}
+      </span>
+    |}
+  in
   {%html|
     <div %{row}>
       %{item ~color:Styles.blue ~line:true "TSLA price (1-min close)"}
       %{item ~color:Styles.orange ~line:true "day vwap"}
       *{order_items}
+      %{stats}
       %{toggle}
     </div>
   |}
@@ -746,7 +793,7 @@ let sim_view
       %{controls replay ~minute ~playing ~speed ~set_playing ~set_speed
           ~set_minute ~restart}
       <div %{Styles.card "padding-bottom:8px;"}>
-        %{legend replay ~show_fills ~toggle_fills}
+        %{legend replay ~minute ~fills ~show_fills ~toggle_fills}
         %{chart replay ~minute ~fills ~show_fills}
       </div>
       <div %{cards_row}>
