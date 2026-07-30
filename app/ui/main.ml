@@ -133,7 +133,7 @@ let controls
 
 (* ---------- the chart: price line, order windows, fill tick rows ---------- *)
 
-let chart (replay : Replay.t) ~minute ~fills =
+let chart (replay : Replay.t) ~minute ~fills ~show_fills =
   let bars = replay.bars in
   let n = Array.length bars in
   let n_orders = List.length replay.parents in
@@ -243,16 +243,16 @@ let chart (replay : Replay.t) ~minute ~fills =
         ; attr "x2" (fs (left +. plot_w))
         ; attr "y1" (fs (y day_vwap))
         ; attr "y2" (fs (y day_vwap))
-        ; attr "stroke" Styles.faint
-        ; attr "stroke-width" "1"
-        ; attr "stroke-dasharray" "2 4"
+        ; attr "stroke" Styles.orange
+        ; attr "stroke-width" "1.5"
+        ; attr "stroke-dasharray" "5 4"
         ]
         []
     ; svg
         "text"
         [ attr "x" (fs (left +. plot_w +. 6.))
         ; attr "y" (fs (y day_vwap +. 3.))
-        ; attr "fill" Styles.faint
+        ; attr "fill" Styles.orange
         ; attr "font-size" "11"
         ]
         [ Vdom.Node.text (sprintf "vwap %.2f" day_vwap) ]
@@ -303,6 +303,32 @@ let chart (replay : Replay.t) ~minute ~fills =
              [ Vdom.Node.text (hhmm bars.(i).Market_bar.time) ])
       else None)
   in
+  (* optional overlay: each fill as a dot at its executed price *)
+  let fill_dots =
+    if not show_fills
+    then []
+    else
+      List.map fills ~f:(fun (fill : Fill.t) ->
+        let index = Replay.parent_index_of_order replay fill.order_id in
+        let m = Replay.minute_of_time replay fill.time in
+        svg
+          "circle"
+          [ attr "cx" (fs (x m))
+          ; attr "cy" (fs (y (Price.to_float fill.price)))
+          ; attr "r" "2.2"
+          ; attr "fill" (Styles.order_color index)
+          ; attr "stroke" "#ffffff"
+          ; attr "stroke-width" "0.8"
+          ]
+          [ tooltip
+              (sprintf
+                 "%s %s %d @ %s"
+                 (hhmm fill.time)
+                 (side_str fill.side)
+                 (Size.to_int fill.size)
+                 (Price.to_string_dollar fill.price))
+          ])
+  in
   (* one strip of fill ticks per order, below the time axis *)
   let tick_rows =
     List.concat_mapi replay.parents ~f:(fun index parent ->
@@ -311,9 +337,9 @@ let chart (replay : Replay.t) ~minute ~fills =
       let label =
         svg
           "text"
-          [ attr "x" (fs (left -. 8.))
+          [ attr "x" "2"
           ; attr "y" (fs (row_y +. 9.))
-          ; attr "text-anchor" "end"
+          ; attr "text-anchor" "start"
           ; attr "fill" Styles.faint
           ; attr "font-size" "10"
           ; attr "font-weight" "700"
@@ -359,10 +385,16 @@ let chart (replay : Replay.t) ~minute ~fills =
     [ attr "viewBox" (sprintf "0 0 %s %s" (fs w) (fs h))
     ; Styles.s "width:100%;display:block;"
     ]
-    (grid @ windows @ vwap_line @ time_axis @ price_line @ tick_rows)
+    (grid
+     @ windows
+     @ vwap_line
+     @ time_axis
+     @ price_line
+     @ fill_dots
+     @ tick_rows)
 ;;
 
-let legend (replay : Replay.t) =
+let legend (replay : Replay.t) ~show_fills ~toggle_fills =
   let item ~color ~line label =
     let swatch =
       if line
@@ -396,10 +428,30 @@ let legend (replay : Replay.t) =
     Styles.s
       "display:flex;gap:18px;align-items:center;padding:12px 16px 0 16px;"
   in
+  let toggle =
+    let bg = if show_fills then Styles.blue else "#eef1f6" in
+    let color = if show_fills then "#ffffff" else Styles.secondary in
+    let style =
+      Styles.s
+        ("margin-left:auto;background:"
+         ^ bg
+         ^ ";color:"
+         ^ color
+         ^ ";border:none;border-radius:7px;padding:5px \
+            12px;cursor:pointer;font-size:12px;font-weight:600;")
+    in
+    {%html|
+      <button %{style} on_click=%{fun _ -> toggle_fills}>
+        #{if show_fills then "Hide fills" else "Show fills"}
+      </button>
+    |}
+  in
   {%html|
     <div %{row}>
       %{item ~color:Styles.blue ~line:true "TSLA price (1-min close)"}
+      %{item ~color:Styles.orange ~line:true "day vwap"}
       *{order_items}
+      %{toggle}
     </div>
   |}
 ;;
@@ -608,10 +660,12 @@ let sim_view
   ~minute
   ~playing
   ~speed
+  ~show_fills
   ~set_playing
   ~set_speed
   ~set_minute
   ~restart
+  ~toggle_fills
   ~back
   =
   let fills = Replay.fills_upto replay ~minute in
@@ -671,8 +725,8 @@ let sim_view
       %{controls replay ~minute ~playing ~speed ~set_playing ~set_speed
           ~set_minute ~restart}
       <div %{Styles.card "padding-bottom:8px;"}>
-        %{legend replay}
-        %{chart replay ~minute ~fills}
+        %{legend replay ~show_fills ~toggle_fills}
+        %{chart replay ~minute ~fills ~show_fills}
       </div>
       <div %{cards_row}>
         *{List.mapi replay.parents ~f:(fun index parent ->
@@ -790,6 +844,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let minute, set_minute = Bonsai.state' 0 graph in
   let playing, set_playing = Bonsai.state true graph in
   let speed, set_speed = Bonsai.state 4 graph in
+  let show_fills, set_show_fills = Bonsai.state false graph in
   let advance =
     let%arr playing and speed and replay and set_minute in
     match replay with
@@ -831,6 +886,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_playing
   and speed
   and set_speed
+  and show_fills
+  and set_show_fills
   and set_minute
   and set_screen
   and start
@@ -843,10 +900,12 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~minute
         ~playing
         ~speed
+        ~show_fills
         ~set_playing
         ~set_speed
         ~set_minute
         ~restart
+        ~toggle_fills:(set_show_fills (not show_fills))
         ~back:(set_screen Screen.Setup)
     | Setup, _ | Sim, None -> setup_view ~algo ~set_algo ~start
   in

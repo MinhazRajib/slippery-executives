@@ -16,9 +16,11 @@ let blue = "#2563eb"
 let blue_soft = "#e8eefc"
 let green = "#16a34a"
 let red = "#dc2626"
+let orange = "#f59e0b" (* the vwap reference line *)
 
-(* Identity colors for orders: never used for good/bad. *)
-let order_colors = [| "#f59e0b"; "#16a34a"; "#0891b2"; "#7c3aed" |]
+(* Identity colors for orders: never good/bad green/red, never the orange
+   vwap line, never the blue price line. *)
+let order_colors = [| "#7c3aed"; "#0891b2"; "#db2777"; "#0d9488" |]
 let order_color index = order_colors.(index % Array.length order_colors)
 
 let mono =
