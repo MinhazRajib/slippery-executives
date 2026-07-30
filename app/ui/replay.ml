@@ -14,6 +14,7 @@ type parent_replay =
   ; order_ids : Order_id.Set.t
   ; arrival_minute : int
   ; deadline_minute : int
+  ; arrival_price : Price.t
   }
 
 type event =
@@ -80,14 +81,17 @@ let minute_of_ofday ~(bars : Market_bar.t array) time =
 let parents_of ~bars (result : Driver.t) =
   List.map (Order_manager.parents result.manager) ~f:(fun parent ->
     let instruction = parent.Parent_order.instruction in
+    let arrival_minute =
+      minute_of_ofday ~bars instruction.Alpha_instruction.arrival_time
+    in
     { instruction
     ; order_ids =
         Order_id.Set.of_list
           (List.map parent.children ~f:(fun child -> child.Child_order.id))
-    ; arrival_minute =
-        minute_of_ofday ~bars instruction.Alpha_instruction.arrival_time
+    ; arrival_minute
     ; deadline_minute =
         minute_of_ofday ~bars instruction.Alpha_instruction.deadline
+    ; arrival_price = bars.(arrival_minute).Market_bar.open_
     })
 ;;
 
@@ -365,4 +369,13 @@ let parent_rows t ~minute =
     ; avg_fill
     ; status
     })
+;;
+
+(* Which parent (by position) owns this order id; used to color blotter lines
+   and fill ticks by order. *)
+let parent_index_of_order t order_id =
+  List.findi t.parents ~f:(fun (_ : int) parent ->
+    Set.mem parent.order_ids order_id)
+  |> Option.map ~f:fst
+  |> Option.value ~default:0
 ;;
