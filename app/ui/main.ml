@@ -71,7 +71,7 @@ let money_stat ~label:text value_cents =
 
 let pill ~active ~on_click label =
   let bg = if active then Styles.text else "transparent" in
-  let color = if active then "#ffffff" else Styles.secondary in
+  let color = if active then Styles.page_bg else Styles.secondary in
   let style =
     Styles.s
       ("background:"
@@ -106,7 +106,7 @@ let controls
   in
   let group =
     Styles.s
-      "display:flex;gap:2px;background:#efe4d3;border-radius:5px;padding:2px;"
+      "display:flex;gap:2px;background:#1c2536;border-radius:5px;padding:2px;"
   in
   let slider_style =
     Styles.s ("flex:1;accent-color:" ^ Styles.blue ^ ";min-width:160px;")
@@ -349,7 +349,7 @@ let chart (replay : Replay.t) ~minute ~fills ~show_fills =
           ; attr "cy" (fs (y (Price.to_float fill.price)))
           ; attr "r" "2.2"
           ; attr "fill" (Styles.order_color index)
-          ; attr "stroke" "#fffaf3"
+          ; attr "stroke" "#111726"
           ; attr "stroke-width" "0.8"
           ]
           [ tooltip
@@ -461,7 +461,7 @@ let legend (replay : Replay.t) ~minute ~fills ~show_fills ~toggle_fills =
       "display:flex;gap:18px;align-items:center;padding:12px 16px 0 16px;"
   in
   let toggle =
-    let bg = if show_fills then Styles.blue else "#efe4d3" in
+    let bg = if show_fills then Styles.blue else "#1c2536" in
     let color = if show_fills then "#ffffff" else Styles.secondary in
     let style =
       Styles.s
@@ -566,7 +566,7 @@ let order_card
   in
   let bar_outer =
     Styles.s
-      "height:4px;background:#efe4d3;overflow:hidden;margin:12px 0 14px 0;"
+      "height:4px;background:#1c2536;overflow:hidden;margin:12px 0 14px 0;"
   in
   let bar_inner =
     Styles.s
@@ -816,7 +816,7 @@ let sim_view
 ;;
 
 let algo_pill ~selected ~on_click label =
-  let bg = if selected then Styles.blue else "#efe4d3" in
+  let bg = if selected then Styles.blue else "#1c2536" in
   let color = if selected then "#ffffff" else Styles.secondary in
   let style =
     Styles.s
