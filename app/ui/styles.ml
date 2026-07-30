@@ -28,10 +28,7 @@ let mono =
    Mono',Menlo,monospace;font-variant-numeric:tabular-nums;"
 ;;
 
-let shadow =
-  "box-shadow:0 1px 2px rgba(16,24,40,0.05),0 1px 3px rgba(16,24,40,0.08);"
-;;
-
+let shadow = "box-shadow:0 1px 2px rgba(16,24,40,0.04);"
 let s = Vdom.Attr.create "style"
 
 let card extra =
@@ -40,7 +37,7 @@ let card extra =
      ^ card_bg
      ^ ";border:"
      ^ border
-     ^ ";border-radius:10px;"
+     ^ ";border-radius:6px;"
      ^ shadow
      ^ extra)
 ;;
@@ -49,12 +46,8 @@ let label =
   "color:" ^ faint ^ ";font-size:12px;font-weight:600;letter-spacing:0.02em;"
 ;;
 
-let eyebrow =
-  s
-    ("color:"
-     ^ faint
-     ^ ";font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;"
-    )
+let brand =
+  s ("color:" ^ secondary ^ ";font-size:12px;font-weight:600;" ^ mono)
 ;;
 
 let code_chip =

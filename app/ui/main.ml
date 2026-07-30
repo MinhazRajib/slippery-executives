@@ -27,7 +27,7 @@ let bps_view value =
   let color = if Float.( <= ) value 0. then Styles.green else Styles.red in
   let style =
     Styles.s
-      ("color:" ^ color ^ ";font-size:15px;font-weight:700;" ^ Styles.mono)
+      ("color:" ^ color ^ ";font-size:14px;font-weight:600;" ^ Styles.mono)
   in
   let unit_style = Styles.s ("color:" ^ Styles.faint ^ ";font-size:11px;") in
   {%html|<span %{style}>#{sprintf "%+.1f" value} <span %{unit_style}>bps</span></span>|}
@@ -46,7 +46,7 @@ let pill ~active ~on_click label =
        ^ bg
        ^ ";color:"
        ^ color
-       ^ ";border:none;border-radius:7px;padding:5px \
+       ^ ";border:none;border-radius:4px;padding:5px \
           12px;cursor:pointer;font-size:13px;font-weight:600;")
   in
   {%html|<button %{style} on_click=%{on_click}>#{label}</button>|}
@@ -68,13 +68,13 @@ let controls
     Styles.s
       ("background:"
        ^ Styles.blue
-       ^ ";color:#ffffff;border:none;border-radius:8px;padding:8px \
+       ^ ";color:#ffffff;border:none;border-radius:5px;padding:8px \
           16px;cursor:pointer;font-size:13px;font-weight:700;white-space:nowrap;"
       )
   in
   let group =
     Styles.s
-      "display:flex;gap:2px;background:#eef1f6;border-radius:8px;padding:2px;"
+      "display:flex;gap:2px;background:#eef1f6;border-radius:5px;padding:2px;"
   in
   let slider_style =
     Styles.s ("flex:1;accent-color:" ^ Styles.blue ^ ";min-width:160px;")
@@ -83,7 +83,7 @@ let controls
     Styles.s
       ("color:"
        ^ Styles.text
-       ^ ";font-size:16px;font-weight:800;"
+       ^ ";font-size:15px;font-weight:700;"
        ^ Styles.mono)
   in
   let status_text =
@@ -437,7 +437,7 @@ let legend (replay : Replay.t) ~show_fills ~toggle_fills =
          ^ bg
          ^ ";color:"
          ^ color
-         ^ ";border:none;border-radius:7px;padding:5px \
+         ^ ";border:none;border-radius:4px;padding:5px \
             12px;cursor:pointer;font-size:12px;font-weight:600;")
     in
     {%html|
@@ -490,17 +490,11 @@ let order_card
     else "Working", Styles.blue
   in
   let badge =
-    Styles.s
-      ("color:"
-       ^ status_color
-       ^ ";border:1px solid "
-       ^ status_color
-       ^ ";border-radius:9999px;padding:2px \
-          12px;font-size:12px;font-weight:700;")
+    Styles.s ("color:" ^ status_color ^ ";font-size:12px;font-weight:600;")
   in
   let chip =
     Styles.s
-      ("display:inline-block;width:4px;height:14px;border-radius:2px;background:"
+      ("display:inline-block;width:8px;height:8px;background:"
        ^ color
        ^ ";margin-right:8px;")
   in
@@ -508,22 +502,18 @@ let order_card
     Styles.s
       ("color:"
        ^ Styles.text
-       ^ ";font-size:15px;font-weight:700;display:flex;align-items:center;")
+       ^ ";font-size:14px;font-weight:600;display:flex;align-items:center;")
   in
   let sub_style =
     Styles.s ("color:" ^ Styles.secondary ^ ";font-size:13px;margin-top:4px;")
   in
   let bar_outer =
     Styles.s
-      "height:6px;background:#eef1f6;border-radius:9999px;overflow:hidden;margin:12px \
-       0 14px 0;"
+      "height:4px;background:#eef1f6;overflow:hidden;margin:12px 0 14px 0;"
   in
   let bar_inner =
     Styles.s
-      (sprintf
-         "height:100%%;width:%.1f%%;background:%s;border-radius:9999px;"
-         completion
-         color)
+      (sprintf "height:100%%;width:%.1f%%;background:%s;" completion color)
   in
   let grid =
     Styles.s "display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px 16px;"
@@ -542,7 +532,7 @@ let order_card
       Styles.s
         ("color:"
          ^ Styles.text
-         ^ ";font-size:15px;font-weight:700;"
+         ^ ";font-size:14px;font-weight:600;"
          ^ Styles.mono)
     in
     {%html|<span %{style}>#{value}</span>|}
@@ -616,29 +606,54 @@ let order_card
 let blotter (replay : Replay.t) ~fills =
   let total = Array.length replay.fills in
   let title_style =
-    Styles.s ("color:" ^ Styles.text ^ ";font-size:15px;font-weight:700;")
+    Styles.s ("color:" ^ Styles.text ^ ";font-size:14px;font-weight:600;")
   in
   let count_style =
     Styles.s ("color:" ^ Styles.faint ^ ";font-size:13px;font-weight:400;")
   in
+  let columns = "72px 46px 64px 92px 60px 1fr" in
+  let row_base = "display:grid;grid-template-columns:" ^ columns ^ ";" in
+  let head_row =
+    Styles.s
+      (row_base
+       ^ "padding:8px 16px 6px 16px;border-bottom:1px solid "
+       ^ Styles.hairline
+       ^ ";"
+       ^ Styles.label)
+  in
   let line_view (fill : Fill.t) =
     let index = Replay.parent_index_of_order replay fill.order_id in
-    let color = Styles.order_color index in
     let style =
       Styles.s
-        ("border-left:3px solid "
-         ^ color
-         ^ ";padding:1px 10px;font-size:12.5px;color:"
+        (row_base
+         ^ "padding:2px 16px;font-size:12.5px;color:"
          ^ Styles.secondary
          ^ ";"
          ^ Styles.mono)
     in
-    {%html|<div %{style}>#{Fill.to_string fill}</div>|}
+    let order_style = Styles.s ("color:" ^ Styles.order_color index ^ ";") in
+    let time = String.prefix (Time_ns.Ofday.to_string fill.time) 8 in
+    let liquidity =
+      match fill.liquidity with Taker -> "taker" | Maker -> "maker"
+    in
+    {%html|
+      <div %{style}>
+        <span>#{time}</span>
+        <span>#{side_str fill.side}</span>
+        <span>%{Size.to_int fill.size#Int}</span>
+        <span>#{Price.to_string_dollar fill.price}</span>
+        <span>#{liquidity}</span>
+        <span %{order_style}>
+          O%{Replay.parent_index_of_order replay fill.order_id + 1#Int}
+          · fill %{fill.fill_id#Int}
+        </span>
+      </div>
+    |}
   in
   let scroll =
     Styles.s
-      "max-height:280px;overflow-y:auto;scrollbar-width:thin;display:flex;flex-direction:column-reverse;gap:2px;padding:12px \
-       16px;"
+      "max-height:280px;overflow-y:auto;scrollbar-width:thin;display:flex;flex-direction:column-reverse;padding:6px \
+       0;"
   in
   let header = Styles.s "padding:14px 16px 0 16px;" in
   let count = sprintf " · %d of %d fills" (List.length fills) total in
@@ -647,6 +662,14 @@ let blotter (replay : Replay.t) ~fills =
       <div %{header}>
         <span %{title_style}>Fill blotter</span>
         <span %{count_style}>#{count}</span>
+      </div>
+      <div %{head_row}>
+        <span>time</span>
+        <span>side</span>
+        <span>qty</span>
+        <span>price</span>
+        <span>liq</span>
+        <span>order</span>
       </div>
       <div %{scroll}>*{List.map fills ~f:line_view}</div>
     </div>
@@ -678,11 +701,11 @@ let sim_view
     Styles.s
       ("color:"
        ^ Styles.text
-       ^ ";font-size:24px;font-weight:800;margin:4px 0;")
+       ^ ";font-size:20px;font-weight:700;margin:4px 0;")
   in
   let sub_style =
     Styles.s
-      ("color:" ^ Styles.secondary ^ ";font-size:14px;line-height:1.7;")
+      ("color:" ^ Styles.secondary ^ ";font-size:13px;line-height:1.7;")
   in
   let back_style =
     Styles.s
@@ -710,16 +733,14 @@ let sim_view
     <div %{page}>
       <div>
         <div %{head_row}>
-          <span %{Styles.eyebrow}>EXECLAB · SIMULATION REPLAY</span>
+          <span %{Styles.brand}>execlab</span>
           <button %{back_style} on_click=%{fun _ -> back}>
             ← New simulation
           </button>
         </div>
         <div %{title_style}>#{title}</div>
         <div %{sub_style}>
-          Every fill below came from the real engine —
-          <span %{Styles.code_chip}>#{command}</span>.
-          This page just replays that deterministic output on a clock.
+          source: <span %{Styles.code_chip}>#{command}</span>
         </div>
       </div>
       %{controls replay ~minute ~playing ~speed ~set_playing ~set_speed
@@ -746,7 +767,7 @@ let algo_pill ~selected ~on_click label =
        ^ bg
        ^ ";color:"
        ^ color
-       ^ ";border:none;border-radius:8px;padding:8px \
+       ^ ";border:none;border-radius:5px;padding:8px \
           18px;cursor:pointer;font-size:13px;font-weight:700;")
   in
   {%html|<button %{style} on_click=%{on_click}>#{label}</button>|}
@@ -762,7 +783,7 @@ let setup_view ~algo ~set_algo ~start =
     Styles.s
       ("color:"
        ^ Styles.text
-       ^ ";font-size:24px;font-weight:800;margin:4px 0;")
+       ^ ";font-size:20px;font-weight:700;margin:4px 0;")
   in
   let sub_style =
     Styles.s ("color:" ^ Styles.secondary ^ ";font-size:14px;")
@@ -773,7 +794,7 @@ let setup_view ~algo ~set_algo ~start =
     Styles.s
       ("background:"
        ^ Styles.blue
-       ^ ";color:#ffffff;border:none;border-radius:8px;padding:10px \
+       ^ ";color:#ffffff;border:none;border-radius:5px;padding:10px \
           20px;cursor:pointer;font-size:14px;font-weight:700;align-self:flex-start;"
       )
   in
@@ -811,7 +832,7 @@ let setup_view ~algo ~set_algo ~start =
   {%html|
     <div %{page}>
       <div>
-        <span %{Styles.eyebrow}>EXECLAB · SIMULATION REPLAY</span>
+        <span %{Styles.brand}>execlab</span>
         <div %{title_style}>New simulation</div>
         <div %{sub_style}>TSLA · 2026-07-09 · bar-based fill model</div>
       </div>
