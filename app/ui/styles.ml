@@ -1,26 +1,26 @@
-(* Style tokens: light institutional dashboard. Grey page, white cards with
-   soft shadows, blue primary, green/red reserved for good/bad execution
-   results. *)
+(* Style tokens: financial-paper theme. Warm cream page, ivory cards, oxford
+   navy primary, ink text; green/red reserved for good/bad execution results. *)
 
 open! Core
 open! Bonsai_web
 
-let page_bg = "#f1f3f7"
-let card_bg = "#ffffff"
-let border = "1px solid #e6e9f0"
-let hairline = "#eceff5"
-let text = "#1b2436"
-let secondary = "#5b6478"
-let faint = "#9aa3b8"
-let blue = "#2563eb"
-let blue_soft = "#e8eefc"
-let green = "#16a34a"
-let red = "#dc2626"
-let orange = "#f59e0b" (* the vwap reference line *)
+let page_bg = "#f6ede2"
+let card_bg = "#fffaf3"
+let border = "1px solid #e8dbc9"
+let hairline = "#f0e6d8"
+let chip_bg = "#efe4d3" (* button groups, progress tracks, inactive pills *)
+let text = "#33302e"
+let secondary = "#6b645d"
+let faint = "#a49c92"
+let blue = "#0f5499"
+let blue_soft = "#e0eaf3"
+let green = "#15803d"
+let red = "#b91c1c"
+let orange = "#d97706" (* the vwap reference line *)
 
 (* Identity colors for orders: never good/bad green/red, never the orange
-   vwap line, never the blue price line. *)
-let order_colors = [| "#7c3aed"; "#0891b2"; "#db2777"; "#0d9488" |]
+   vwap line, never the navy price line. *)
+let order_colors = [| "#6d28d9"; "#0e7490"; "#be185d"; "#0f766e" |]
 let order_color index = order_colors.(index % Array.length order_colors)
 
 let mono =
@@ -28,7 +28,7 @@ let mono =
    Mono',Menlo,monospace;font-variant-numeric:tabular-nums;"
 ;;
 
-let shadow = "box-shadow:0 1px 2px rgba(16,24,40,0.04);"
+let shadow = "box-shadow:0 1px 2px rgba(67,53,34,0.05);"
 let s = Vdom.Attr.create "style"
 
 let card extra =
@@ -52,8 +52,10 @@ let brand =
 
 let code_chip =
   s
-    ("background:#eef1f6;border:1px solid \
-      #e2e6ee;border-radius:5px;padding:1px 6px;font-size:12px;color:"
+    ("background:"
+     ^ chip_bg
+     ^ ";border:1px solid #e2d4bf;border-radius:5px;padding:1px \
+        6px;font-size:12px;color:"
      ^ secondary
      ^ ";"
      ^ mono)
