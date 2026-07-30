@@ -100,7 +100,7 @@ let top_bar
            ^ Styles.green
            ^ ";")
       in
-      {%html|<span %{style}>&#9632; complete</span>|})
+      {%html|<span %{style}>■ complete</span>|})
     else if playing
     then (
       let style =
@@ -113,15 +113,15 @@ let top_bar
            ^ Styles.orange
            ^ ";")
       in
-      {%html|<span %{style}>&#9654; live</span>|})
+      {%html|<span %{style}>▶ live</span>|})
     else (
       let style = Styles.s (Styles.micro ^ "color:" ^ Styles.faint ^ ";") in
-      {%html|<span %{style}>&#10073;&#10073; paused</span>|})
+      {%html|<span %{style}>II paused</span>|})
   in
   {%html|
     <div %{bar}>
       <span %{brand}>EXECLAB</span>
-      <span %{chip}>TSLA &middot; 2026-07-09 &middot; 1m bars</span>
+      <span %{chip}>TSLA · 2026-07-09 · 1m bars</span>
       <span %{clock_style}>#{clock}</span>
       <div %{progress_outer}><div %{progress_inner}></div></div>
       %{status}
@@ -214,29 +214,31 @@ let minute_of_time (replay : Replay.t) time =
   Float.to_int (Time_ns.Span.to_min (Time_ns.Ofday.diff time open_time))
 ;;
 
-let candle_chart (replay : Replay.t) ~minute ~fills =
+let candle_chart (replay : Replay.t) ~start ~stop ~fills =
   let bars = replay.bars in
-  let n = Array.length bars in
+  let count = stop - start + 1 in
   let w = 920. in
-  let price_h = 196. in
-  let vol_top = 208. in
-  let vol_h = 44. in
+  let price_h = 330. in
+  let vol_top = 348. in
+  let vol_h = 66. in
   let h = vol_top +. vol_h in
+  let window = Array.sub bars ~pos:start ~len:count in
   let lo =
-    Array.fold bars ~init:Float.infinity ~f:(fun acc bar ->
+    Array.fold window ~init:Float.infinity ~f:(fun acc bar ->
       Float.min acc (Price.to_float bar.Market_bar.low))
   in
   let hi =
-    Array.fold bars ~init:Float.neg_infinity ~f:(fun acc bar ->
+    Array.fold window ~init:Float.neg_infinity ~f:(fun acc bar ->
       Float.max acc (Price.to_float bar.Market_bar.high))
   in
+  let span = Float.max (hi -. lo) 0.01 in
   let max_vol =
-    Array.fold bars ~init:1 ~f:(fun acc bar ->
+    Array.fold window ~init:1 ~f:(fun acc bar ->
       Int.max acc (Size.to_int bar.Market_bar.volume))
   in
-  let cw = w /. Float.of_int n in
-  let x i = (Float.of_int i *. cw) +. (cw /. 2.) in
-  let y v = 4. +. ((hi -. v) /. (hi -. lo) *. (price_h -. 8.)) in
+  let cw = w /. Float.of_int count in
+  let x i = (Float.of_int (i - start) *. cw) +. (cw /. 2.) in
+  let y v = 6. +. ((hi -. v) /. span *. (price_h -. 12.)) in
   let svg name attrs children = Vdom.Node.create_svg name ~attrs children in
   let attr = Vdom.Attr.create in
   let tooltip text = svg "title" [] [ Vdom.Node.text text ] in
@@ -269,7 +271,7 @@ let candle_chart (replay : Replay.t) ~minute ~fills =
         ; attr "y1" (fs (y (Price.to_float bar.Market_bar.high)))
         ; attr "y2" (fs (y (Price.to_float bar.Market_bar.low)))
         ; attr "stroke" color
-        ; attr "stroke-width" "0.7"
+        ; attr "stroke-width" (fs (Float.max 0.7 (cw *. 0.12)))
         ; attr "stroke-opacity" "0.7"
         ]
         []
@@ -304,10 +306,11 @@ let candle_chart (replay : Replay.t) ~minute ~fills =
     in
     svg "g" [] [ title; wick; body; volume ]
   in
-  let candles = List.map (List.init (minute + 1) ~f:Fn.id) ~f:candle in
+  let indices = List.init count ~f:(fun offset -> start + offset) in
+  let candles = List.map indices ~f:candle in
   let vwap_line =
     let pts =
-      List.init (minute + 1) ~f:(fun i ->
+      List.map indices ~f:(fun i ->
         sprintf "%s,%s" (fs (x i)) (fs (y replay.vwap_by_minute.(i))))
       |> String.concat ~sep:" "
     in
@@ -322,14 +325,23 @@ let candle_chart (replay : Replay.t) ~minute ~fills =
       [ tooltip "session vwap" ]
   in
   let time_axis =
-    List.filter_map (List.init n ~f:Fn.id) ~f:(fun i ->
-      if i % 60 = 0 && i > 0
+    let step =
+      if count > 240
+      then 60
+      else if count > 120
+      then 30
+      else if count > 60
+      then 15
+      else 5
+    in
+    List.filter_map indices ~f:(fun i ->
+      if i % step = 0 && i > 0
       then
         Some
           (svg
              "text"
              [ attr "x" (fs (x i))
-             ; attr "y" (fs (vol_top -. 4.))
+             ; attr "y" (fs (vol_top -. 6.))
              ; attr "text-anchor" "middle"
              ; attr "fill" Styles.faint
              ; attr "font-size" "9"
@@ -342,8 +354,8 @@ let candle_chart (replay : Replay.t) ~minute ~fills =
       else None)
   in
   let gridline frac =
-    let gy = 4. +. (frac *. (price_h -. 8.)) in
-    let price = hi -. (frac *. (hi -. lo)) in
+    let gy = 6. +. (frac *. (price_h -. 12.)) in
+    let price = hi -. (frac *. span) in
     [ svg
         "line"
         [ attr "x1" "0"
@@ -366,7 +378,7 @@ let candle_chart (replay : Replay.t) ~minute ~fills =
     ]
   in
   let grid = List.concat_map [ 0.; 0.25; 0.5; 0.75; 1. ] ~f:gridline in
-  let last_close = Price.to_float bars.(minute).Market_bar.close in
+  let last_close = Price.to_float bars.(stop).Market_bar.close in
   let now_line =
     [ svg
         "line"
@@ -391,37 +403,41 @@ let candle_chart (replay : Replay.t) ~minute ~fills =
     ]
   in
   let fill_markers =
-    List.map fills ~f:(fun (fill : Fill.t) ->
+    List.filter_map fills ~f:(fun (fill : Fill.t) ->
       let m = minute_of_time replay fill.time in
-      let side_str =
-        match fill.side with Side.Buy -> "BUY" | Sell -> "SELL"
-      in
-      svg
-        "circle"
-        [ attr "cx" (fs (x m))
-        ; attr "cy" (fs (y (Price.to_float fill.price)))
-        ; attr "r" "1.3"
-        ; attr "fill" "#ffffff"
-        ; attr "stroke" Styles.accent
-        ; attr "stroke-width" "0.8"
-        ]
-        [ tooltip
-            (sprintf
-               "%s %s %d @ %s (%s)"
-               (String.prefix (Time_ns.Ofday.to_string fill.time) 5)
-               side_str
-               (Size.to_int fill.size)
-               (Price.to_string_dollar fill.price)
-               (match fill.liquidity with
-                | Taker -> "taker"
-                | Maker -> "maker"))
-        ])
+      if m < start || m > stop
+      then None
+      else (
+        let side_str =
+          match fill.side with Side.Buy -> "BUY" | Sell -> "SELL"
+        in
+        Some
+          (svg
+             "circle"
+             [ attr "cx" (fs (x m))
+             ; attr "cy" (fs (y (Price.to_float fill.price)))
+             ; attr "r" "1.6"
+             ; attr "fill" "#ffffff"
+             ; attr "stroke" Styles.accent
+             ; attr "stroke-width" "0.8"
+             ]
+             [ tooltip
+                 (sprintf
+                    "%s %s %d @ %s (%s)"
+                    (String.prefix (Time_ns.Ofday.to_string fill.time) 5)
+                    side_str
+                    (Size.to_int fill.size)
+                    (Price.to_string_dollar fill.price)
+                    (match fill.liquidity with
+                     | Taker -> "taker"
+                     | Maker -> "maker"))
+             ])))
   in
   svg
     "svg"
     [ attr "viewBox" (sprintf "0 0 %s %s" (fs w) (fs h))
     ; attr "preserveAspectRatio" "none"
-    ; Styles.s "width:100%;height:280px;display:block;"
+    ; Styles.s "width:100%;height:430px;display:block;"
     ]
     (grid @ time_axis @ candles @ (vwap_line :: now_line) @ fill_markers)
 ;;
@@ -436,7 +452,12 @@ let header_row cols =
        ^ ";")
   in
   let cell (width, label) =
-    let s = Styles.s (Styles.micro ^ sprintf "width:%dpx;" width) in
+    let sizing =
+      if width < 0
+      then "flex:1;text-align:right;"
+      else sprintf "width:%dpx;" width
+    in
+    let s = Styles.s (Styles.micro ^ sizing) in
     {%html|<span %{s}>#{label}</span>|}
   in
   {%html|<div %{style}>*{List.map cols ~f:cell}</div>|}
@@ -587,8 +608,8 @@ let results_panel (replay : Replay.t) ~complete ~clock_close =
     let style = Styles.s (Styles.dim_cell ^ "padding:8px 10px;") in
     {%html|
       <div %{Styles.panel ""}>
-        <div %{Styles.panel_title}>Results &middot; vs immediate</div>
-        <div %{style}>Available at close &middot; #{clock_close}</div>
+        <div %{Styles.panel_title}>Results · vs immediate</div>
+        <div %{style}>Available at close · #{clock_close}</div>
       </div>
     |})
   else (
@@ -614,10 +635,10 @@ let results_panel (replay : Replay.t) ~complete ~clock_close =
              side_color
              Styles.mono)
       in
-      let qty = Styles.s (Styles.cell ^ "width:44px;text-align:right;") in
-      let avg = Styles.s (Styles.cell ^ "width:64px;text-align:right;") in
+      let qty = Styles.s (Styles.cell ^ "width:40px;text-align:right;") in
+      let avg = Styles.s (Styles.cell ^ "width:60px;text-align:right;") in
       let bps =
-        Styles.s (Styles.dim_cell ^ "width:56px;text-align:right;")
+        Styles.s (Styles.dim_cell ^ "width:48px;text-align:right;")
       in
       let va =
         Styles.s
@@ -651,9 +672,9 @@ let results_panel (replay : Replay.t) ~complete ~clock_close =
     in
     {%html|
       <div %{Styles.panel ""}>
-        <div %{Styles.panel_title}>Results &middot; vs immediate</div>
+        <div %{Styles.panel_title}>Results · vs immediate</div>
         %{header_row
-            [ 38, "side"; 44, "qty"; 64, "avg"; 56, "shortfall"; 60, "value add" ]}
+            [ 38, "side"; 40, "qty"; 60, "avg"; 48, "bps"; -1, "value add" ]}
         *{List.map results.rows ~f:row_view}
         <div %{footer}>
           <span %{footer_label}>Execution value add</span>
@@ -670,8 +691,10 @@ let sim_view
   ~minute
   ~playing
   ~speed
+  ~zoom
   ~set_playing
   ~set_speed
+  ~set_zoom
   ~back
   =
   let last = Replay.last_minute replay in
@@ -679,17 +702,47 @@ let sim_view
   let events = Replay.events_upto replay ~minute in
   let rows = Replay.parent_rows replay ~minute in
   let complete = minute >= last in
+  (* The zoom window always ends at the playhead, so zooming follows the
+     replay. *)
+  let start =
+    match zoom with
+    | None -> 0
+    | Some window -> Int.max 0 (minute - window + 1)
+  in
+  let zoom_button ~window label =
+    transport_button
+      ~active:
+        (match zoom, window with
+         | None, None -> true
+         | Some a, Some b -> a = b
+         | None, Some _ | Some _, None -> false)
+      ~on_click:(fun _ -> set_zoom window)
+      label
+  in
   let page =
     Styles.s
-      "display:flex;flex-direction:column;gap:10px;max-width:1320px;margin:0 \
+      "display:flex;flex-direction:column;gap:10px;max-width:1680px;margin:0 \
        auto;padding:12px;"
   in
   let grid =
     Styles.s
       "display:grid;grid-template-columns:minmax(0,1fr) \
-       330px;gap:10px;align-items:start;"
+       340px;gap:10px;align-items:start;"
   in
   let col = Styles.s "display:flex;flex-direction:column;gap:10px;" in
+  let bottom =
+    Styles.s
+      "display:grid;grid-template-columns:1fr \
+       1fr;gap:10px;align-items:start;"
+  in
+  let chart_header =
+    Styles.s
+      ("display:flex;align-items:center;gap:8px;padding:6px \
+        10px;border-bottom:"
+       ^ Styles.border
+       ^ ";")
+  in
+  let chart_title = Styles.s (Styles.micro ^ "flex:1;") in
   {%html|
     <div %{page}>
       %{top_bar ~clock:(Replay.clock_string replay ~minute)
@@ -699,11 +752,19 @@ let sim_view
       <div %{grid}>
         <div %{col}>
           <div %{Styles.panel ""}>
-            <div %{Styles.panel_title}>TSLA &middot; candles + volume &middot; fills marked</div>
-            %{candle_chart replay ~minute ~fills}
+            <div %{chart_header}>
+              <span %{chart_title}>TSLA · candles + volume · vwap · fills marked</span>
+              %{zoom_button ~window:(Some 30) "30m"}
+              %{zoom_button ~window:(Some 60) "1h"}
+              %{zoom_button ~window:(Some 120) "2h"}
+              %{zoom_button ~window:None "full"}
+            </div>
+            %{candle_chart replay ~start ~stop:minute ~fills}
           </div>
-          %{parents_table rows}
-          %{event_log events}
+          <div %{bottom}>
+            %{parents_table rows}
+            %{event_log events}
+          </div>
         </div>
         <div %{col}>
           %{fills_table fills}
@@ -806,7 +867,7 @@ let setup_view ~algo ~set_algo ~start =
       <div %{tr}>
         <span %{side_style}>#{side}</span>
         <span %{qty}>%{Size.to_int instruction.quantity#Int}</span>
-        <span %{window}>#{arrival} &rarr; #{deadline}</span>
+        <span %{window}>#{arrival} → #{deadline}</span>
       </div>
     |}
   in
@@ -815,7 +876,7 @@ let setup_view ~algo ~set_algo ~start =
       <div>
         <div %{brand}>EXECLAB</div>
         <div %{title}>New simulation</div>
-        <div %{subtitle}>TSLA &middot; 2026-07-09 &middot; bar-based fill model</div>
+        <div %{subtitle}>TSLA · 2026-07-09 · bar-based fill model</div>
       </div>
       <div %{cards}>
         %{algo_card ~selected:(String.equal algo "twap")
@@ -848,6 +909,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let minute, set_minute = Bonsai.state' 0 graph in
   let playing, set_playing = Bonsai.state true graph in
   let speed, set_speed = Bonsai.state 4 graph in
+  let zoom, set_zoom = Bonsai.state (None : int option) graph in
   let advance =
     let%arr playing and speed and replay and set_minute in
     match replay with
@@ -884,6 +946,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_playing
   and speed
   and set_speed
+  and zoom
+  and set_zoom
   and set_screen
   and start in
   let body =
@@ -894,8 +958,10 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~minute
         ~playing
         ~speed
+        ~zoom
         ~set_playing
         ~set_speed
+        ~set_zoom
         ~back:(set_screen Screen.Setup)
     | Setup, _ | Sim, None -> setup_view ~algo ~set_algo ~start
   in
