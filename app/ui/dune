@@ -14,7 +14,8 @@
   execlab_market
   execlab_execution
   execlab_simulation
-  execlab_alpha)
+  execlab_alpha
+  execlab_analytics)
  (preprocess
   (pps ppx_jane bonsai.ppx_bonsai ppx_html js_of_ocaml-ppx)))
 
