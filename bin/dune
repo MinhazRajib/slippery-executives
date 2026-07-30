@@ -1,5 +1,12 @@
 (executable
  (name main)
- (libraries execlab_types execlab_alpha core)
+ (libraries
+  execlab_types
+  execlab_market
+  execlab_execution
+  execlab_simulation
+  execlab_analytics
+  execlab_alpha
+  core)
  (preprocess
   (pps ppx_jane)))
