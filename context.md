@@ -284,6 +284,21 @@ Design consequences (bind these before building the driver):
   frontend-design skills live in `.claude/skills`). The MVP stays
   CLI-driven until the core works end to end.
 
+UI backlog (first Bonsai version exists on the `ui` branch — a dense
+violet terminal: candlestick+volume chart with the run's fills marked,
+stat strip, parent/fills tables, event log, results-at-close panel; the
+whole sim runs in the browser off embedded data):
+
+- Make the event log, recent fills, and other panels scrollable
+  (max-height + overflow-y:auto) instead of truncating to the last N.
+- Chart zoom: render a (start_minute, end_minute) window held in Bonsai
+  state via the SVG viewBox; wheel/drag to zoom and pan.
+- Smaller fill markers, and hover tooltips on fills and candles (Bonsai
+  hover state + a small tooltip panel; SVG <title> as the cheap interim).
+- Real data selection (symbol/date/alpha upload) instead of the single
+  embedded day; js_of_ocaml --release profile to shrink the ~64MB dev
+  bundle.
+
 ## Planned module map (adapted from the original plan)
 
 ```
