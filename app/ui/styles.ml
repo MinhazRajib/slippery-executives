@@ -40,7 +40,7 @@ let panel extra =
 let micro =
   "color:"
   ^ faint
-  ^ ";font-size:10px;letter-spacing:0.14em;text-transform:uppercase;font-weight:700;"
+  ^ ";font-size:10px;letter-spacing:0.08em;text-transform:uppercase;font-weight:700;"
 ;;
 
 let panel_title = s (micro ^ "padding:8px 10px;border-bottom:" ^ border ^ ";")

@@ -12,6 +12,8 @@ open! Execlab_analytics
 type parent_replay =
   { instruction : Alpha_instruction.t
   ; order_ids : Order_id.Set.t
+  ; arrival_minute : int
+  ; deadline_minute : int
   }
 
 type event =
@@ -41,7 +43,11 @@ type t =
   ; events : event array (* ascending by time *)
   ; results : results
   ; vwap_by_minute : float array
-  (* running session VWAP (typical price, volume weighted) in dollars *)
+      (* running session VWAP (typical price, volume weighted), dollars *)
+  ; target_by_minute : float array
+      (* scheduled cumulative shares across all parents (linear ramps) *)
+  ; actual_by_minute : int array (* cumulative filled shares *)
+  ; cumulative_volume : int array (* market volume traded so far *)
   }
 
 let day =
@@ -66,12 +72,22 @@ let algorithm_named = function
   | _ -> (module Twap : Algorithm_intf.S)
 ;;
 
-let parents_of (result : Driver.t) =
+let minute_of_ofday ~(bars : Market_bar.t array) time =
+  Float.to_int
+    (Time_ns.Span.to_min (Time_ns.Ofday.diff time bars.(0).Market_bar.time))
+;;
+
+let parents_of ~bars (result : Driver.t) =
   List.map (Order_manager.parents result.manager) ~f:(fun parent ->
-    { instruction = parent.Parent_order.instruction
+    let instruction = parent.Parent_order.instruction in
+    { instruction
     ; order_ids =
         Order_id.Set.of_list
           (List.map parent.children ~f:(fun child -> child.Child_order.id))
+    ; arrival_minute =
+        minute_of_ofday ~bars instruction.Alpha_instruction.arrival_time
+    ; deadline_minute =
+        minute_of_ofday ~bars instruction.Alpha_instruction.deadline
     })
 ;;
 
@@ -80,11 +96,11 @@ let fills_of_parent (result : Driver.t) (parent : parent_replay) =
     Set.mem parent.order_ids fill.Fill.order_id)
 ;;
 
-let grade ~day (result : Driver.t) =
+let grade ~day (result : Driver.t) ~parents =
   let day_vwap = Day_stats.vwap day in
   let terminal_price = Benchmarks.terminal_price day in
   let half_spread = Fill_model.Config.default.half_spread in
-  List.map (parents_of result) ~f:(fun parent ->
+  List.map parents ~f:(fun parent ->
     let instruction = parent.instruction in
     let arrival_price =
       Or_error.ok_exn
@@ -102,9 +118,13 @@ let grade ~day (result : Driver.t) =
          ~half_spread))
 ;;
 
-let results ~day ~algo_result ~baseline_result =
-  let algo = grade ~day algo_result in
-  let baseline = grade ~day baseline_result in
+let results ~day ~bars ~algo_result ~baseline_result =
+  let algo =
+    grade ~day algo_result ~parents:(parents_of ~bars algo_result)
+  in
+  let baseline =
+    grade ~day baseline_result ~parents:(parents_of ~bars baseline_result)
+  in
   let rows =
     List.map2_exn algo baseline ~f:(fun a b ->
       let value_add_cents =
@@ -160,11 +180,9 @@ let events ~(algo_result : Driver.t) parents =
             (match fill.liquidity with Taker -> "taker" | Maker -> "maker")
       })
   in
-  let all =
-    List.stable_sort (activations @ fills) ~compare:(fun a b ->
-      Time_ns.Ofday.compare a.time b.time)
-  in
-  Array.of_list all
+  List.stable_sort (activations @ fills) ~compare:(fun a b ->
+    Time_ns.Ofday.compare a.time b.time)
+  |> Array.of_list
 ;;
 
 let vwap_by_minute bars =
@@ -183,21 +201,64 @@ let vwap_by_minute bars =
     if Float.( > ) !volume 0. then !dollar_volume /. !volume else typical)
 ;;
 
+(* The scheduled cumulative quantity at each minute: every parent ramps
+   linearly from activation to deadline (the TWAP ideal; also the honest
+   reference schedule for any algorithm). *)
+let target_by_minute ~bars parents =
+  Array.init (Array.length bars) ~f:(fun m ->
+    List.sum (module Float) parents ~f:(fun parent ->
+      let total =
+        Float.of_int
+          (Size.to_int parent.instruction.Alpha_instruction.quantity)
+      in
+      if m < parent.arrival_minute
+      then 0.
+      else if m >= parent.deadline_minute
+      then total
+      else (
+        let span = parent.deadline_minute - parent.arrival_minute in
+        total
+        *. Float.of_int (m - parent.arrival_minute)
+        /. Float.of_int span)))
+;;
+
+let actual_by_minute ~bars (fills : Fill.t array) =
+  let per_minute = Array.create ~len:(Array.length bars) 0 in
+  Array.iter fills ~f:(fun fill ->
+    let m = minute_of_ofday ~bars fill.time in
+    per_minute.(m) <- per_minute.(m) + Size.to_int fill.size);
+  let total = ref 0 in
+  Array.map per_minute ~f:(fun v ->
+    total := !total + v;
+    !total)
+;;
+
+let cumulative_volume bars =
+  let total = ref 0 in
+  Array.map bars ~f:(fun (bar : Market_bar.t) ->
+    total := !total + Size.to_int bar.volume;
+    !total)
+;;
+
 let run ~algo_name =
   let day = Lazy.force day in
   let instructions = Lazy.force instructions in
   let run_one algorithm = Driver.run ~day ~instructions ~algorithm () in
   let algo_result = run_one (algorithm_named algo_name) in
   let baseline_result = run_one (module Immediate) in
-  let parents = parents_of algo_result in
   let bars = Array.of_list day.Trading_day.bars in
+  let parents = parents_of ~bars algo_result in
+  let fills = Array.of_list algo_result.fills in
   { algo_name
   ; bars
-  ; fills = Array.of_list algo_result.fills
+  ; fills
   ; parents
   ; events = events ~algo_result parents
-  ; results = results ~day ~algo_result ~baseline_result
+  ; results = results ~day ~bars ~algo_result ~baseline_result
   ; vwap_by_minute = vwap_by_minute bars
+  ; target_by_minute = target_by_minute ~bars parents
+  ; actual_by_minute = actual_by_minute ~bars fills
+  ; cumulative_volume = cumulative_volume bars
   }
 ;;
 
@@ -212,6 +273,7 @@ let open_pnl_cents ~(fills : Fill.t list) ~last =
 
 let last_minute t = Array.length t.bars - 1
 let time_at t ~minute = t.bars.(minute).Market_bar.time
+let minute_of_time t time = minute_of_ofday ~bars:t.bars time
 
 let clock_string t ~minute =
   String.prefix (Time_ns.Ofday.to_string (time_at t ~minute)) 5
@@ -231,25 +293,50 @@ let events_upto t ~minute =
   |> Array.to_list
 ;;
 
-let filled_shares fills ~order_ids =
-  List.sum (module Int) fills ~f:(fun (fill : Fill.t) ->
-    if Set.mem order_ids fill.order_id then Size.to_int fill.size else 0)
+(* Percent ahead (+) or behind (-) the scheduled quantity; None before
+   anything is scheduled. *)
+let schedule_delta_pct t ~minute =
+  let target = t.target_by_minute.(minute) in
+  if Float.( <= ) target 1.
+  then None
+  else (
+    let actual = Float.of_int t.actual_by_minute.(minute) in
+    Some ((actual -. target) /. target *. 100.))
 ;;
 
 type parent_row =
-  { side : Side.t
+  { id : string
+  ; side : Side.t
   ; total : int
   ; filled : int
+  ; window : string
+  ; avg_fill : string
   ; status : string
   }
 
 let parent_rows t ~minute =
   let now = time_at t ~minute in
   let fills = fills_upto t ~minute in
-  List.map t.parents ~f:(fun parent ->
+  List.mapi t.parents ~f:(fun index parent ->
     let instruction = parent.instruction in
     let total = Size.to_int instruction.Alpha_instruction.quantity in
-    let filled = filled_shares fills ~order_ids:parent.order_ids in
+    let mine =
+      List.filter fills ~f:(fun fill ->
+        Set.mem parent.order_ids fill.Fill.order_id)
+    in
+    let filled =
+      List.sum (module Int) mine ~f:(fun fill -> Size.to_int fill.size)
+    in
+    let avg_fill =
+      if filled = 0
+      then "-"
+      else (
+        let notional =
+          List.sum (module Int) mine ~f:(fun fill ->
+            Fill.notional_cents fill)
+        in
+        sprintf "$%.2f" (notional // filled /. 100.))
+    in
     let status =
       if Time_ns.Ofday.( < ) now instruction.Alpha_instruction.arrival_time
       then "PENDING"
@@ -259,5 +346,23 @@ let parent_rows t ~minute =
       then "EXPIRED"
       else "WORKING"
     in
-    { side = instruction.Alpha_instruction.side; total; filled; status })
+    let window =
+      sprintf
+        "%s-%s"
+        (String.prefix
+           (Time_ns.Ofday.to_string
+              instruction.Alpha_instruction.arrival_time)
+           5)
+        (String.prefix
+           (Time_ns.Ofday.to_string instruction.Alpha_instruction.deadline)
+           5)
+    in
+    { id = sprintf "P-%d" (index + 1)
+    ; side = instruction.Alpha_instruction.side
+    ; total
+    ; filled
+    ; window
+    ; avg_fill
+    ; status
+    })
 ;;
