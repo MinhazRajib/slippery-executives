@@ -184,13 +184,15 @@ let stat_strip (replay : Replay.t) ~fills ~minute =
       </div>
     |}
   in
+  let pnl = Replay.open_pnl_cents ~fills ~last:bar_now.close in
+  let pnl_color = if pnl >= 0 then Styles.green else Styles.red in
   let p = Price.to_string_dollar in
   let row = Styles.s "display:flex;align-items:stretch;" in
   {%html|
     <div %{Styles.panel ""}>
       <div %{row}>
         %{stat ~first:true "last" (p bar_now.close) ~color:Styles.text}
-        %{stat ~first:false "open" (p replay.bars.(0).open_) ~color:Styles.dim}
+        %{stat ~first:false "open p&l" (dollars_signed pnl) ~color:pnl_color}
         %{stat ~first:false "high" (p high_sofar) ~color:Styles.green}
         %{stat ~first:false "low" (p low_sofar) ~color:Styles.red}
         %{stat ~first:false "bar vol" (Int.to_string_hum ~delimiter:','
@@ -237,6 +239,7 @@ let candle_chart (replay : Replay.t) ~minute ~fills =
   let y v = 4. +. ((hi -. v) /. (hi -. lo) *. (price_h -. 8.)) in
   let svg name attrs children = Vdom.Node.create_svg name ~attrs children in
   let attr = Vdom.Attr.create in
+  let tooltip text = svg "title" [] [ Vdom.Node.text text ] in
   let candle i =
     let bar = bars.(i) in
     let o = Price.to_float bar.Market_bar.open_ in
@@ -245,6 +248,19 @@ let candle_chart (replay : Replay.t) ~minute ~fills =
     let color = if up then Styles.green else Styles.red in
     let body_top = y (Float.max o c) in
     let body_h = Float.max 0.8 (Float.abs (y o -. y c)) in
+    let title =
+      tooltip
+        (sprintf
+           "%s  O %.2f  H %.2f  L %.2f  C %.2f  vol %s"
+           (String.prefix (Time_ns.Ofday.to_string bar.Market_bar.time) 5)
+           o
+           (Price.to_float bar.Market_bar.high)
+           (Price.to_float bar.Market_bar.low)
+           c
+           (Int.to_string_hum
+              ~delimiter:','
+              (Size.to_int bar.Market_bar.volume)))
+    in
     let wick =
       svg
         "line"
@@ -286,10 +302,44 @@ let candle_chart (replay : Replay.t) ~minute ~fills =
         ]
         []
     in
-    [ wick; body; volume ]
+    svg "g" [] [ title; wick; body; volume ]
   in
-  let candles =
-    List.concat_map (List.init (minute + 1) ~f:Fn.id) ~f:candle
+  let candles = List.map (List.init (minute + 1) ~f:Fn.id) ~f:candle in
+  let vwap_line =
+    let pts =
+      List.init (minute + 1) ~f:(fun i ->
+        sprintf "%s,%s" (fs (x i)) (fs (y replay.vwap_by_minute.(i))))
+      |> String.concat ~sep:" "
+    in
+    svg
+      "polyline"
+      [ attr "points" pts
+      ; attr "fill" "none"
+      ; attr "stroke" Styles.orange
+      ; attr "stroke-width" "1"
+      ; attr "stroke-opacity" "0.9"
+      ]
+      [ tooltip "session vwap" ]
+  in
+  let time_axis =
+    List.filter_map (List.init n ~f:Fn.id) ~f:(fun i ->
+      if i % 60 = 0 && i > 0
+      then
+        Some
+          (svg
+             "text"
+             [ attr "x" (fs (x i))
+             ; attr "y" (fs (vol_top -. 4.))
+             ; attr "text-anchor" "middle"
+             ; attr "fill" Styles.faint
+             ; attr "font-size" "9"
+             ]
+             [ Vdom.Node.text
+                 (String.prefix
+                    (Time_ns.Ofday.to_string bars.(i).Market_bar.time)
+                    5)
+             ])
+      else None)
   in
   let gridline frac =
     let gy = 4. +. (frac *. (price_h -. 8.)) in
@@ -343,16 +393,29 @@ let candle_chart (replay : Replay.t) ~minute ~fills =
   let fill_markers =
     List.map fills ~f:(fun (fill : Fill.t) ->
       let m = minute_of_time replay fill.time in
+      let side_str =
+        match fill.side with Side.Buy -> "BUY" | Sell -> "SELL"
+      in
       svg
         "circle"
         [ attr "cx" (fs (x m))
         ; attr "cy" (fs (y (Price.to_float fill.price)))
-        ; attr "r" "2"
+        ; attr "r" "1.3"
         ; attr "fill" "#ffffff"
         ; attr "stroke" Styles.accent
-        ; attr "stroke-width" "1"
+        ; attr "stroke-width" "0.8"
         ]
-        [])
+        [ tooltip
+            (sprintf
+               "%s %s %d @ %s (%s)"
+               (String.prefix (Time_ns.Ofday.to_string fill.time) 5)
+               side_str
+               (Size.to_int fill.size)
+               (Price.to_string_dollar fill.price)
+               (match fill.liquidity with
+                | Taker -> "taker"
+                | Maker -> "maker"))
+        ])
   in
   svg
     "svg"
@@ -360,7 +423,7 @@ let candle_chart (replay : Replay.t) ~minute ~fills =
     ; attr "preserveAspectRatio" "none"
     ; Styles.s "width:100%;height:280px;display:block;"
     ]
-    (grid @ candles @ now_line @ fill_markers)
+    (grid @ time_axis @ candles @ (vwap_line :: now_line) @ fill_markers)
 ;;
 
 (* ---------- tables ---------- *)
@@ -435,7 +498,7 @@ let parents_table rows =
 ;;
 
 let fills_table (fills : Fill.t list) =
-  let recent = List.take (List.rev fills) 12 in
+  let recent = List.rev fills in
   let row_view (fill : Fill.t) =
     let side, side_color =
       match fill.side with
@@ -477,18 +540,21 @@ let fills_table (fills : Fill.t list) =
     let style = Styles.s (Styles.dim_cell ^ "padding:8px 10px;") in
     {%html|<div %{style}>Waiting for fills...</div>|}
   in
+  let scroll =
+    Styles.s "max-height:300px;overflow-y:auto;scrollbar-width:thin;"
+  in
   {%html|
     <div %{Styles.panel ""}>
       <div %{Styles.panel_title}>Recent fills</div>
       %{header_row [ 44, "time"; 14, "s"; 46, "qty"; 70, "price"; 20, "liq" ]}
       %{if List.is_empty recent then empty else Vdom.Node.none}
-      *{List.map recent ~f:row_view}
+      <div %{scroll}>*{List.map recent ~f:row_view}</div>
     </div>
   |}
 ;;
 
 let event_log (events : Replay.event list) =
-  let recent = List.rev (List.take (List.rev events) 11) in
+  let recent = List.rev events in
   let line_view (event : Replay.event) =
     let time = String.prefix (Time_ns.Ofday.to_string event.time) 5 in
     let is_fill = String.is_prefix event.line ~prefix:"FILL" in
@@ -502,7 +568,11 @@ let event_log (events : Replay.event list) =
     let l = Styles.s ("color:" ^ color ^ ";") in
     {%html|<div %{tr}><span %{t}>#{time}</span><span %{l}>#{event.line}</span></div>|}
   in
-  let body = Styles.s "padding:4px 0 8px 0;" in
+  let body =
+    Styles.s
+      "padding:4px 0 8px \
+       0;max-height:180px;overflow-y:auto;scrollbar-width:thin;"
+  in
   {%html|
     <div %{Styles.panel ""}>
       <div %{Styles.panel_title}>Event log</div>

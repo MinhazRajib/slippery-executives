@@ -40,6 +40,8 @@ type t =
   ; parents : parent_replay list
   ; events : event array (* ascending by time *)
   ; results : results
+  ; vwap_by_minute : float array
+  (* running session VWAP (typical price, volume weighted) in dollars *)
   }
 
 let day =
@@ -165,6 +167,22 @@ let events ~(algo_result : Driver.t) parents =
   Array.of_list all
 ;;
 
+let vwap_by_minute bars =
+  let dollar_volume = ref 0. in
+  let volume = ref 0. in
+  Array.map bars ~f:(fun (bar : Market_bar.t) ->
+    let typical =
+      (Price.to_float bar.high
+       +. Price.to_float bar.low
+       +. Price.to_float bar.close)
+      /. 3.
+    in
+    let v = Float.of_int (Size.to_int bar.volume) in
+    dollar_volume := !dollar_volume +. (typical *. v);
+    volume := !volume +. v;
+    if Float.( > ) !volume 0. then !dollar_volume /. !volume else typical)
+;;
+
 let run ~algo_name =
   let day = Lazy.force day in
   let instructions = Lazy.force instructions in
@@ -172,13 +190,24 @@ let run ~algo_name =
   let algo_result = run_one (algorithm_named algo_name) in
   let baseline_result = run_one (module Immediate) in
   let parents = parents_of algo_result in
+  let bars = Array.of_list day.Trading_day.bars in
   { algo_name
-  ; bars = Array.of_list day.Trading_day.bars
+  ; bars
   ; fills = Array.of_list algo_result.fills
   ; parents
   ; events = events ~algo_result parents
   ; results = results ~day ~algo_result ~baseline_result
+  ; vwap_by_minute = vwap_by_minute bars
   }
+;;
+
+(* Mark-to-market P&L of everything executed so far, against [last]: longs
+   gain as the tape rises, shorts the reverse. *)
+let open_pnl_cents ~(fills : Fill.t list) ~last =
+  List.sum (module Int) fills ~f:(fun fill ->
+    Side.sign fill.side
+    * (Price.to_int_cents last - Price.to_int_cents fill.price)
+    * Size.to_int fill.size)
 ;;
 
 let last_minute t = Array.length t.bars - 1
