@@ -284,17 +284,30 @@ Design consequences (bind these before building the driver):
   frontend-design skills live in `.claude/skills`). The MVP stays
   CLI-driven until the core works end to end.
 
-UI backlog (first Bonsai version exists on the `ui` branch — a dense
-violet terminal: candlestick+volume chart with the run's fills marked,
-stat strip, parent/fills tables, event log, results-at-close panel; the
-whole sim runs in the browser off embedded data):
+Implemented UI (merged to `main`, lives in `app/ui`): a Bonsai replay
+client that runs the whole simulation in the browser off embedded data
+(TSLA 2026-07-09 + the demo alpha), then replays the deterministic
+result on a clock. Layout: header with the exact engine command,
+replay controls (speed pills + scrubber), an annotated SVG line chart
+(shaded per-order windows, dashed arrival and day-vwap reference
+lines, per-order fill tick rows, optional fill-price dot overlay),
+live total P&L (execution benefit revealed only at the close, to avoid
+spoilers), per-order stat cards with live side-adjusted shortfall/vwap
+bps, and a columnar monospace fill blotter. Styling is a first-class
+theme record (`Styles.t`) with two palettes — `paper` (warm light) and
+`dark` (blue-black terminal) — behind a runtime toggle. Color rules:
+green/red mean good/bad execution only, order identity gets its own
+hue palette, buy/sell stays neutral. Iterated 2026-07-29/30 through
+several designs (dark violet terminal, soft light, toned-down light,
+paper, dark); the toggle version superseded them all and the
+experiment branches were deleted.
 
-- Make the event log, recent fills, and other panels scrollable
-  (max-height + overflow-y:auto) instead of truncating to the last N.
-- Chart zoom: render a (start_minute, end_minute) window held in Bonsai
-  state via the SVG viewBox; wheel/drag to zoom and pan.
-- Smaller fill markers, and hover tooltips on fills and candles (Bonsai
-  hover state + a small tooltip panel; SVG <title> as the cheap interim).
+UI backlog:
+
+- The results screen (screen 7): metric tree, cost decomposition
+  waterfall, same-day algorithm comparison table.
+- Hover tooltip panel (SVG <title> is the cheap interim), wheel
+  zoom/pan, click-an-order-to-filter.
 - Real data selection (symbol/date/alpha upload) instead of the single
   embedded day; js_of_ocaml --release profile to shrink the ~64MB dev
   bundle.
@@ -302,26 +315,27 @@ whole sim runs in the browser off embedded data):
 ## Planned module map (adapted from the original plan)
 
 ```
-lib/types/       DONE (see below) — shared vocabulary
-lib/market/      market_bar, data_loader, replay, fill_model (Engine A),
-                 later synthetic_market (Engine B)
-lib/alpha/       parser, validator (row → Alpha_instruction via create)
-lib/execution/   child_order, parent_order, order_manager,
-                 algorithm_intf, twap, vwap, pov, implementation_shortfall
-lib/analytics/   portfolio, pnl, benchmarks, transaction_cost, report
+lib/types/       DONE — shared vocabulary
+lib/market/      DONE — market_bar, trading_day, data_loader, day_stats
+lib/alpha/       DONE — parser (row → Alpha_instruction via create)
+lib/execution/   DONE — child_order, parent_order, order_manager,
+                 algorithm_intf, twap, immediate; later vwap, pov, is
+lib/simulation/  DONE — fill_model (Engine A), driver; later
+                 synthetic_market (Engine B)
+lib/analytics/   DONE — portfolio, benchmarks, transaction_cost, report
+app/ui/          DONE (first cut) — Bonsai replay client (see UI above)
 lib/server/      server_state, simulation_room, session, server  (late)
-lib/client/      setup/dashboard/results views                   (late)
 ```
 
-Plus a simulation driver ("engine") module that steps bars, advances
-the clock, activates instructions, and calls algorithms — the original
-plan omitted it; don't.
+`lib/simulation` is its own library (not part of `lib/market` as
+originally planned) because `fill_model` needs both `lib/market` and
+`lib/execution` — putting it in either would create a cycle.
 
 Each lib follows the CLAUDE.md layout (`lib/<x>/src` + `lib/<x>/test`,
 library `execlab_<x>` / `execlab.<x>`) with a top-level re-export
 module like `lib/types/src/execlab_types.ml`.
 
-## Current state (as of 2026-07-28, commit 65618cb)
+## Current state (as of 2026-07-30, commit 0ab57e4)
 
 Done — all merged to `main`, build/tests/formatting green:
 - `lib/types` complete and fully expect-tested: `Price` (fixed-point
@@ -349,8 +363,31 @@ Done — all merged to `main`, build/tests/formatting green:
   of real 1-minute bars (all-symbol common window 2026-07-09..07-20;
   AAPL/MSFT windows shifted), canonical per-day files + raw originals;
   format spec in `data/README.md`.
-- `bin/main.exe` parses an alpha CSV and prints validated instructions
-  (demo); sample files in `examples/`.
+- `lib/execution` complete and tested: `Child_order` (request/live
+  split), `Parent_order` (Pending -> Active -> Completed|Expired state
+  machine; arrival price sampled at activation; filled+working <= total
+  invariant), `Order_manager` (owns the id generator;
+  `activate_due`/`expire_due` sweeps), `Algorithm_intf` (first-class
+  modules; `on_bar` sees only the *previous* bar), `Twap`, and the
+  `Immediate` one-shot baseline.
+- `lib/simulation` complete and tested: `Fill_model` — Engine A
+  (marketable orders fill at open +/- half-spread +/- square-root
+  impact, capped by a shared 10%-of-bar-volume budget; resting limits
+  fill strict-through as Maker; never cancels — the driver owns IOC)
+  and `Driver` (per-bar loop: activate, expire, algorithms decide on
+  the previous bar, resting orders trade first, then submissions; IOC
+  remainders canceled).
+- `lib/analytics` complete and tested: `Portfolio`, `Benchmarks`
+  (arrival/terminal price), `Transaction_cost` (average fill,
+  shortfall bps, vwap slippage bps, completion rate, value-add vs a
+  baseline run), `Report` (human report + comparison).
+- `bin/main.exe <alpha.csv> [SYMBOL DATE [algo]]` runs the chosen
+  algorithm *and* the Immediate baseline end to end on real data and
+  prints the comparison report — the MVP milestone, verified on TSLA
+  2026-07-09; sample files in `examples/`.
+- `app/ui`: the Bonsai replay client described in the UI section
+  above; serve the repo root (`python3 -m http.server 8081`) and open
+  `/app/ui/`.
 - Team split so far: one of us owns the market/execution track, the
   other owns the parser and the upcoming analytics track.
 
@@ -363,33 +400,28 @@ Known debt:
 
 ## Roadmap (near-term, in order)
 
-1. **Joint design session for `lib/execution`** (do this before any
-   code): `Child_order` (request-vs-live split; settle the TIF
-   question), `Parent_order` state machine, order manager rules
-   (activation at arrival, overfill prevention, deadline expiry),
-   `Algorithm_intf` (`on_bar` sees only the *previous* bar; returns
-   submit/cancel actions; first-class modules, not functors), and the
-   `Market_hours` + `Money.t` open questions.
-2. Friend track: parser hardening (transcribe `Data_loader`'s
-   patterns), then `lib/analytics` — `Portfolio.apply_fill`, average
-   cost, realized/unrealized P&L, mark-to-market; encode the
-   accounting identity (gross = net + shortfall components) as expect
-   tests.
-3. Market/execution track: implement `lib/execution`, then Engine A —
-   the bar-rules fill model behind the two-function interface, with a
-   `Config.t` of named knobs (synthetic half-spread, participation
-   cap, impact), tagging every fill `Taker`/`Maker`.
-4. Simulation driver (build together): steps bars, advances the clock,
-   activates instructions, calls the algorithm, routes actions to the
-   fill engine, feeds fills to the portfolio. Step-on-demand core with
-   separate batch and paced-playback drivers (see UI consequences).
-5. TWAP + immediate-execution baseline -> first end-to-end slippage
-   report on real data. <- MVP milestone
-6. Run persistence (config + results as sexp files), the
-   same-strategy local leaderboard, and the TCA suite (the metric
-   tree: shortfall = spread + impact + timing + opportunity + fees).
-7. VWAP, POV, implementation shortfall algorithms.
-8. Client UI (the seven screens; likely Bonsai) and server/multiplayer
-   (Async RPC at the one client<->server seam); then Engine B, the
-   synthetic exchange reusing jsip's book/matching engine with the
-   historical path as the fundamental.
+Items 1-5 of the original roadmap (execution design, analytics,
+Engine A, the driver, TWAP + Immediate end to end) are DONE — the MVP
+milestone shipped, and a first cut of the client UI (originally item
+8) landed early. What remains, in order:
+
+1. **TCA decomposition** (friend/analytics track): split shortfall
+   into spread + impact + timing/drift + opportunity inside
+   `Transaction_cost` — the engine's `half_spread` and impact
+   coefficient make each term exactly computable (needs `Trading_day`
+   and `Fill_model.Config` as inputs). Encode "components sum to total
+   shortfall" as a hand-computed expect test.
+2. **VWAP** (market/execution track): TWAP with the schedule following
+   `Day_stats.volume_profile` instead of a straight line. Then POV
+   (the driver must expose realized tape volume to algorithms), then
+   implementation shortfall (needs an urgency model — hardest, last).
+3. **Results screen** in the UI: per-order cost waterfall from the
+   decomposition, benchmark table, same-day algorithm comparison.
+4. Run persistence (config + results as sexp files) and the local
+   same-strategy leaderboard; "retest with a different algo" flows
+   from stored configs.
+5. Server split (Async RPC at the one client<->server seam): real
+   symbol/date selection and alpha CSV upload replace embedded data;
+   the multiplayer fixed-alpha leaderboard arrives here.
+6. Engine B, the synthetic exchange reusing jsip's book/matching
+   engine with the historical path as the fundamental.
