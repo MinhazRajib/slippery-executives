@@ -31,13 +31,21 @@ let print_instructions filename =
     print_s [%sexp (instruction : Alpha_instruction.t)])
 ;;
 
-let algorithm_named = function
+let algorithm_named ~(day : Trading_day.t) = function
   | "twap" -> (module Twap : Algorithm_intf.S)
   | "immediate" -> (module Immediate : Algorithm_intf.S)
+  | "vwap" ->
+    let profile =
+      List.map2_exn
+        day.bars
+        (Day_stats.volume_profile day)
+        ~f:(fun bar weight -> bar.Market_bar.time, weight)
+    in
+    Vwap.create ~profile
   | other ->
     raise_s
       [%message
-        "Unknown algorithm" (other : string) ~known:"twap, immediate"]
+        "Unknown algorithm" (other : string) ~known:"twap, vwap, immediate"]
 ;;
 
 let fills_for_parent (result : Driver.t) (parent : Parent_order.t) =
@@ -88,7 +96,7 @@ let run_report ~alpha_file ~symbol ~date ~algo_name =
            (instruction : Alpha_instruction.t)
            (symbol : Symbol.t)]);
   let run algorithm = Driver.run ~day ~instructions ~algorithm () in
-  let algo_gradings = grade ~day (run (algorithm_named algo_name)) in
+  let algo_gradings = grade ~day (run (algorithm_named ~day algo_name)) in
   let baseline_gradings = grade ~day (run (module Immediate)) in
   printf
     "%s %s: %d instruction(s), %s vs immediate baseline\n\n"
@@ -117,6 +125,7 @@ let () =
   | _ ->
     eprintf
       "usage: main.exe <alpha.csv>                        (parse only)\n";
-    eprintf "       main.exe <alpha.csv> <SYMBOL> <DATE> [twap|immediate]\n";
+    eprintf
+      "       main.exe <alpha.csv> <SYMBOL> <DATE> [twap|vwap|immediate]\n";
     exit 2
 ;;

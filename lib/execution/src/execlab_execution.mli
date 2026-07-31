@@ -14,3 +14,4 @@ module Immediate = Immediate
 module Order_manager = Order_manager
 module Parent_order = Parent_order
 module Twap = Twap
+module Vwap = Vwap
