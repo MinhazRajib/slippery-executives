@@ -130,7 +130,7 @@ let controls
   let primary =
     Styles.s
       ("background:"
-       ^ theme.Styles.blue
+       ^ theme.Styles.brown
        ^ ";color:#ffffff;border:none;border-radius:5px;padding:8px \
           16px;cursor:pointer;font-size:13px;font-weight:700;white-space:nowrap;"
       )
@@ -143,7 +143,7 @@ let controls
   in
   let slider_style =
     Styles.s
-      ("flex:1;accent-color:" ^ theme.Styles.blue ^ ";min-width:160px;")
+      ("flex:1;accent-color:" ^ theme.Styles.brown ^ ";min-width:160px;")
   in
   let clock_style =
     Styles.s
@@ -207,17 +207,14 @@ let controls
 let chart (replay : Replay.t) ~theme ~minute ~fills ~show_fills =
   let bars = replay.bars in
   let n = Array.length bars in
-  let n_orders = List.length replay.parents in
   let w = 1140. in
   let left = 52. in
   let right = 20. in
   let plot_w = w -. left -. right in
   let top = 10. in
-  let price_h = 290. in
+  let price_h = 340. in
   let axis_y = top +. price_h +. 18. in
-  let ticks_top = axis_y +. 12. in
-  let tick_row_h = 17. in
-  let h = ticks_top +. (Float.of_int n_orders *. tick_row_h) +. 8. in
+  let h = axis_y +. 6. in
   let lo =
     Array.fold bars ~init:Float.infinity ~f:(fun acc bar ->
       Float.min acc (Price.to_float bar.Market_bar.low))
@@ -401,69 +398,12 @@ let chart (replay : Replay.t) ~theme ~minute ~fills ~show_fills =
                  (Price.to_string_dollar fill.price))
           ])
   in
-  (* one strip of fill ticks per order, below the time axis *)
-  let tick_rows =
-    List.concat_mapi replay.parents ~f:(fun index parent ->
-      let color = Styles.order_color theme index in
-      let row_y = ticks_top +. (Float.of_int index *. tick_row_h) in
-      let label =
-        svg
-          "text"
-          [ attr "x" "2"
-          ; attr "y" (fs (row_y +. 9.))
-          ; attr "text-anchor" "start"
-          ; attr "fill" theme.Styles.faint
-          ; attr "font-size" "10"
-          ; attr "font-weight" "700"
-          ]
-          [ Vdom.Node.text
-              (sprintf
-                 "O%d %s"
-                 (index + 1)
-                 (side_str parent.instruction.Alpha_instruction.side))
-          ]
-      in
-      let ticks =
-        List.filter_map fills ~f:(fun (fill : Fill.t) ->
-          if not (Set.mem parent.order_ids fill.order_id)
-          then None
-          else (
-            let m = Replay.minute_of_time replay fill.time in
-            Some
-              (svg
-                 "rect"
-                 [ attr "x" (fs (x m -. 1.))
-                 ; attr "y" (fs row_y)
-                 ; attr "width" "2.4"
-                 ; attr "height" "11"
-                 ; attr "fill" color
-                 ]
-                 [ tooltip
-                     (sprintf
-                        "%s %s %d @ %s (%s)"
-                        (hhmm fill.time)
-                        (side_str fill.side)
-                        (Size.to_int fill.size)
-                        (Price.to_string_dollar fill.price)
-                        (match fill.liquidity with
-                         | Taker -> "taker"
-                         | Maker -> "maker"))
-                 ])))
-      in
-      label :: ticks)
-  in
   svg
     "svg"
     [ attr "viewBox" (sprintf "0 0 %s %s" (fs w) (fs h))
     ; Styles.s "width:100%;display:block;"
     ]
-    (grid
-     @ windows
-     @ vwap_line
-     @ time_axis
-     @ price_line
-     @ fill_dots
-     @ tick_rows)
+    (grid @ windows @ vwap_line @ time_axis @ price_line @ fill_dots)
 ;;
 
 let legend
@@ -493,15 +433,20 @@ let legend
     in
     {%html|<span><span %{swatch}></span> <span %{text_style}>#{label}</span></span>|}
   in
+  (* Per-order legend entries stop earning their space past a few orders; the
+     table below carries the mapping instead. *)
   let order_items =
-    List.mapi replay.parents ~f:(fun index parent ->
-      item
-        ~color:(Styles.order_color theme index)
-        ~line:false
-        (sprintf
-           "%s fills (order %d)"
-           (side_str parent.instruction.Alpha_instruction.side)
-           (index + 1)))
+    if List.length replay.parents > 3
+    then []
+    else
+      List.mapi replay.parents ~f:(fun index parent ->
+        item
+          ~color:(Styles.order_color theme index)
+          ~line:false
+          (sprintf
+             "%s fills (order %d)"
+             (side_str parent.instruction.Alpha_instruction.side)
+             (index + 1)))
   in
   let row =
     Styles.s
@@ -568,7 +513,9 @@ let legend
 (* One row per parent order: scales to many orders where a card per order
    would not. *)
 let orders_table (replay : Replay.t) ~theme ~fills ~minute =
-  let columns = "92px 96px 116px 78px 96px 148px 68px 116px 116px 1fr" in
+  let columns =
+    "92px 96px 116px 78px 96px 148px 62px 112px 112px 82px 1fr"
+  in
   let row_base =
     "display:grid;grid-template-columns:"
     ^ columns
@@ -627,7 +574,7 @@ let orders_table (replay : Replay.t) ~theme ~fills ~minute =
     in
     let chip =
       Styles.s
-        ("display:inline-block;width:8px;height:8px;background:"
+        ("display:inline-block;width:12px;height:3px;border-radius:2px;vertical-align:middle;background:"
          ^ color
          ^ ";margin-right:8px;")
     in
@@ -644,10 +591,24 @@ let orders_table (replay : Replay.t) ~theme ~fills ~minute =
     let order_label =
       Styles.s ("font-weight:600;color:" ^ theme.Styles.text ^ ";")
     in
-    let dim = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
+    let warm = Styles.s ("color:" ^ theme.Styles.brown ^ ";") in
+    let bold = Styles.s "font-weight:600;" in
     let faint = Styles.s ("color:" ^ theme.Styles.faint ^ ";") in
     let status_style =
       Styles.s ("color:" ^ status_color ^ ";font-weight:600;")
+    in
+    let bar_outer =
+      Styles.s
+        ("display:block;height:4px;border-radius:2px;overflow:hidden;align-self:center;background:"
+         ^ theme.Styles.chip_bg
+         ^ ";")
+    in
+    let bar_inner =
+      Styles.s
+        (sprintf
+           "display:block;height:100%%;width:%.1f%%;background:%s;"
+           completion
+           color)
     in
     let avg_view =
       match avg with
@@ -659,23 +620,24 @@ let orders_table (replay : Replay.t) ~theme ~fills ~minute =
     {%html|
       <div %{style}>
         <span %{order_label}><span %{chip}></span>Order %{index + 1#Int}</span>
-        <span>#{side_str side} #{Int.to_string_hum ~delimiter:',' total}</span>
-        <span %{dim}>
+        <span %{bold}>#{side_str side} #{Int.to_string_hum ~delimiter:',' total}</span>
+        <span %{warm}>
           #{hhmm instruction.Alpha_instruction.arrival_time}
           →
           #{hhmm instruction.Alpha_instruction.deadline}
         </span>
-        <span %{dim}>#{Price.to_string_dollar parent.arrival_price}</span>
-        <span>%{avg_view}</span>
+        <span %{warm}>#{Price.to_string_dollar parent.arrival_price}</span>
+        <span %{bold}>%{avg_view}</span>
         <span>
           #{Int.to_string_hum ~delimiter:',' filled}
           <span %{faint}>/ #{Int.to_string_hum ~delimiter:',' total}
             (#{sprintf "%.0f" completion}%)</span>
         </span>
-        <span %{dim}>%{List.length mine#Int}/%{Set.length parent.order_ids#Int}</span>
+        <span %{warm}>%{List.length mine#Int}/%{Set.length parent.order_ids#Int}</span>
         <span>%{vs (Price.to_float parent.arrival_price)}</span>
         <span>%{vs day_vwap}</span>
         <span %{status_style}>#{status}</span>
+        <span %{bar_outer}><span %{bar_inner}></span></span>
       </div>
     |}
   in
@@ -694,6 +656,7 @@ let orders_table (replay : Replay.t) ~theme ~fills ~minute =
         <span>vs arrival</span>
         <span>vs day vwap</span>
         <span>status</span>
+        <span></span>
       </div>
       *{List.mapi replay.parents ~f:row}
     </div>
