@@ -23,35 +23,20 @@ let bps_vs ~(side : Side.t) ~avg ~benchmark =
   Float.of_int (Side.sign side) *. (avg -. benchmark) /. benchmark *. 10000.
 ;;
 
-(* Signed cost conventions ("+21bps" on a sell below vwap) misread easily, so
-   spell it out: magnitude plus better/worse. *)
+(* Signed cost convention: positive = worse (paid more / received less),
+   negative = better; color carries the same signal. *)
 let bps_view ~theme value =
-  if Float.( < ) (Float.abs value) 0.05
-  then (
-    let style =
-      Styles.s
-        ("color:" ^ theme.Styles.faint ^ ";font-size:13px;" ^ Styles.mono)
-    in
-    {%html|<span %{style}>flat</span>|})
-  else (
-    let color, word =
-      if Float.( < ) value 0.
-      then theme.Styles.green, "better"
-      else theme.Styles.red, "worse"
-    in
-    let style =
-      Styles.s
-        ("color:" ^ color ^ ";font-size:13px;font-weight:600;" ^ Styles.mono)
-    in
-    let unit_style =
-      Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:11px;")
-    in
-    {%html|
-      <span %{style}>
-        #{sprintf "%.1f" (Float.abs value)}
-        <span %{unit_style}>bps #{word}</span>
-      </span>
-    |})
+  let color =
+    if Float.( <= ) value 0. then theme.Styles.green else theme.Styles.red
+  in
+  let style =
+    Styles.s
+      ("color:" ^ color ^ ";font-size:13px;font-weight:600;" ^ Styles.mono)
+  in
+  let unit_style =
+    Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:11px;")
+  in
+  {%html|<span %{style}>#{sprintf "%+.1f" value} <span %{unit_style}>bps</span></span>|}
 ;;
 
 let hhmm ofday = String.prefix (Time_ns.Ofday.to_string ofday) 5
