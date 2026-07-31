@@ -983,6 +983,8 @@ let setup_view ~theme ~is_dark ~algo ~set_algo ~start ~toggle_theme =
         <div %{pills}>
           %{algo_pill ~theme ~selected:(String.equal algo "twap")
               ~on_click:(fun _ -> set_algo "twap") "TWAP"}
+          %{algo_pill ~theme ~selected:(String.equal algo "vwap")
+              ~on_click:(fun _ -> set_algo "vwap") "VWAP"}
           %{algo_pill ~theme ~selected:(String.equal algo "immediate")
               ~on_click:(fun _ -> set_algo "immediate") "Immediate"}
         </div>
