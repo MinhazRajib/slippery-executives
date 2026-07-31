@@ -68,8 +68,16 @@ let instructions =
 
 let demo_instructions () = Lazy.force instructions
 
-let algorithm_named = function
+let algorithm_named ~(day : Trading_day.t) = function
   | "immediate" -> (module Immediate : Algorithm_intf.S)
+  | "vwap" ->
+    let profile =
+      List.map2_exn
+        day.bars
+        (Day_stats.volume_profile day)
+        ~f:(fun bar weight -> bar.Market_bar.time, weight)
+    in
+    Vwap.create ~profile
   | _ -> (module Twap : Algorithm_intf.S)
 ;;
 
@@ -248,7 +256,7 @@ let run ~algo_name =
   let day = Lazy.force day in
   let instructions = Lazy.force instructions in
   let run_one algorithm = Driver.run ~day ~instructions ~algorithm () in
-  let algo_result = run_one (algorithm_named algo_name) in
+  let algo_result = run_one (algorithm_named ~day algo_name) in
   let baseline_result = run_one (module Immediate) in
   let bars = Array.of_list day.Trading_day.bars in
   let parents = parents_of ~bars algo_result in
