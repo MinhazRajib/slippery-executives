@@ -258,49 +258,82 @@ let chart (replay : Replay.t) ~theme ~minute ~fills ~show_fills =
           [ Vdom.Node.text (sprintf "$%.0f" v) ]
       ])
   in
-  (* shaded execution window + dashed arrival-price annotation per order *)
+  (* With a few disjoint orders, full-height tinted windows with arrival
+     annotations read well. Once windows overlap or multiply, the tints stack
+     into mud and the labels collide — so switch to thin stacked lane bands
+     (one per order, tooltip carrying the detail). *)
+  let compact_windows =
+    let overlaps (a : Replay.parent_replay) (b : Replay.parent_replay) =
+      a.arrival_minute < b.deadline_minute
+      && b.arrival_minute < a.deadline_minute
+    in
+    List.length replay.parents > 3
+    || List.existsi replay.parents ~f:(fun i a ->
+      List.existsi replay.parents ~f:(fun j b -> i < j && overlaps a b))
+  in
+  let window_tooltip index (parent : Replay.parent_replay) =
+    tooltip
+      (sprintf
+         "order %d %s %s → %s · arrival %s"
+         (index + 1)
+         (side_str parent.instruction.Alpha_instruction.side)
+         (hhmm parent.instruction.Alpha_instruction.arrival_time)
+         (hhmm parent.instruction.Alpha_instruction.deadline)
+         (Price.to_string_dollar parent.arrival_price))
+  in
   let windows =
-    List.concat_mapi replay.parents ~f:(fun index parent ->
-      let color = Styles.order_color theme index in
-      let x0 = x parent.arrival_minute in
-      let x1 = x parent.deadline_minute in
-      let arrival = Price.to_float parent.arrival_price in
-      [ svg
+    if compact_windows
+    then
+      List.mapi replay.parents ~f:(fun index parent ->
+        let x0 = x parent.arrival_minute in
+        let x1 = x parent.deadline_minute in
+        svg
           "rect"
           [ attr "x" (fs x0)
-          ; attr "y" (fs top)
-          ; attr "width" (fs (Float.max 2. (x1 -. x0)))
-          ; attr "height" (fs price_h)
-          ; attr "fill" color
-          ; attr "fill-opacity" "0.07"
+          ; attr "y" (fs (top +. 4. +. (Float.of_int index *. 8.)))
+          ; attr "width" (fs (Float.max 3. (x1 -. x0)))
+          ; attr "height" "4"
+          ; attr "rx" "2"
+          ; attr "fill" (Styles.order_color theme index)
+          ; attr "fill-opacity" "0.9"
           ]
-          [ tooltip
-              (sprintf
-                 "order %d window %s-%s"
-                 (index + 1)
-                 (hhmm parent.instruction.Alpha_instruction.arrival_time)
-                 (hhmm parent.instruction.Alpha_instruction.deadline))
-          ]
-      ; svg
-          "line"
-          [ attr "x1" (fs x0)
-          ; attr "x2" (fs x1)
-          ; attr "y1" (fs (y arrival))
-          ; attr "y2" (fs (y arrival))
-          ; attr "stroke" theme.Styles.faint
-          ; attr "stroke-width" "1"
-          ; attr "stroke-dasharray" "4 3"
-          ]
-          []
-      ; svg
-          "text"
-          [ attr "x" (fs (x0 +. 4.))
-          ; attr "y" (fs (y arrival -. 5.))
-          ; attr "fill" theme.Styles.faint
-          ; attr "font-size" "11"
-          ]
-          [ Vdom.Node.text (sprintf "arrival %.2f" arrival) ]
-      ])
+          [ window_tooltip index parent ])
+    else
+      List.concat_mapi replay.parents ~f:(fun index parent ->
+        let color = Styles.order_color theme index in
+        let x0 = x parent.arrival_minute in
+        let x1 = x parent.deadline_minute in
+        let arrival = Price.to_float parent.arrival_price in
+        [ svg
+            "rect"
+            [ attr "x" (fs x0)
+            ; attr "y" (fs top)
+            ; attr "width" (fs (Float.max 2. (x1 -. x0)))
+            ; attr "height" (fs price_h)
+            ; attr "fill" color
+            ; attr "fill-opacity" "0.07"
+            ]
+            [ window_tooltip index parent ]
+        ; svg
+            "line"
+            [ attr "x1" (fs x0)
+            ; attr "x2" (fs x1)
+            ; attr "y1" (fs (y arrival))
+            ; attr "y2" (fs (y arrival))
+            ; attr "stroke" theme.Styles.faint
+            ; attr "stroke-width" "1"
+            ; attr "stroke-dasharray" "4 3"
+            ]
+            []
+        ; svg
+            "text"
+            [ attr "x" (fs (x0 +. 4.))
+            ; attr "y" (fs (y arrival -. 5.))
+            ; attr "fill" theme.Styles.faint
+            ; attr "font-size" "11"
+            ]
+            [ Vdom.Node.text (sprintf "arrival %.2f" arrival) ]
+        ])
   in
   (* the whole-day vwap as a flat dashed reference line *)
   let day_vwap = replay.vwap_by_minute.(n - 1) in
