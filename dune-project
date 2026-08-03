@@ -16,7 +16,10 @@
    (>= 5.2.0))
   dune
   ocaml-lsp-server
-  ocamlformat
+  (ocamlformat
+   (and
+    (>= 0.26.2)
+    (< 0.27)))
   (odoc :with-doc)
   core
   ppx_jane

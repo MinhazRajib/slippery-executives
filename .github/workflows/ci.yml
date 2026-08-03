@@ -33,14 +33,20 @@ jobs:
       - name: Install dependencies
         run: opam install . --deps-only --with-test
 
-      - name: Build
-        run: opam exec -- dune build
+      # app/ui is deliberately excluded from every step below: the Bonsai
+      # web client builds against Jane Street preview releases
+      # (v0.18~preview) and the OxCaml-patched toolchain, neither of which
+      # is installable from the public opam repository this workflow uses.
+      # CI covers the pure-OCaml engine and CLI; the UI builds locally with
+      # `dune build app/ui/main.bc.js`.
+      - name: Build (engine + CLI)
+        run: opam exec -- dune build lib bin
 
       - name: Run tests
-        run: opam exec -- dune runtest
+        run: opam exec -- dune runtest lib
 
       # Runs last so build/test results are always visible even if formatting
       # is off. `dune build @fmt` only checks formatting; locally, `dune fmt`
       # reformats in place.
       - name: Check formatting
-        run: opam exec -- dune build @fmt
+        run: opam exec -- dune build @lib/fmt @bin/fmt
