@@ -20,6 +20,12 @@ val vwap : Trading_day.t -> float
     day's total volume is zero. *)
 val volume_profile : Trading_day.t -> float list
 
+(** The minute-by-minute mean of {!volume_profile} across [days]; sums to 1.
+    This is VWAP's honest *forecast*: average the other days and leave the
+    simulated day out, so the algorithm never peeks at the volume curve it is
+    about to trade against. Errors on [[]]. *)
+val average_volume_profile : Trading_day.t list -> float list Or_error.t
+
 (** Daily realized volatility: the sample standard deviation of
     close-to-close minute log returns, scaled by [sqrt 390] (minutes per
     session). *)

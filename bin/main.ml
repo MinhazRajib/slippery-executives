@@ -37,17 +37,37 @@ let print_instructions filename =
    a minute. 0.15% keeps the tape-chasing visible. *)
 let default_pov_rate = 0.0015
 
-let algorithm_named ~(day : Trading_day.t) = function
+(* VWAP's forecast: the average volume curve of every *other* session we have
+   for the symbol, so the algorithm never sees the day it is about to trade.
+   With no other sessions on disk, fall back to the day's own curve (the old,
+   peeking behavior — better than refusing to run). *)
+let forecast_profile ~symbol ~date ~(day : Trading_day.t) =
+  let other_days =
+    Sys_unix.readdir ("data" ^/ Symbol.to_string symbol)
+    |> Array.to_list
+    |> List.filter_map ~f:(fun file ->
+      let open Option.Let_syntax in
+      let%bind date_string = String.chop_suffix file ~suffix:".csv" in
+      let%bind other =
+        Option.try_with (fun () -> Date.of_string date_string)
+      in
+      if Date.equal other date
+      then None
+      else Some (Or_error.ok_exn (Data_loader.load ~symbol ~date:other ())))
+  in
+  let profile =
+    match Day_stats.average_volume_profile other_days with
+    | Ok profile -> profile
+    | Error (_ : Error.t) -> Day_stats.volume_profile day
+  in
+  List.map2_exn day.bars profile ~f:(fun bar weight ->
+    bar.Market_bar.time, weight)
+;;
+
+let algorithm_named ~symbol ~date ~(day : Trading_day.t) = function
   | "twap" -> (module Twap : Algorithm_intf.S)
   | "immediate" -> (module Immediate : Algorithm_intf.S)
-  | "vwap" ->
-    let profile =
-      List.map2_exn
-        day.bars
-        (Day_stats.volume_profile day)
-        ~f:(fun bar weight -> bar.Market_bar.time, weight)
-    in
-    Vwap.create ~profile
+  | "vwap" -> Vwap.create ~profile:(forecast_profile ~symbol ~date ~day)
   | "pov" -> Pov.create ~participation_rate:default_pov_rate ()
   | other ->
     raise_s
@@ -105,7 +125,9 @@ let run_report ~alpha_file ~symbol ~date ~algo_name =
            (instruction : Alpha_instruction.t)
            (symbol : Symbol.t)]);
   let run algorithm = Driver.run ~day ~instructions ~algorithm () in
-  let algo_gradings = grade ~day (run (algorithm_named ~day algo_name)) in
+  let algo_gradings =
+    grade ~day (run (algorithm_named ~symbol ~date ~day algo_name))
+  in
   let baseline_gradings = grade ~day (run (module Immediate)) in
   printf
     "%s %s: %d instruction(s), %s vs immediate baseline\n\n"

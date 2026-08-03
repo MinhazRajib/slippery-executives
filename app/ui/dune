@@ -19,11 +19,24 @@
  (preprocess
   (pps ppx_jane bonsai.ppx_bonsai ppx_html js_of_ocaml-ppx)))
 
+; Embeds the simulated day, the demo alpha, and every other TSLA session
+; (the leave-one-out forecast material for VWAP) as string constants.
+
 (rule
  (target embedded_data.ml)
  (deps
   (:day ../../data/TSLA/2026-07-09.csv)
-  (:alpha ../../examples/demo_alpha_tsla.csv))
+  (:alpha ../../examples/demo_alpha_tsla.csv)
+  ../../data/TSLA/2026-07-10.csv
+  ../../data/TSLA/2026-07-13.csv
+  ../../data/TSLA/2026-07-14.csv
+  ../../data/TSLA/2026-07-15.csv
+  ../../data/TSLA/2026-07-16.csv
+  ../../data/TSLA/2026-07-17.csv
+  ../../data/TSLA/2026-07-20.csv
+  ../../data/TSLA/2026-07-21.csv
+  ../../data/TSLA/2026-07-22.csv
+  ../../data/TSLA/2026-07-23.csv)
  (action
   (with-stdout-to
    %{target}
@@ -33,4 +46,36 @@
     (echo "|csv}\n")
     (echo "let demo_alpha = {csv|")
     (cat %{alpha})
-    (echo "|csv}\n")))))
+    (echo "|csv}\n")
+    (echo "let other_2026_07_10 = {csv|")
+    (cat ../../data/TSLA/2026-07-10.csv)
+    (echo "|csv}\n")
+    (echo "let other_2026_07_13 = {csv|")
+    (cat ../../data/TSLA/2026-07-13.csv)
+    (echo "|csv}\n")
+    (echo "let other_2026_07_14 = {csv|")
+    (cat ../../data/TSLA/2026-07-14.csv)
+    (echo "|csv}\n")
+    (echo "let other_2026_07_15 = {csv|")
+    (cat ../../data/TSLA/2026-07-15.csv)
+    (echo "|csv}\n")
+    (echo "let other_2026_07_16 = {csv|")
+    (cat ../../data/TSLA/2026-07-16.csv)
+    (echo "|csv}\n")
+    (echo "let other_2026_07_17 = {csv|")
+    (cat ../../data/TSLA/2026-07-17.csv)
+    (echo "|csv}\n")
+    (echo "let other_2026_07_20 = {csv|")
+    (cat ../../data/TSLA/2026-07-20.csv)
+    (echo "|csv}\n")
+    (echo "let other_2026_07_21 = {csv|")
+    (cat ../../data/TSLA/2026-07-21.csv)
+    (echo "|csv}\n")
+    (echo "let other_2026_07_22 = {csv|")
+    (cat ../../data/TSLA/2026-07-22.csv)
+    (echo "|csv}\n")
+    (echo "let other_2026_07_23 = {csv|")
+    (cat ../../data/TSLA/2026-07-23.csv)
+    (echo "|csv}\n")
+    (echo
+     "let tsla_other_days = [ \"2026-07-10\", other_2026_07_10; \"2026-07-13\", other_2026_07_13; \"2026-07-14\", other_2026_07_14; \"2026-07-15\", other_2026_07_15; \"2026-07-16\", other_2026_07_16; \"2026-07-17\", other_2026_07_17; \"2026-07-20\", other_2026_07_20; \"2026-07-21\", other_2026_07_21; \"2026-07-22\", other_2026_07_22; \"2026-07-23\", other_2026_07_23 ]\n")))))

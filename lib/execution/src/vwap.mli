@@ -24,14 +24,16 @@ open! Execlab_types
 
 (** [create ~profile] closes over the profile because {!Algorithm_intf.S}
     gives [init] no configuration of its own. [profile] pairs each bar's
-    time with that bar's fraction of the day's volume — obtained by zipping
-    [Day_stats.volume_profile] with the day's bar times:
+    time with that minute's forecast fraction of the day's volume. The
+    honest forecast is [Day_stats.average_volume_profile] over *other*
+    sessions of the same symbol — never the simulated day itself, which
+    would let the algorithm peek at the volume it is about to trade:
 
     {[
       let profile =
         List.map2_exn
           day.Trading_day.bars
-          (Day_stats.volume_profile day)
+          (Or_error.ok_exn (Day_stats.average_volume_profile other_days))
           ~f:(fun bar weight -> bar.Market_bar.time, weight)
       in
       Driver.run ~algorithm:(Vwap.create ~profile) ...

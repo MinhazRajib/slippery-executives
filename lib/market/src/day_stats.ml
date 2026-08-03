@@ -35,6 +35,21 @@ let volume_profile (day : Trading_day.t) =
     Size.to_float bar.Market_bar.volume /. total)
 ;;
 
+let average_volume_profile days =
+  match days with
+  | [] ->
+    Or_error.error_s
+      [%message "Day_stats.average_volume_profile: no days to average"]
+  | days ->
+    let count = Float.of_int (List.length days) in
+    (* Every Trading_day has exactly 390 bars, so the transpose is total. *)
+    Ok
+      (List.map days ~f:volume_profile
+       |> List.transpose_exn
+       |> List.map ~f:(fun minute ->
+         List.sum (module Float) minute ~f:Fn.id /. count))
+;;
+
 let realized_volatility (day : Trading_day.t) =
   let closes =
     List.map day.bars ~f:(fun bar -> Price.to_float bar.Market_bar.close)

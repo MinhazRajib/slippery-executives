@@ -68,13 +68,29 @@ let instructions =
 
 let demo_instructions () = Lazy.force instructions
 
+(* VWAP's forecast: the average volume curve of the *other* embedded TSLA
+   sessions — the simulated day is left out so the algorithm never peeks at
+   the volume it is about to trade against. *)
+let forecast_profile =
+  lazy
+    (let others =
+       List.map Embedded_data.tsla_other_days ~f:(fun (date, csv) ->
+         Or_error.ok_exn
+           (Data_loader.parse
+              ~symbol:(Symbol.of_string "TSLA")
+              ~date:(Date.of_string date)
+              csv))
+     in
+     Or_error.ok_exn (Day_stats.average_volume_profile others))
+;;
+
 let algorithm_named ~(day : Trading_day.t) = function
   | "immediate" -> (module Immediate : Algorithm_intf.S)
   | "vwap" ->
     let profile =
       List.map2_exn
         day.bars
-        (Day_stats.volume_profile day)
+        (Lazy.force forecast_profile)
         ~f:(fun bar weight -> bar.Market_bar.time, weight)
     in
     Vwap.create ~profile

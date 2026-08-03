@@ -93,3 +93,34 @@ let%expect_test "alternating closes produce nonzero volatility" =
   printf "volatility: %.4f\n" (Day_stats.realized_volatility alternating);
   [%expect {| volatility: 0.1968 |}]
 ;;
+
+let%expect_test "average profile: minute-by-minute mean across days" =
+  (* The front-loaded day trades 3000 then 1000 per bar (total 780,000):
+     first entry 3000/780000 = 1/260, last 1000/780000 = 1/780. The uniform
+     day is 1/390 everywhere. Means: first (1/260 + 1/390) / 2 = 1/312 =
+     0.003205; last (1/780 + 1/390) / 2 = 1/520 = 0.001923. *)
+  let front_loaded =
+    day
+      (List.init 390 ~f:(fun i ->
+         let volume = if i < 195 then 3000 else 1000 in
+         flat_bar_at_minute i ~price_cents:39400 ~volume))
+  in
+  let profile =
+    Or_error.ok_exn
+      (Day_stats.average_volume_profile [ front_loaded; uniform_day ])
+  in
+  printf "entries: %d\n" (List.length profile);
+  printf "first: %.6f\n" (List.hd_exn profile);
+  printf "last: %.6f\n" (List.last_exn profile);
+  printf "sum: %.6f\n" (List.sum (module Float) profile ~f:Fn.id);
+  print_s
+    [%sexp (Day_stats.average_volume_profile [] : float list Or_error.t)];
+  [%expect
+    {|
+    entries: 390
+    first: 0.003205
+    last: 0.001923
+    sum: 1.000000
+    (Error "Day_stats.average_volume_profile: no days to average")
+    |}]
+;;
