@@ -5,9 +5,19 @@ open! Execlab_execution
 open Execlab_simulation
 
 (* A flat trading day: every bar opens at 150.00 with volume 42,000, so with
-   the default config the ask is 150.02, the bid 149.98, and the per-bar
+   the config pinned below the ask is 150.02, the bid 149.98, and the per-bar
    participation budget 4,200. TWAP slices (18-19 shares) carry ~0.2c of
-   impact, which rounds to zero: they fill at 150.02 exactly. *)
+   impact, which rounds to zero: they fill at 150.02 exactly.
+
+   The config is pinned (not [Config.default]) so recalibrating the default
+   impact coefficient doesn't churn these driver-semantics tests. *)
+
+let fill_config : Fill_model.Config.t =
+  { half_spread = Price.of_int_cents 2
+  ; max_participation = 0.1
+  ; impact_coefficient = Price.of_int_cents 10
+  }
+;;
 
 let time_at_minute i =
   Option.value_exn
@@ -47,7 +57,7 @@ let instruction ~arrival ~deadline ~quantity =
 ;;
 
 let run ?(algorithm = (module Twap : Algorithm_intf.S)) instructions =
-  Driver.run ~day ~instructions ~algorithm ()
+  Driver.run ~day ~instructions ~algorithm ~fill_config ()
 ;;
 
 let summarize (result : Driver.t) =

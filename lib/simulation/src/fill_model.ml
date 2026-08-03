@@ -11,10 +11,13 @@ module Config = struct
     }
   [@@deriving sexp_of]
 
+  (* 25c at full participation puts impact at the 10% cap (~5c) in line with
+     square-root-law estimates for a liquid large-cap; the previous 10c
+     undershot by ~2x. *)
   let default =
     { half_spread = Price.of_int_cents 2
     ; max_participation = 0.1
-    ; impact_coefficient = Price.of_int_cents 10
+    ; impact_coefficient = Price.of_int_cents 25
     }
   ;;
 end

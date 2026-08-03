@@ -19,6 +19,7 @@ type t =
   ; green : string
   ; red : string
   ; orange : string (* the vwap reference line *)
+  ; brown : string (* warm accent: replay controls, table accents *)
   ; order_colors : string array
       (* identity colors for orders: never good/bad green/red, never the
          orange vwap line, never the blue price line *)
@@ -40,6 +41,7 @@ let paper =
   ; green = "#15803d"
   ; red = "#b91c1c"
   ; orange = "#d97706"
+  ; brown = "#8e3b2a"
   ; order_colors = [| "#6d28d9"; "#0e7490"; "#be185d"; "#0f766e" |]
   ; chip_border = "#e2d4bf"
   ; shadow = "box-shadow:0 1px 2px rgba(67,53,34,0.05);"
@@ -60,6 +62,7 @@ let dark =
   ; green = "#22c55e"
   ; red = "#ef4444"
   ; orange = "#f59e0b"
+  ; brown = "#c4664a"
   ; order_colors = [| "#a78bfa"; "#22d3ee"; "#f472b6"; "#2dd4bf" |]
   ; chip_border = "#26314a"
   ; shadow = "box-shadow:0 1px 3px rgba(0,0,0,0.4);"
