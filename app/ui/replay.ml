@@ -78,6 +78,7 @@ let algorithm_named ~(day : Trading_day.t) = function
         ~f:(fun bar weight -> bar.Market_bar.time, weight)
     in
     Vwap.create ~profile
+  | "pov" -> Pov.create ~participation_rate:0.1 ()
   | _ -> (module Twap : Algorithm_intf.S)
 ;;
 

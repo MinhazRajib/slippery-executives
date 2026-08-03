@@ -319,8 +319,7 @@ lib/types/       DONE — shared vocabulary
 lib/market/      DONE — market_bar, trading_day, data_loader, day_stats
 lib/alpha/       DONE — parser (row → Alpha_instruction via create)
 lib/execution/   DONE — child_order, parent_order, order_manager,
-                 algorithm_intf, twap, pov, immediate; vwap is on the
-                 unmerged ui7 branch; is later
+                 algorithm_intf, twap, vwap, pov, immediate; is later
 lib/simulation/  DONE — fill_model (Engine A), driver; later
                  synthetic_market (Engine B)
 lib/analytics/   DONE — portfolio, benchmarks, transaction_cost, report
@@ -418,12 +417,11 @@ milestone shipped, and a first cut of the client UI (originally item
    coefficient make each term exactly computable (needs `Trading_day`
    and `Fill_model.Config` as inputs). Encode "components sum to total
    shortfall" as a hand-computed expect test.
-2. **Remaining algorithms** (market/execution track): POV is DONE
-   (2026-08-03, see current state). VWAP (TWAP with the schedule
-   following `Day_stats.volume_profile`) is implemented on the
-   unmerged `ui7` branch — merge it to main. Then implementation
-   shortfall (needs an urgency model — hardest, last). POV's rolling
-   volume-window smoothing knob is still open.
+2. **Remaining algorithms** (market/execution track): VWAP (merged
+   with ui7) and POV (2026-08-03, see current state) are DONE and
+   selectable in both the CLI and the UI setup screen. Implementation
+   shortfall remains (needs an urgency model — hardest, last). POV's
+   rolling volume-window smoothing knob is still open.
 3. **Results screen** in the UI: per-order cost waterfall from the
    decomposition, benchmark table, same-day algorithm comparison.
 4. Run persistence (config + results as sexp files) and the local
