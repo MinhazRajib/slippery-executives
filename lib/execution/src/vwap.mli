@@ -23,11 +23,11 @@ open! Core
 open! Execlab_types
 
 (** [create ~profile] closes over the profile because {!Algorithm_intf.S}
-    gives [init] no configuration of its own. [profile] pairs each bar's
-    time with that minute's forecast fraction of the day's volume. The
-    honest forecast is [Day_stats.average_volume_profile] over *other*
-    sessions of the same symbol — never the simulated day itself, which
-    would let the algorithm peek at the volume it is about to trade:
+    gives [init] no configuration of its own. [profile] pairs each bar's time
+    with that minute's forecast fraction of the day's volume. The honest
+    forecast is [Day_stats.average_volume_profile] over *other* sessions of
+    the same symbol — never the simulated day itself, which would let the
+    algorithm peek at the volume it is about to trade:
 
     {[
       let profile =
@@ -39,8 +39,8 @@ open! Execlab_types
       Driver.run ~algorithm:(Vwap.create ~profile) ...
     ]}
 
-    Weights must be non-negative; entries outside [arrival, deadline) are
-    ignored. If no weight falls inside the window (deadline = arrival, or
-    an empty profile), the whole quantity is due immediately, like {!Twap}
-    with a zero-length window. *)
+    Weights must be non-negative; entries outside the arrival -> deadline
+    window are ignored. If no weight falls inside the window (deadline =
+    arrival, or an empty profile), the whole quantity is due immediately,
+    like {!Twap} with a zero-length window. *)
 val create : profile:(Time_ns.Ofday.t * float) list -> Algorithm_intf.t

@@ -45,8 +45,8 @@ jobs:
       - name: Run tests
         run: opam exec -- dune runtest lib
 
-      # Runs last so build/test results are always visible even if formatting
-      # is off. `dune build @fmt` only checks formatting; locally, `dune fmt`
-      # reformats in place.
-      - name: Check formatting
-        run: opam exec -- dune build @lib/fmt @bin/fmt
+      # No formatting check: this repo is formatted with the OxCaml-patched
+      # ocamlformat (0.26.2+ox1), which disagrees with the public 0.26.2
+      # about the canonical layout of identical code (first-class-module
+      # argument docking, comment reflow) — so no single formatting can
+      # satisfy both checkers. Formatting is enforced locally by `dune fmt`.

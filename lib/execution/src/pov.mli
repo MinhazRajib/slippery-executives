@@ -34,7 +34,7 @@ open! Execlab_types
 
 (** [create ~participation_rate] closes over the configuration because
     {!Algorithm_intf.S} gives [init] no configuration of its own.
-    [participation_rate] is a fraction in (0, 1] — [0.05] demands 5% of
+    [participation_rate] is a fraction in (0, 1\] — [0.05] demands 5% of
     observed volume. [min_child_size] holds back slices smaller than this
     (dust waits until the target accumulates); [max_child_size] caps any
     single slice:
