@@ -3,11 +3,18 @@ open! Bonsai_web
 open Bonsai.Let_syntax
 open! Execlab_types
 open! Execlab_market
+open! Execlab_analytics
 
+(* Wizard flow (adapted from app/ui/client's seven screens): Dashboard ->
+   Choose_day -> Alpha -> Setup (algorithm + confirm) -> Sim -> Results. *)
 module Screen = struct
   type t =
+    | Dashboard
+    | Choose_day
+    | Alpha
     | Setup
     | Sim
+    | Results
   [@@deriving sexp, equal]
 end
 
@@ -532,7 +539,8 @@ let legend
   in
   {%html|
     <div %{row}>
-      %{item ~color:theme.Styles.blue ~line:true "TSLA price (1-min close)"}
+      %{item ~color:theme.Styles.blue ~line:true
+          (Symbol.to_string replay.symbol ^ " price (1-min close)")}
       %{item ~color:theme.Styles.orange ~line:true "day vwap"}
       *{order_items}
       %{stats}
@@ -724,8 +732,9 @@ let event_log (replay : Replay.t) ~theme ~fills ~minute =
             , 0
             , index
             , sprintf
-                "%s %s TSLA arrives · deadline %s"
+                "%s %s %s arrives · deadline %s"
                 (side_str side)
+                (Symbol.to_string replay.symbol)
                 (Int.to_string_hum ~delimiter:',' total)
                 (hhmm instruction.Alpha_instruction.deadline)
             , None )
@@ -862,6 +871,7 @@ let sim_view
   ~restart
   ~toggle_fills
   ~toggle_theme
+  ~to_results
   ~back
   =
   let fills = Replay.fills_upto replay ~minute in
@@ -891,12 +901,17 @@ let sim_view
       "display:flex;align-items:baseline;justify-content:space-between;"
   in
   let title =
-    sprintf "TSLA · 2026-07-09 · %s" (String.uppercase replay.algo_name)
+    sprintf
+      "%s · %s · %s"
+      (Symbol.to_string replay.symbol)
+      (Date.to_string replay.date)
+      (String.uppercase replay.algo_name)
   in
   let command =
     sprintf
-      "dune exec bin/main.exe -- examples/demo_alpha_tsla.csv TSLA \
-       2026-07-09 %s"
+      "dune exec bin/main.exe -- <your_alpha.csv> %s %s %s"
+      (Symbol.to_string replay.symbol)
+      (Date.to_string replay.date)
       replay.algo_name
   in
   {%html|
@@ -908,6 +923,9 @@ let sim_view
             %{theme_button ~theme ~is_dark ~toggle_theme}
             <button %{back_style} on_click=%{fun _ -> back}>
               ← New simulation
+            </button>
+            <button %{back_style} on_click=%{fun _ -> to_results}>
+              Results →
             </button>
           </span>
         </div>
@@ -943,12 +961,42 @@ let algo_pill ~theme ~selected ~on_click label =
   {%html|<button %{style} on_click=%{on_click}>#{label}</button>|}
 ;;
 
-let setup_view ~theme ~is_dark ~algo ~set_algo ~start ~toggle_theme =
-  let page =
+let instruction_row ~theme (instruction : Alpha_instruction.t) =
+  let row =
     Styles.s
-      "display:flex;flex-direction:column;gap:16px;max-width:640px;margin:64px \
-       auto;padding:20px;"
+      ("display:flex;gap:16px;padding:8px 0;border-bottom:1px solid "
+       ^ theme.Styles.hairline
+       ^ ";font-size:13px;color:"
+       ^ theme.Styles.text
+       ^ ";"
+       ^ Styles.mono)
   in
+  let side_style = Styles.s "font-weight:700;width:44px;" in
+  let dim = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
+  let qty =
+    sprintf
+      "%s %s"
+      (Int.to_string_hum ~delimiter:',' (Size.to_int instruction.quantity))
+      (Symbol.to_string instruction.symbol)
+  in
+  let window =
+    sprintf
+      "%s → %s"
+      (hhmm instruction.arrival_time)
+      (hhmm instruction.deadline)
+  in
+  {%html|
+    <div %{row}>
+      <span %{side_style}>#{side_str instruction.side}</span>
+      <span>#{qty}</span>
+      <span %{dim}>#{window}</span>
+    </div>
+  |}
+;;
+
+(* Shared page chrome for the wizard screens: brand, title, optional back
+   link, theme toggle. *)
+let wizard_header ~theme ~is_dark ~toggle_theme ~title ~subtitle ~back =
   let title_style =
     Styles.s
       ("color:"
@@ -958,9 +1006,38 @@ let setup_view ~theme ~is_dark ~algo ~set_algo ~start ~toggle_theme =
   let sub_style =
     Styles.s ("color:" ^ theme.Styles.secondary ^ ";font-size:14px;")
   in
-  let section_label = Styles.s (Styles.label theme ^ "margin-bottom:8px;") in
-  let pills = Styles.s "display:flex;gap:8px;" in
-  let start_style =
+  let back_style =
+    Styles.s
+      ("background:none;border:none;color:"
+       ^ theme.Styles.blue
+       ^ ";cursor:pointer;font-size:13px;font-weight:600;padding:0;")
+  in
+  let back_button =
+    match back with
+    | None -> []
+    | Some (label, effect) ->
+      [ {%html|<button %{back_style} on_click=%{fun _ -> effect}>#{label}</button>|}
+      ]
+  in
+  {%html|
+    <div
+      %{Styles.s
+          "display:flex;justify-content:space-between;align-items:flex-start;"}>
+      <div>
+        <span %{Styles.brand theme}>execlab</span>
+        <div %{title_style}>#{title}</div>
+        <div %{sub_style}>#{subtitle}</div>
+      </div>
+      <span %{Styles.s "display:flex;gap:10px;align-items:center;"}>
+        *{back_button}
+        %{theme_button ~theme ~is_dark ~toggle_theme}
+      </span>
+    </div>
+  |}
+;;
+
+let primary_button ~theme ~on_click label =
+  let style =
     Styles.s
       ("background:"
        ^ theme.Styles.blue
@@ -968,49 +1045,288 @@ let setup_view ~theme ~is_dark ~algo ~set_algo ~start ~toggle_theme =
           20px;cursor:pointer;font-size:14px;font-weight:700;align-self:flex-start;"
       )
   in
-  let instruction_row (instruction : Alpha_instruction.t) =
-    let row =
+  {%html|<button %{style} on_click=%{on_click}>#{label}</button>|}
+;;
+
+let narrow_page =
+  "display:flex;flex-direction:column;gap:16px;max-width:640px;margin:48px \
+   auto;padding:20px;"
+;;
+
+(* ---------- dashboard ---------- *)
+
+let dashboard_view ~theme ~is_dark ~runs ~new_sim ~toggle_theme =
+  let section_label = Styles.s (Styles.label theme ^ "margin-bottom:8px;") in
+  let empty_style =
+    Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:13px;")
+  in
+  let row_base =
+    "display:grid;grid-template-columns:150px 90px 1fr 1fr \
+     70px;column-gap:10px;align-items:baseline;"
+  in
+  let head_row =
+    Styles.s
+      (row_base
+       ^ "padding:8px 0 6px 0;border-bottom:1px solid "
+       ^ theme.Styles.hairline
+       ^ ";"
+       ^ Styles.label theme)
+  in
+  let run_row (run : History.Run_record.t) =
+    let style =
       Styles.s
-        ("display:flex;gap:16px;padding:8px 0;border-bottom:1px solid "
-         ^ theme.Styles.hairline
-         ^ ";font-size:13px;color:"
+        (row_base
+         ^ "padding:7px 0;font-size:13px;color:"
          ^ theme.Styles.text
+         ^ ";border-bottom:1px solid "
+         ^ theme.Styles.hairline
          ^ ";"
          ^ Styles.mono)
     in
-    let side_style = Styles.s "font-weight:700;width:44px;" in
     let dim = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
-    let qty =
-      sprintf
-        "%s TSLA"
-        (Int.to_string_hum ~delimiter:',' (Size.to_int instruction.quantity))
+    let capture =
+      match run.alpha_capture with
+      | None -> "n/a"
+      | Some c -> sprintf "%.1f%%" (c *. 100.)
     in
-    let window =
-      sprintf
-        "%s → %s"
-        (hhmm instruction.arrival_time)
-        (hhmm instruction.deadline)
+    {%html|
+      <div %{style}>
+        <span>#{Symbol.to_string run.symbol} · #{Date.to_string run.date}</span>
+        <span %{dim}>#{String.uppercase run.algo_name}</span>
+        <span>%{money_stat ~theme ~label:"value add" run.value_add_cents}</span>
+        <span>%{money_stat ~theme ~label:"net" run.net_cents}</span>
+        <span %{dim}>#{capture}</span>
+      </div>
+    |}
+  in
+  let runs_body =
+    match runs with
+    | [] ->
+      [ {%html|<div %{empty_style}>No runs yet — run your first simulation.</div>|}
+      ]
+    | runs ->
+      {%html|
+        <div %{head_row}>
+          <span>day</span>
+          <span>algo</span>
+          <span>vs immediate</span>
+          <span>net P&L</span>
+          <span>capture</span>
+        </div>
+      |}
+      :: List.map runs ~f:run_row
+  in
+  {%html|
+    <div %{Styles.s narrow_page}>
+      %{wizard_header ~theme ~is_dark ~toggle_theme
+          ~title:"Historical execution laboratory"
+          ~subtitle:"upload an alpha, pick a day, and see how much survives \
+                     execution" ~back:None}
+      %{primary_button ~theme ~on_click:(fun _ -> new_sim)
+          "New simulation →"}
+      <div %{Styles.card theme "padding:16px;"}>
+        <div %{section_label}>Recent runs</div>
+        *{runs_body}
+      </div>
+    </div>
+  |}
+;;
+
+(* ---------- choose a market day ---------- *)
+
+let choose_day_view ~theme ~is_dark ~selection ~choose ~toggle_theme ~back =
+  let symbol_label =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.text
+       ^ ";font-size:14px;font-weight:700;width:70px;"
+       ^ Styles.mono)
+  in
+  let chips = Styles.s "display:flex;gap:6px;flex-wrap:wrap;flex:1;" in
+  let symbol_row symbol =
+    let chip date =
+      let selected =
+        match selection with
+        | Some (s, d) -> Symbol.equal s symbol && Date.equal d date
+        | None -> false
+      in
+      let bg =
+        if selected then theme.Styles.blue else theme.Styles.chip_bg
+      in
+      let color = if selected then "#ffffff" else theme.Styles.secondary in
+      let style =
+        Styles.s
+          ("background:"
+           ^ bg
+           ^ ";color:"
+           ^ color
+           ^ ";border:none;border-radius:4px;padding:4px \
+              8px;cursor:pointer;font-size:12px;"
+           ^ Styles.mono)
+      in
+      let label = String.drop_prefix (Date.to_string date) 5 in
+      {%html|
+        <button %{style} on_click=%{fun _ -> choose symbol date}>
+          #{label}
+        </button>
+      |}
+    in
+    let row =
+      Styles.s
+        ("display:flex;gap:12px;align-items:baseline;padding:8px \
+          0;border-bottom:1px solid "
+         ^ theme.Styles.hairline
+         ^ ";")
     in
     {%html|
       <div %{row}>
-        <span %{side_style}>#{side_str instruction.side}</span>
-        <span>#{qty}</span>
-        <span %{dim}>#{window}</span>
+        <span %{symbol_label}>#{Symbol.to_string symbol}</span>
+        <div %{chips}>*{List.map (Dataset.dates_for symbol) ~f:chip}</div>
       </div>
     |}
   in
   {%html|
-    <div %{page}>
-      <div
-        %{Styles.s
-            "display:flex;justify-content:space-between;align-items:flex-start;"}>
-        <div>
-          <span %{Styles.brand theme}>execlab</span>
-          <div %{title_style}>New simulation</div>
-          <div %{sub_style}>TSLA · 2026-07-09 · bar-based fill model</div>
-        </div>
-        %{theme_button ~theme ~is_dark ~toggle_theme}
+    <div %{Styles.s narrow_page}>
+      %{wizard_header ~theme ~is_dark ~toggle_theme
+          ~title:"Choose a market day"
+          ~subtitle:"every bundled (symbol, session) pair; all dates 2026"
+          ~back:(Some ("← Dashboard", back))}
+      <div %{Styles.card theme "padding:16px;"}>
+        *{List.map Dataset.symbols ~f:symbol_row}
       </div>
+    </div>
+  |}
+;;
+
+(* ---------- alpha upload ---------- *)
+
+let alpha_view
+  ~theme
+  ~is_dark
+  ~symbol
+  ~date
+  ~alpha_text
+  ~set_alpha_text
+  ~continue_
+  ~toggle_theme
+  ~back
+  =
+  let section_label = Styles.s (Styles.label theme ^ "margin-bottom:8px;") in
+  let hint =
+    Styles.s
+      ("color:" ^ theme.Styles.faint ^ ";font-size:12px;" ^ Styles.mono)
+  in
+  let textarea_style =
+    Styles.s
+      ("width:100%;box-sizing:border-box;background:"
+       ^ theme.Styles.page_bg
+       ^ ";color:"
+       ^ theme.Styles.text
+       ^ ";border:1px solid "
+       ^ theme.Styles.chip_border
+       ^ ";border-radius:5px;padding:10px;font-size:13px;resize:vertical;"
+       ^ Styles.mono)
+  in
+  let error_style =
+    Styles.s
+      ("color:" ^ theme.Styles.red ^ ";font-size:12.5px;" ^ Styles.mono)
+  in
+  let preview =
+    match Replay.parse_alpha alpha_text with
+    | Ok instructions ->
+      [ {%html|
+          <div %{Styles.card theme "padding:16px;"}>
+            <div %{section_label}>Parsed instructions</div>
+            *{List.map instructions ~f:(instruction_row ~theme)}
+          </div>
+        |}
+      ; primary_button ~theme ~on_click:(fun _ -> continue_) "Continue →"
+      ]
+    | Error error ->
+      [ {%html|
+          <div %{Styles.card theme "padding:16px;"}>
+            <div %{section_label}>Parse errors</div>
+            <div %{error_style}>#{Error.to_string_hum error}</div>
+          </div>
+        |}
+      ]
+  in
+  let subtitle =
+    sprintf
+      "%s · %s — paste your alpha's output"
+      (Symbol.to_string symbol)
+      (Date.to_string date)
+  in
+  {%html|
+    <div %{Styles.s narrow_page}>
+      %{wizard_header ~theme ~is_dark ~toggle_theme
+          ~title:"Alpha instructions" ~subtitle
+          ~back:(Some ("← Choose day", back))}
+      <div %{Styles.card theme "padding:16px;"}>
+        <div %{section_label}>Alpha CSV</div>
+        <textarea
+          rows=%{10}
+          %{Vdom.Attr.create "spellcheck" "false"}
+          %{Vdom.Attr.string_property "value" alpha_text}
+          %{textarea_style}
+          on_input=%{fun (_ : _) text -> set_alpha_text text}></textarea>
+        <div %{hint}>arrival_time,symbol,side,quantity,deadline</div>
+      </div>
+      *{preview}
+    </div>
+  |}
+;;
+
+(* ---------- algorithm + confirm ---------- *)
+
+let setup_view
+  ~theme
+  ~is_dark
+  ~symbol
+  ~date
+  ~alpha_text
+  ~algo
+  ~set_algo
+  ~start
+  ~run_error
+  ~toggle_theme
+  ~back
+  =
+  let section_label = Styles.s (Styles.label theme ^ "margin-bottom:8px;") in
+  let pills = Styles.s "display:flex;gap:8px;" in
+  let error_style =
+    Styles.s
+      ("color:" ^ theme.Styles.red ^ ";font-size:12.5px;" ^ Styles.mono)
+  in
+  let error_card =
+    match run_error with
+    | None -> []
+    | Some error ->
+      [ {%html|
+          <div %{Styles.card theme "padding:16px;"}>
+            <div %{section_label}>Run failed</div>
+            <div %{error_style}>#{Error.to_string_hum error}</div>
+          </div>
+        |}
+      ]
+  in
+  let instructions =
+    match Replay.parse_alpha alpha_text with
+    | Ok instructions -> List.map instructions ~f:(instruction_row ~theme)
+    | Error error ->
+      [ {%html|<div %{error_style}>#{Error.to_string_hum error}</div>|} ]
+  in
+  let subtitle =
+    sprintf
+      "%s · %s · bar-based fill model"
+      (Symbol.to_string symbol)
+      (Date.to_string date)
+  in
+  {%html|
+    <div %{Styles.s narrow_page}>
+      %{wizard_header ~theme ~is_dark ~toggle_theme
+          ~title:"New simulation" ~subtitle
+          ~back:(Some ("← Alpha", back))}
       <div %{Styles.card theme "padding:16px;"}>
         <div %{section_label}>Execution algorithm</div>
         <div %{pills}>
@@ -1026,11 +1342,242 @@ let setup_view ~theme ~is_dark ~algo ~set_algo ~start ~toggle_theme =
       </div>
       <div %{Styles.card theme "padding:16px;"}>
         <div %{section_label}>Alpha instructions</div>
-        *{List.map (Replay.demo_instructions ()) ~f:instruction_row}
+        *{instructions}
       </div>
-      <button %{start_style} on_click=%{fun _ -> start}>
-        Run simulation
-      </button>
+      *{error_card}
+      %{primary_button ~theme ~on_click:(fun _ -> start) "Run simulation"}
+    </div>
+  |}
+;;
+
+(* ---------- results: the metric tree ---------- *)
+
+(* Cost convention: positive = money lost, so red; negative = favorable. *)
+let cost_cell ~theme cents =
+  let color =
+    if cents > 0
+    then theme.Styles.red
+    else if cents < 0
+    then theme.Styles.green
+    else theme.Styles.faint
+  in
+  let style =
+    Styles.s ("color:" ^ color ^ ";font-size:13px;" ^ Styles.mono)
+  in
+  {%html|<span %{style}>#{dollars_signed cents}</span>|}
+;;
+
+(* P&L convention: positive = money made, so green. *)
+let pnl_cell ~theme cents =
+  let color =
+    if cents > 0
+    then theme.Styles.green
+    else if cents < 0
+    then theme.Styles.red
+    else theme.Styles.faint
+  in
+  let style =
+    Styles.s
+      ("color:" ^ color ^ ";font-size:13px;font-weight:600;" ^ Styles.mono)
+  in
+  {%html|<span %{style}>#{dollars_signed cents}</span>|}
+;;
+
+let results_view
+  (replay : Replay.t)
+  ~theme
+  ~is_dark
+  ~to_sim
+  ~new_sim
+  ~to_dashboard
+  ~toggle_theme
+  =
+  let rows = replay.results.rows in
+  let sum f = List.sum (module Int) rows ~f in
+  let total_net =
+    sum (fun row -> row.Replay.grading.Transaction_cost.net_pnl_cents)
+  in
+  let total_gross =
+    sum (fun row -> row.Replay.grading.gross_theoretical_pnl_cents)
+  in
+  let capture =
+    if total_gross > 0
+    then sprintf "%.1f%%" (total_net // total_gross *. 100.)
+    else "n/a"
+  in
+  let title =
+    sprintf
+      "Results — %s · %s · %s"
+      (Symbol.to_string replay.symbol)
+      (Date.to_string replay.date)
+      (String.uppercase replay.algo_name)
+  in
+  let summary =
+    let strip =
+      Styles.s
+        "display:flex;gap:24px;align-items:baseline;padding:14px 16px;"
+    in
+    let label_style = Styles.s (Styles.label theme) in
+    let capture_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.text
+         ^ ";font-size:13px;font-weight:600;"
+         ^ Styles.mono)
+    in
+    {%html|
+      <div %{Styles.card theme ""}>
+        <div %{strip}>
+          %{money_stat ~theme ~label:"Execution benefit vs immediate"
+              replay.results.total_value_add_cents}
+          %{money_stat ~theme ~label:"Net P&L" total_net}
+          %{money_stat ~theme ~label:"Gross alpha" total_gross}
+          <span>
+            <span %{label_style}>Alpha captured </span>
+            <span %{capture_style}>#{capture}</span>
+          </span>
+        </div>
+      </div>
+    |}
+  in
+  let columns = "64px 96px 60px 88px 92px 90px 78px 78px 100px 96px 1fr" in
+  let row_base =
+    "display:grid;grid-template-columns:"
+    ^ columns
+    ^ ";column-gap:10px;align-items:baseline;"
+  in
+  let head_row =
+    Styles.s
+      (row_base
+       ^ "padding:10px 16px 6px 16px;border-bottom:1px solid "
+       ^ theme.Styles.hairline
+       ^ ";"
+       ^ Styles.label theme)
+  in
+  let order_row index (row : Replay.result_row) =
+    let grading = row.Replay.grading in
+    let chip =
+      Styles.s
+        ("display:inline-block;width:12px;height:3px;border-radius:2px;vertical-align:middle;background:"
+         ^ Styles.order_color theme index
+         ^ ";margin-right:8px;")
+    in
+    let style =
+      Styles.s
+        (row_base
+         ^ "padding:8px 16px;font-size:13px;color:"
+         ^ theme.Styles.text
+         ^ ";border-bottom:1px solid "
+         ^ theme.Styles.hairline
+         ^ ";"
+         ^ Styles.mono)
+    in
+    let bold = Styles.s "font-weight:600;" in
+    let dim = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
+    let avg_fill, shortfall =
+      match grading.Transaction_cost.fill_metrics with
+      | None ->
+        let dash = {%html|<span %{dim}>-</span>|} in
+        dash, dash
+      | Some metrics ->
+        let avg = sprintf "$%.4f" metrics.average_fill_price in
+        {%html|<span>#{avg}</span>|}, bps_view ~theme metrics.shortfall_bps
+    in
+    {%html|
+      <div %{style}>
+        <span %{bold}><span %{chip}></span>O%{index + 1#Int}</span>
+        <span %{bold}>
+          #{side_str grading.side}
+          #{Int.to_string_hum ~delimiter:','
+              (Size.to_int grading.quantity)}
+        </span>
+        <span %{dim}>
+          #{sprintf "%.0f%%" (grading.completion_rate *. 100.)}
+        </span>
+        <span>%{avg_fill}</span>
+        <span>%{shortfall}</span>
+        <span>%{cost_cell ~theme grading.timing_cost_cents}</span>
+        <span>%{cost_cell ~theme grading.spread_cost_cents}</span>
+        <span>%{cost_cell ~theme grading.impact_cost_cents}</span>
+        <span>%{cost_cell ~theme grading.opportunity_cost_cents}</span>
+        <span>%{pnl_cell ~theme grading.net_pnl_cents}</span>
+        <span>%{pnl_cell ~theme row.value_add_cents}</span>
+      </div>
+    |}
+  in
+  let totals_row =
+    let style =
+      Styles.s
+        (row_base
+         ^ "padding:9px 16px;font-size:13px;font-weight:700;color:"
+         ^ theme.Styles.text
+         ^ ";"
+         ^ Styles.mono)
+    in
+    let blank = {%html|<span></span>|} in
+    {%html|
+      <div %{style}>
+        <span>total</span>
+        %{blank}
+        %{blank}
+        %{blank}
+        %{blank}
+        <span>%{cost_cell ~theme
+            (sum (fun row -> row.Replay.grading.timing_cost_cents))}</span>
+        <span>%{cost_cell ~theme
+            (sum (fun row -> row.Replay.grading.spread_cost_cents))}</span>
+        <span>%{cost_cell ~theme
+            (sum (fun row -> row.Replay.grading.impact_cost_cents))}</span>
+        <span>%{cost_cell ~theme
+            (sum (fun row -> row.Replay.grading.opportunity_cost_cents))}</span>
+        <span>%{pnl_cell ~theme total_net}</span>
+        <span>%{pnl_cell ~theme replay.results.total_value_add_cents}</span>
+      </div>
+    |}
+  in
+  let title_style =
+    Styles.s
+      ("color:" ^ theme.Styles.text ^ ";font-size:14px;font-weight:600;")
+  in
+  let buttons = Styles.s "display:flex;gap:10px;" in
+  let page =
+    Styles.s
+      "display:flex;flex-direction:column;gap:16px;max-width:1240px;margin:0 \
+       auto;padding:28px 20px;"
+  in
+  {%html|
+    <div %{page}>
+      %{wizard_header ~theme ~is_dark ~toggle_theme ~title
+          ~subtitle:"shortfall split into the metric tree: timing + spread \
+                     + impact, plus opportunity on unfilled shares"
+          ~back:(Some ("← Replay", to_sim))}
+      %{summary}
+      <div %{Styles.card theme "padding-bottom:4px;"}>
+        <div %{Styles.s "padding:14px 16px 0 16px;"}>
+          <span %{title_style}>Execution cost breakdown</span>
+        </div>
+        <div %{head_row}>
+          <span>order</span>
+          <span>side · qty</span>
+          <span>filled</span>
+          <span>avg fill</span>
+          <span>shortfall</span>
+          <span>timing</span>
+          <span>spread</span>
+          <span>impact</span>
+          <span>opportunity</span>
+          <span>net P&L</span>
+          <span>vs immediate</span>
+        </div>
+        *{List.mapi rows ~f:order_row}
+        %{totals_row}
+      </div>
+      <div %{buttons}>
+        %{primary_button ~theme ~on_click:(fun _ -> new_sim)
+            "New simulation"}
+        %{primary_button ~theme ~on_click:(fun _ -> to_dashboard)
+            "Dashboard"}
+      </div>
     </div>
   |}
 ;;
@@ -1049,9 +1596,38 @@ let set_page_background =
   Effect.of_sync_fun set
 ;;
 
+(* One dashboard row per completed run, aggregated across its orders. *)
+let run_record (replay : Replay.t) =
+  let rows = replay.results.rows in
+  let sum f = List.sum (module Int) rows ~f in
+  let net =
+    sum (fun row -> row.Replay.grading.Transaction_cost.net_pnl_cents)
+  in
+  let gross =
+    sum (fun row -> row.Replay.grading.gross_theoretical_pnl_cents)
+  in
+  { History.Run_record.symbol = replay.symbol
+  ; date = replay.date
+  ; algo_name = replay.algo_name
+  ; alpha_capture = (if gross > 0 then Some (net // gross) else None)
+  ; value_add_cents = replay.results.total_value_add_cents
+  ; net_cents = net
+  }
+;;
+
 let app (local_ graph) : Vdom.Node.t Bonsai.t =
-  let screen, set_screen = Bonsai.state Screen.Setup graph in
+  let screen, set_screen = Bonsai.state Screen.Dashboard graph in
+  let selection, set_selection =
+    Bonsai.state (None : (Symbol.t * Date.t) option) graph
+  in
+  let alpha_text, set_alpha_text =
+    Bonsai.state Embedded_data.demo_alpha graph
+  in
   let algo, set_algo = Bonsai.state "twap" graph in
+  let run_error, set_run_error =
+    Bonsai.state (None : Error.t option) graph
+  in
+  let runs, set_runs = Bonsai.state (History.load ()) graph in
   let replay, set_replay = Bonsai.state (None : Replay.t option) graph in
   let minute, set_minute = Bonsai.state' 0 graph in
   let playing, set_playing = Bonsai.state true graph in
@@ -1073,17 +1649,32 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     graph;
   let start =
     let%arr algo
+    and selection
+    and alpha_text
+    and runs
+    and set_runs
+    and set_run_error
     and set_replay
     and set_screen
     and set_minute
     and set_playing in
-    let%bind.Effect r =
-      Effect.of_sync_fun (fun () -> Replay.run ~algo_name:algo) ()
-    in
-    let%bind.Effect () = set_replay (Some r) in
-    let%bind.Effect () = set_minute (fun (_ : int) -> 0) in
-    let%bind.Effect () = set_playing true in
-    set_screen Screen.Sim
+    match selection with
+    | None -> set_run_error (Some (Error.of_string "choose a day first"))
+    | Some (symbol, date) ->
+      let%bind.Effect result =
+        Effect.of_sync_fun
+          (fun () -> Replay.run ~symbol ~date ~alpha_text ~algo_name:algo)
+          ()
+      in
+      (match result with
+       | Error error -> set_run_error (Some error)
+       | Ok r ->
+         let%bind.Effect () = set_run_error None in
+         let%bind.Effect () = set_replay (Some r) in
+         let%bind.Effect () = set_minute (fun (_ : int) -> 0) in
+         let%bind.Effect () = set_playing true in
+         let%bind.Effect () = set_runs (History.add (run_record r) runs) in
+         set_screen Screen.Sim)
   in
   let restart =
     let%arr set_minute and set_playing in
@@ -1091,8 +1682,14 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     set_playing true
   in
   let%arr screen
+  and selection
+  and set_selection
+  and alpha_text
+  and set_alpha_text
   and algo
   and set_algo
+  and run_error
+  and runs
   and replay
   and minute
   and playing
@@ -1113,9 +1710,59 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     let%bind.Effect () = set_is_dark (not is_dark) in
     set_page_background next.Styles.page_bg
   in
+  let goto s = set_screen s in
+  let choose symbol date =
+    let%bind.Effect () = set_selection (Some (symbol, date)) in
+    set_screen Screen.Alpha
+  in
+  let dashboard () =
+    dashboard_view
+      ~theme
+      ~is_dark
+      ~runs
+      ~new_sim:(goto Screen.Choose_day)
+      ~toggle_theme
+  in
+  let choose_day () =
+    choose_day_view
+      ~theme
+      ~is_dark
+      ~selection
+      ~choose
+      ~toggle_theme
+      ~back:(goto Screen.Dashboard)
+  in
   let body =
-    match screen, replay with
-    | Screen.Sim, Some r ->
+    match (screen : Screen.t), replay, selection with
+    | Dashboard, _, _ -> dashboard ()
+    | Choose_day, _, _ -> choose_day ()
+    | (Alpha | Setup | Sim | Results), _, None -> choose_day ()
+    | Alpha, _, Some (symbol, date) ->
+      alpha_view
+        ~theme
+        ~is_dark
+        ~symbol
+        ~date
+        ~alpha_text
+        ~set_alpha_text
+        ~continue_:(goto Screen.Setup)
+        ~toggle_theme
+        ~back:(goto Screen.Choose_day)
+    | Setup, _, Some (symbol, date)
+    | (Sim | Results), None, Some (symbol, date) ->
+      setup_view
+        ~theme
+        ~is_dark
+        ~symbol
+        ~date
+        ~alpha_text
+        ~algo
+        ~set_algo
+        ~start
+        ~run_error
+        ~toggle_theme
+        ~back:(goto Screen.Alpha)
+    | Sim, Some r, Some (_ : Symbol.t * Date.t) ->
       sim_view
         r
         ~theme
@@ -1130,9 +1777,17 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~restart
         ~toggle_fills:(set_show_fills (not show_fills))
         ~toggle_theme
-        ~back:(set_screen Screen.Setup)
-    | Setup, _ | Sim, None ->
-      setup_view ~theme ~is_dark ~algo ~set_algo ~start ~toggle_theme
+        ~to_results:(goto Screen.Results)
+        ~back:(goto Screen.Setup)
+    | Results, Some r, Some (_ : Symbol.t * Date.t) ->
+      results_view
+        r
+        ~theme
+        ~is_dark
+        ~to_sim:(goto Screen.Sim)
+        ~new_sim:(goto Screen.Choose_day)
+        ~to_dashboard:(goto Screen.Dashboard)
+        ~toggle_theme
   in
   let shell =
     Styles.s

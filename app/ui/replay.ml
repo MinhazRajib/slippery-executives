@@ -23,12 +23,10 @@ type event =
   }
 
 type result_row =
-  { side : Side.t
-  ; quantity : int
-  ; filled_pct : float
-  ; avg_fill : string
-  ; shortfall_bps : string
-  ; value_add_cents : int
+  { grading : Transaction_cost.t
+      (* the full metric tree: shortfall and its timing/spread/impact split,
+         opportunity, gross/net, alpha capture *)
+  ; value_add_cents : int (* vs the immediate baseline *)
   }
 
 type results =
@@ -37,7 +35,9 @@ type results =
   }
 
 type t =
-  { algo_name : string
+  { symbol : Symbol.t
+  ; date : Date.t
+  ; algo_name : string
   ; bars : Market_bar.t array
   ; fills : Fill.t array
   ; parents : parent_replay list
@@ -51,50 +51,38 @@ type t =
   ; cumulative_volume : int array (* market volume traded so far *)
   }
 
-let day =
-  lazy
-    (Or_error.ok_exn
-       (Data_loader.parse
-          ~symbol:(Symbol.of_string "TSLA")
-          ~date:(Date.of_string "2026-07-09")
-          Embedded_data.tsla_day))
+let parse_alpha text =
+  Or_error.map (Execlab_alpha.Parser.parse text) ~f:(fun parsed ->
+    parsed.instructions)
 ;;
 
-let instructions =
-  lazy
-    (Or_error.ok_exn (Execlab_alpha.Parser.parse Embedded_data.demo_alpha))
-      .instructions
-;;
-
-let demo_instructions () = Lazy.force instructions
-
-(* VWAP's forecast: the average volume curve of the *other* embedded TSLA
+(* VWAP's forecast: the average volume curve of the symbol's *other* embedded
    sessions — the simulated day is left out so the algorithm never peeks at
-   the volume it is about to trade against. *)
-let forecast_profile =
-  lazy
-    (let others =
-       List.map Embedded_data.tsla_other_days ~f:(fun (date, csv) ->
-         Or_error.ok_exn
-           (Data_loader.parse
-              ~symbol:(Symbol.of_string "TSLA")
-              ~date:(Date.of_string date)
-              csv))
-     in
-     Or_error.ok_exn (Day_stats.average_volume_profile others))
+   the volume it is about to trade against. Falls back to the day's own curve
+   if the symbol has just one session. *)
+let forecast_profile ~symbol ~date ~(day : Trading_day.t) =
+  let others =
+    Dataset.dates_for symbol
+    |> List.filter ~f:(fun other -> not (Date.equal other date))
+    |> List.filter_map ~f:(fun other ->
+      Or_error.ok (Dataset.load ~symbol ~date:other))
+  in
+  match Day_stats.average_volume_profile others with
+  | Ok profile -> profile
+  | Error (_ : Error.t) -> Day_stats.volume_profile day
 ;;
 
-let algorithm_named ~(day : Trading_day.t) = function
+let algorithm_named ~symbol ~date ~(day : Trading_day.t) = function
   | "immediate" -> (module Immediate : Algorithm_intf.S)
   | "vwap" ->
     let profile =
       List.map2_exn
         day.bars
-        (Lazy.force forecast_profile)
+        (forecast_profile ~symbol ~date ~day)
         ~f:(fun bar weight -> bar.Market_bar.time, weight)
     in
     Vwap.create ~profile
-  (* Sized for the demo orders (~0.1% of their windows' volume) so the
+  (* Sized for demo-scale orders (~0.1% of their windows' volume) so the
      tape-chasing is visible; a street-realistic 5-20% would demand the whole
      parent off the first observed bar. *)
   | "pov" -> Pov.create ~participation_rate:0.0015 ()
@@ -160,23 +148,10 @@ let results ~day ~bars ~algo_result ~baseline_result =
   in
   let rows =
     List.map2_exn algo baseline ~f:(fun a b ->
-      let value_add_cents =
-        Or_error.ok_exn
-          (Transaction_cost.value_add_cents ~algo:a ~baseline:b)
-      in
-      let avg_fill, shortfall_bps =
-        match a.Transaction_cost.fill_metrics with
-        | None -> "-", "-"
-        | Some m ->
-          ( sprintf "$%.2f" m.average_fill_price
-          , sprintf "%+.1f" m.shortfall_bps )
-      in
-      { side = a.side
-      ; quantity = Size.to_int a.quantity
-      ; filled_pct = a.completion_rate *. 100.
-      ; avg_fill
-      ; shortfall_bps
-      ; value_add_cents
+      { grading = a
+      ; value_add_cents =
+          Or_error.ok_exn
+            (Transaction_cost.value_add_cents ~algo:a ~baseline:b)
       })
   in
   { rows
@@ -185,7 +160,7 @@ let results ~day ~bars ~algo_result ~baseline_result =
   }
 ;;
 
-let events ~(algo_result : Driver.t) parents =
+let events ~symbol ~(algo_result : Driver.t) parents =
   let side_str side =
     match (side : Side.t) with Buy -> "BUY" | Sell -> "SELL"
   in
@@ -195,9 +170,10 @@ let events ~(algo_result : Driver.t) parents =
       { time = i.Alpha_instruction.arrival_time
       ; line =
           sprintf
-            "ACTIVATE %s %d TSLA (by %s)"
+            "ACTIVATE %s %d %s (by %s)"
             (side_str i.side)
             (Size.to_int i.quantity)
+            (Symbol.to_string symbol)
             (String.prefix (Time_ns.Ofday.to_string i.deadline) 5)
       })
   in
@@ -273,20 +249,44 @@ let cumulative_volume bars =
     !total)
 ;;
 
-let run ~algo_name =
-  let day = Lazy.force day in
-  let instructions = Lazy.force instructions in
+(* Alpha text and day selection are user input, so the whole run is an
+   [Or_error]: a bad CSV or an instruction outside the chosen day comes back
+   as a message for the setup screen, not an exception. *)
+let run ~symbol ~date ~alpha_text ~algo_name =
+  let open Or_error.Let_syntax in
+  let%bind day = Dataset.load ~symbol ~date in
+  let%bind instructions = parse_alpha alpha_text in
+  let%bind () =
+    match
+      List.find instructions ~f:(fun instruction ->
+        not (Symbol.equal instruction.Alpha_instruction.symbol symbol))
+    with
+    | None -> Ok ()
+    | Some instruction ->
+      Or_error.error_s
+        [%message
+          "instruction symbol does not match the chosen day"
+            (instruction : Alpha_instruction.t)
+            (symbol : Symbol.t)]
+  in
+  let%map () =
+    if List.is_empty instructions
+    then Or_error.error_string "the alpha has no instructions"
+    else Ok ()
+  in
   let run_one algorithm = Driver.run ~day ~instructions ~algorithm () in
-  let algo_result = run_one (algorithm_named ~day algo_name) in
+  let algo_result = run_one (algorithm_named ~symbol ~date ~day algo_name) in
   let baseline_result = run_one (module Immediate) in
   let bars = Array.of_list day.Trading_day.bars in
   let parents = parents_of ~bars algo_result in
   let fills = Array.of_list algo_result.fills in
-  { algo_name
+  { symbol
+  ; date
+  ; algo_name
   ; bars
   ; fills
   ; parents
-  ; events = events ~algo_result parents
+  ; events = events ~symbol ~algo_result parents
   ; results = results ~day ~bars ~algo_result ~baseline_result
   ; vwap_by_minute = vwap_by_minute bars
   ; target_by_minute = target_by_minute ~bars parents

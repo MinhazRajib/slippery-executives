@@ -122,6 +122,7 @@ let grade_run
     Transaction_cost.create
       ~instruction
       ~fills:(Option.value (Map.find by_parent index) ~default:[])
+      ~day
       ~arrival_price
       ~terminal_price
       ~day_vwap
