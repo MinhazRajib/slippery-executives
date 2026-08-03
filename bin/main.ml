@@ -31,9 +31,11 @@ let print_instructions filename =
     print_s [%sexp (instruction : Alpha_instruction.t)])
 ;;
 
-(* POV's CLI default: 10% of observed tape volume, matching the fill model's
-   default participation cap. *)
-let default_pov_rate = 0.1
+(* POV's default rate is sized for the demo instructions, which are tiny next
+   to a liquid tape (~0.1% of their windows' volume): at a street- realistic
+   5-20% the whole parent is demanded off the first observed bar and fills in
+   a minute. 0.15% keeps the tape-chasing visible. *)
+let default_pov_rate = 0.0015
 
 let algorithm_named ~(day : Trading_day.t) = function
   | "twap" -> (module Twap : Algorithm_intf.S)

@@ -78,7 +78,10 @@ let algorithm_named ~(day : Trading_day.t) = function
         ~f:(fun bar weight -> bar.Market_bar.time, weight)
     in
     Vwap.create ~profile
-  | "pov" -> Pov.create ~participation_rate:0.1 ()
+  (* Sized for the demo orders (~0.1% of their windows' volume) so the
+     tape-chasing is visible; a street-realistic 5-20% would demand the whole
+     parent off the first observed bar. *)
+  | "pov" -> Pov.create ~participation_rate:0.0015 ()
   | _ -> (module Twap : Algorithm_intf.S)
 ;;
 
