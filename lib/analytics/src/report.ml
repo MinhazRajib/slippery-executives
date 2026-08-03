@@ -34,7 +34,9 @@ let to_string_hum (tc : Transaction_cost.t) =
           shortfall_bps
           (dollar_string tc.friction_cost_cents)
       ; sprintf "  vs day vwap     %+.1f bps" vwap_slippage_bps
+      ; [%string "  timing cost     %{dollar_string tc.timing_cost_cents}"]
       ; [%string "  spread cost     %{dollar_string tc.spread_cost_cents}"]
+      ; [%string "  impact cost     %{dollar_string tc.impact_cost_cents}"]
       ]
   in
   let pnl_story =

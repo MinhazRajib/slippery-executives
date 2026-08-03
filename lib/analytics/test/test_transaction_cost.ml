@@ -1,6 +1,34 @@
 open! Core
 open! Execlab_types
+open Execlab_market
 open Execlab_analytics
+
+(* A flat $10.00 session (every bar open = arrival = 1000c), except the 10:05
+   bar sits entirely at $10.08 — the one source of timing cost in these
+   tests. *)
+let day =
+  let bar_at_minute i =
+    let price_cents = if i = 35 then 1008 else 1000 in
+    let price = Price.of_int_cents price_cents in
+    Or_error.ok_exn
+      (Market_bar.create
+         ~time:
+           (Option.value_exn
+              (Time_ns.Ofday.add
+                 (Time_ns.Ofday.of_string "09:30:00")
+                 (Time_ns.Span.of_int_min i)))
+         ~open_:price
+         ~high:price
+         ~low:price
+         ~close:price
+         ~volume:(Size.of_int 1000))
+  in
+  Or_error.ok_exn
+    (Trading_day.create
+       ~symbol:(Symbol.of_string "NVDA")
+       ~date:(Date.of_string "2026-07-09")
+       ~bars:(List.init 390 ~f:bar_at_minute))
+;;
 
 let instruction ?(quantity = 100) side =
   Or_error.ok_exn
@@ -15,6 +43,7 @@ let instruction ?(quantity = 100) side =
 let fill
   ?(symbol = "NVDA")
   ?(liquidity = Liquidity.Taker)
+  ?(time = "10:15:00")
   side
   size
   price_cents
@@ -25,7 +54,7 @@ let fill
   ; size = Size.of_int size
   ; order_id = Order_id.For_testing.of_int 1
   ; side
-  ; time = Time_ns.Ofday.of_string "10:15:00"
+  ; time = Time_ns.Ofday.of_string time
   ; liquidity
   }
 ;;
@@ -41,6 +70,7 @@ let grade
   Transaction_cost.create
     ~instruction
     ~fills
+    ~day
     ~arrival_price:(Price.of_int_cents arrival)
     ~terminal_price:(Price.of_int_cents terminal)
     ~day_vwap
@@ -67,9 +97,10 @@ let%expect_test "full fill, buy: every number by hand" =
      (fill_metrics
       (((average_fill_price 10.2) (shortfall_bps 199.99999999999929)
         (vwap_slippage_bps 49.261083743841318))))
-     (spread_cost_cents 100) (friction_cost_cents 2000)
-     (opportunity_cost_cents 0) (gross_theoretical_pnl_cents 10000)
-     (net_pnl_cents 8000) (alpha_capture (0.8)))
+     (timing_cost_cents 0) (spread_cost_cents 100) (impact_cost_cents 1900)
+     (friction_cost_cents 2000) (opportunity_cost_cents 0)
+     (gross_theoretical_pnl_cents 10000) (net_pnl_cents 8000)
+     (alpha_capture (0.8)))
     |}];
   printf "identity holds: %b\n" (identity_holds tc);
   [%expect {| identity holds: true |}]
@@ -178,9 +209,11 @@ let%expect_test "wrong-way alpha: negative gross, alpha capture undefined" =
     |}]
 ;;
 
-let%expect_test "spread cost: taker fills pay the toll, maker fills earn it \
-                 back"
-  =
+(* Rebates went away when spread cost became a leg of the exact
+   [friction = timing + spread + impact] identity: our fill model has no fee
+   schedule, so a providing fill pays nothing and earns nothing. A maker
+   rebate returns as its own term when a fee model exists. *)
+let%expect_test "spread cost: only taker fills pay the toll" =
   let graded fills =
     (Or_error.ok_exn (grade ~half_spread:2 (instruction Buy) fills))
       .spread_cost_cents
@@ -192,7 +225,7 @@ let%expect_test "spread cost: taker fills pay the toll, maker fills earn it \
        [ fill Buy 50 1010; fill ~liquidity:Liquidity.Maker Buy 50 1010 ]);
   [%expect {|
     all taker: 200
-    half maker: 0
+    half maker: 100
     |}]
 ;;
 
@@ -252,4 +285,63 @@ let%expect_test "value add: same instruction compares, different does not" =
     "different quantity comparable: %b\n"
     (Or_error.is_ok (Transaction_cost.value_add_cents ~algo ~baseline:other));
   [%expect {| different quantity comparable: false |}]
+;;
+
+let%expect_test "friction splits into timing + spread + impact, by hand" =
+  (* Buy 400 arriving at $10.00 (that bar opens at $10.00), half-spread 2c:
+     - 100 taker @ 10.05 in the 10:00 bar: timing 0, spread 200, impact
+       (1005 - 1000 - 2) * 100 = 300;
+     - 200 taker @ 10.12 in the 10:05 bar (opens 10.08): timing
+       (1008 - 1000) * 200 = 1600, spread 400, impact (1012 - 1008 - 2) * 200
+       = 400;
+     - 100 maker @ 9.95: all timing, (995 - 1000) * 100 = -500. Totals:
+       timing 1100, spread 600, impact 700. Friction = notional 402,400 -
+       400 * 1000 = 2,400 = 1100 + 600 + 700. *)
+  let tc =
+    Or_error.ok_exn
+      (grade
+         ~half_spread:2
+         (instruction ~quantity:400 Buy)
+         [ fill ~time:"10:00:00" Buy 100 1005
+         ; fill ~time:"10:05:00" Buy 200 1012
+         ; fill ~time:"10:10:00" ~liquidity:Liquidity.Maker Buy 100 995
+         ])
+  in
+  printf
+    "timing: %d  spread: %d  impact: %d  friction: %d\n"
+    tc.timing_cost_cents
+    tc.spread_cost_cents
+    tc.impact_cost_cents
+    tc.friction_cost_cents;
+  printf
+    "decomposition sums: %b\n"
+    (tc.timing_cost_cents + tc.spread_cost_cents + tc.impact_cost_cents
+     = tc.friction_cost_cents);
+  [%expect
+    {|
+    timing: 1100  spread: 600  impact: 700  friction: 2400
+    decomposition sums: true
+    |}]
+;;
+
+let%expect_test "sell decomposition: favorable drift is negative timing" =
+  (* Sell 100 arriving at $10.00, one taker fill @ 9.90 in the 10:05 bar
+     (opens $10.08): timing = -(1008 - 1000) * 100 = -800 (the tape drifted
+     up -- good for a seller), spread 200, impact -(990 - 1008) * 100 - 200
+     = 1600. Friction = -(99,000 - 100,000) = 1,000 = -800 + 200 + 1600. *)
+  let tc =
+    Or_error.ok_exn
+      (grade
+         ~half_spread:2
+         ~terminal:900
+         (instruction Sell)
+         [ fill ~time:"10:05:00" Sell 100 990 ])
+  in
+  printf
+    "timing: %d  spread: %d  impact: %d  friction: %d\n"
+    tc.timing_cost_cents
+    tc.spread_cost_cents
+    tc.impact_cost_cents
+    tc.friction_cost_cents;
+  [%expect {| timing: -800  spread: 200  impact: 1600  friction: 1000 |}]
 ;;

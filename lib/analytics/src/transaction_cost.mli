@@ -2,11 +2,12 @@
     execution on, computed from an instruction, its fills, and the
     {!Benchmarks} prices.
 
-    Pure arithmetic — no market data, no state. {!Benchmarks} owns where the
-    reference prices come from; {!Portfolio} owns run-level cash and
-    positions; this module grades one instruction's fills against the
-    benchmarks it is handed, so it can grade any run the same way: the real
-    algorithm's fills, a naive baseline's, or none at all.
+    Pure arithmetic, no state. {!Benchmarks} owns where the reference prices
+    come from; {!Portfolio} owns run-level cash and positions; this module
+    grades one instruction's fills against the benchmarks it is handed — plus
+    the session's bars, needed only to read each fill's bar open — so it can
+    grade any run the same way: the real algorithm's fills, a naive
+    baseline's, or none at all.
 
     Sign conventions:
     - bps metrics are side-adjusted: positive always means "worse than the
@@ -24,14 +25,15 @@
 
     Gross is what the alpha deserved (instant, free, full fill at the arrival
     price); friction is what execution paid on the shares that did fill;
-    opportunity is what the unfilled remainder never earned. Spread cost is
-    an {e attribution} of part of the friction (the half-spread tolls on
-    liquidity-taking fills, minus rebates on providing ones), not an extra
-    term — the full spread/impact/timing split of friction is the roadmap's
-    later metric tree. *)
+    opportunity is what the unfilled remainder never earned. Friction itself
+    splits exactly — [friction = timing + spread + impact], the metric tree —
+    because the fill model prices every taking fill at its bar's open, plus
+    the half-spread toll, plus the impact penalty, and each of those
+    distances is attributed to its own bucket. *)
 
 open! Core
 open! Execlab_types
+open! Execlab_market
 
 module Fill_metrics : sig
   (** Statistics that only exist once at least one share has filled; [None]
@@ -60,12 +62,23 @@ type t =
   ; terminal_price : Price.t (** See {!Benchmarks.terminal_price}. *)
   ; day_vwap : float (** {!Day_stats.vwap} of the session, in dollars. *)
   ; fill_metrics : Fill_metrics.t option
+  ; timing_cost_cents : int
+  (** Drift: what the market's own movement between arrival and each fill's
+      bar cost (open vs. arrival for taking fills; the whole price move for
+      providing ones). Negative when the tape drifted the helpful way. *)
   ; spread_cost_cents : int
-  (** Half-spread paid on taking fills minus rebates earned on providing ones
-      — the part of the friction attributable to crossing spreads. *)
+  (** Half-spread tolls paid on liquidity-taking fills — the part of the
+      friction attributable to crossing spreads. Providing fills pay none;
+      rebates arrive with a fee model, not before. *)
+  ; impact_cost_cents : int
+  (** What our own trading pushed the price: each taking fill's distance
+      beyond its bar's open plus half-spread. Negative only when a crossing
+      limit clamped the fill price below the market's ask. *)
   ; friction_cost_cents : int
   (** Implementation shortfall in cents: what the filled shares cost beyond
-      filling them all at the arrival price. *)
+      filling them all at the arrival price. Splits exactly:
+      [friction = timing + spread + impact], in ints — the metric tree,
+      enforced by expect tests. *)
   ; opportunity_cost_cents : int
   (** What the unfilled shares would have earned at the arrival price and
       been worth at the terminal price — pure lost alpha when the instruction
@@ -91,10 +104,15 @@ type t =
     [half_spread] is the fill model's synthetic half-spread (see context.md):
     {!Fill.t} records {e that} a fill took liquidity, not the spread it
     crossed, so spread attribution needs the run's config knob. When the fill
-    model later scales spread with bar range, this becomes a per-fill lookup. *)
+    model later scales spread with bar range, this becomes a per-fill lookup.
+
+    [day] supplies each fill's bar open — the reference that separates timing
+    (arrival to open) from impact (open + half-spread to the fill price).
+    Errors if a taking fill's time matches none of [day]'s bars. *)
 val create
   :  instruction:Alpha_instruction.t
   -> fills:Fill.t list
+  -> day:Trading_day.t
   -> arrival_price:Price.t
   -> terminal_price:Price.t
   -> day_vwap:float

@@ -102,6 +102,7 @@ let grade ~day (result : Driver.t) =
       (Transaction_cost.create
          ~instruction
          ~fills:(fills_for_parent result parent)
+         ~day
          ~arrival_price
          ~terminal_price
          ~day_vwap

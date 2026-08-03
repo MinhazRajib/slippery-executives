@@ -1,5 +1,6 @@
 open! Core
 open! Execlab_types
+open! Execlab_market
 
 module Fill_metrics = struct
   type t =
@@ -20,7 +21,9 @@ type t =
   ; terminal_price : Price.t
   ; day_vwap : float
   ; fill_metrics : Fill_metrics.t option
+  ; timing_cost_cents : int
   ; spread_cost_cents : int
+  ; impact_cost_cents : int
   ; friction_cost_cents : int
   ; opportunity_cost_cents : int
   ; gross_theoretical_pnl_cents : int
@@ -35,9 +38,45 @@ let bps_vs_benchmark ~side_sign ~average_fill_price ~benchmark =
   *. 10_000.
 ;;
 
+(* Splits one fill's cost-vs-arrival into the metric tree. The fill model
+   prices a taking fill at [bar open + sign * (half_spread + impact)], so
+   arrival -> open is the market's drift (timing), the half-spread is the
+   crossing toll, and whatever remains beyond [open + half_spread] is our own
+   impact (negative only when a crossing limit clamped the price). A
+   providing fill trades at its resting limit: no toll, no impact — the whole
+   distance from arrival is timing. *)
+let decompose_fill
+  ~open_by_time
+  ~side_sign
+  ~arrival_cents
+  ~half_spread
+  (fill : Fill.t)
+  =
+  let size = Size.to_int fill.size in
+  let price_cents = Price.to_int_cents fill.price in
+  match fill.liquidity with
+  | Liquidity.Maker ->
+    Ok (`Timing (side_sign * size * (price_cents - arrival_cents)))
+  | Taker ->
+    (match Map.find open_by_time fill.time with
+     | None ->
+       Or_error.error_s
+         [%message
+           "Transaction_cost.create: no bar at a fill's time" (fill : Fill.t)]
+     | Some bar_open ->
+       let open_cents = Price.to_int_cents bar_open in
+       let timing = side_sign * size * (open_cents - arrival_cents) in
+       let spread = size * Price.to_int_cents half_spread in
+       let impact =
+         (side_sign * size * (price_cents - open_cents)) - spread
+       in
+       Ok (`Taker (timing, spread, impact)))
+;;
+
 let create
   ~(instruction : Alpha_instruction.t)
   ~fills
+  ~(day : Trading_day.t)
   ~arrival_price
   ~terminal_price
   ~day_vwap
@@ -96,62 +135,85 @@ let create
         * (quantity_shares - filled_shares)
         * (terminal_cents - arrival_cents)
       in
-      let spread_cost_cents =
-        let taken_minus_provided_shares =
-          List.sum (module Int) fills ~f:(fun (fill : Fill.t) ->
-            match fill.liquidity with
-            | Taker -> Size.to_int fill.size
-            | Maker -> -Size.to_int fill.size)
+      let open_by_time =
+        Map.of_alist_exn
+          (module Time_ns.Ofday)
+          (List.map day.bars ~f:(fun bar -> bar.Market_bar.time, bar.open_))
+      in
+      let decomposition =
+        List.map
+          fills
+          ~f:
+            (decompose_fill
+               ~open_by_time
+               ~side_sign
+               ~arrival_cents
+               ~half_spread)
+        |> Or_error.combine_errors
+      in
+      match decomposition with
+      | Error error -> Error error
+      | Ok pieces ->
+        let timing_cost_cents, spread_cost_cents, impact_cost_cents =
+          List.fold
+            pieces
+            ~init:(0, 0, 0)
+            ~f:(fun (timing, spread, impact) piece ->
+              match piece with
+              | `Timing t -> timing + t, spread, impact
+              | `Taker (t, s, i) -> timing + t, spread + s, impact + i)
         in
-        taken_minus_provided_shares * Price.to_int_cents half_spread
-      in
-      let fill_metrics =
-        if filled_shares = 0
-        then None
-        else (
-          let average_fill_price =
-            Float.of_int notional_cents /. 100. /. Float.of_int filled_shares
-          in
-          Some
-            { Fill_metrics.average_fill_price
-            ; shortfall_bps =
-                bps_vs_benchmark
-                  ~side_sign
-                  ~average_fill_price
-                  ~benchmark:(Price.to_float arrival_price)
-            ; vwap_slippage_bps =
-                bps_vs_benchmark
-                  ~side_sign
-                  ~average_fill_price
-                  ~benchmark:day_vwap
-            })
-      in
-      let alpha_capture =
-        if gross_theoretical_pnl_cents > 0
-        then
-          Some
-            (Float.of_int net_pnl_cents
-             /. Float.of_int gross_theoretical_pnl_cents)
-        else None
-      in
-      Ok
-        { symbol = instruction.symbol
-        ; side = instruction.side
-        ; quantity = instruction.quantity
-        ; filled
-        ; completion_rate =
-            Float.of_int filled_shares /. Float.of_int quantity_shares
-        ; arrival_price
-        ; terminal_price
-        ; day_vwap
-        ; fill_metrics
-        ; spread_cost_cents
-        ; friction_cost_cents
-        ; opportunity_cost_cents
-        ; gross_theoretical_pnl_cents
-        ; net_pnl_cents
-        ; alpha_capture
-        })
+        let fill_metrics =
+          if filled_shares = 0
+          then None
+          else (
+            let average_fill_price =
+              Float.of_int notional_cents
+              /. 100.
+              /. Float.of_int filled_shares
+            in
+            Some
+              { Fill_metrics.average_fill_price
+              ; shortfall_bps =
+                  bps_vs_benchmark
+                    ~side_sign
+                    ~average_fill_price
+                    ~benchmark:(Price.to_float arrival_price)
+              ; vwap_slippage_bps =
+                  bps_vs_benchmark
+                    ~side_sign
+                    ~average_fill_price
+                    ~benchmark:day_vwap
+              })
+        in
+        let alpha_capture =
+          if gross_theoretical_pnl_cents > 0
+          then
+            Some
+              (Float.of_int net_pnl_cents
+               /. Float.of_int gross_theoretical_pnl_cents)
+          else None
+        in
+        Ok
+          { symbol = instruction.symbol
+          ; side = instruction.side
+          ; quantity = instruction.quantity
+          ; filled
+          ; completion_rate =
+              Float.of_int filled_shares /. Float.of_int quantity_shares
+          ; arrival_price
+          ; terminal_price
+          ; day_vwap
+          ; fill_metrics
+          ; timing_cost_cents
+          ; spread_cost_cents
+          ; impact_cost_cents
+          ; friction_cost_cents
+          ; opportunity_cost_cents
+          ; gross_theoretical_pnl_cents
+          ; net_pnl_cents
+          ; alpha_capture
+          })
 ;;
 
 let value_add_cents ~algo ~baseline =
