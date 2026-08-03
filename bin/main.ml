@@ -31,6 +31,10 @@ let print_instructions filename =
     print_s [%sexp (instruction : Alpha_instruction.t)])
 ;;
 
+(* POV's CLI default: 10% of observed tape volume, matching the fill model's
+   default participation cap. *)
+let default_pov_rate = 0.1
+
 let algorithm_named ~(day : Trading_day.t) = function
   | "twap" -> (module Twap : Algorithm_intf.S)
   | "immediate" -> (module Immediate : Algorithm_intf.S)
@@ -42,10 +46,13 @@ let algorithm_named ~(day : Trading_day.t) = function
         ~f:(fun bar weight -> bar.Market_bar.time, weight)
     in
     Vwap.create ~profile
+  | "pov" -> Pov.create ~participation_rate:default_pov_rate ()
   | other ->
     raise_s
       [%message
-        "Unknown algorithm" (other : string) ~known:"twap, vwap, immediate"]
+        "Unknown algorithm"
+          (other : string)
+          ~known:"twap, vwap, pov, immediate"]
 ;;
 
 let fills_for_parent (result : Driver.t) (parent : Parent_order.t) =
@@ -126,6 +133,6 @@ let () =
     eprintf
       "usage: main.exe <alpha.csv>                        (parse only)\n";
     eprintf
-      "       main.exe <alpha.csv> <SYMBOL> <DATE> [twap|vwap|immediate]\n";
+      "       main.exe <alpha.csv> <SYMBOL> <DATE> [twap|vwap|pov|immediate]\n";
     exit 2
 ;;

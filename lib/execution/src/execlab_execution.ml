@@ -4,5 +4,6 @@ module Child_order = Child_order
 module Immediate = Immediate
 module Order_manager = Order_manager
 module Parent_order = Parent_order
+module Pov = Pov
 module Twap = Twap
 module Vwap = Vwap

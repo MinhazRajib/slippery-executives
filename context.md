@@ -319,7 +319,8 @@ lib/types/       DONE — shared vocabulary
 lib/market/      DONE — market_bar, trading_day, data_loader, day_stats
 lib/alpha/       DONE — parser (row → Alpha_instruction via create)
 lib/execution/   DONE — child_order, parent_order, order_manager,
-                 algorithm_intf, twap, immediate; later vwap, pov, is
+                 algorithm_intf, twap, pov, immediate; vwap is on the
+                 unmerged ui7 branch; is later
 lib/simulation/  DONE — fill_model (Engine A), driver; later
                  synthetic_market (Engine B)
 lib/analytics/   DONE — portfolio, benchmarks, transaction_cost, report
@@ -335,7 +336,7 @@ Each lib follows the CLAUDE.md layout (`lib/<x>/src` + `lib/<x>/test`,
 library `execlab_<x>` / `execlab.<x>`) with a top-level re-export
 module like `lib/types/src/execlab_types.ml`.
 
-## Current state (as of 2026-07-30, commit 0ab57e4)
+## Current state (as of 2026-08-03)
 
 Done — all merged to `main`, build/tests/formatting green:
 - `lib/types` complete and fully expect-tested: `Price` (fixed-point
@@ -368,8 +369,14 @@ Done — all merged to `main`, build/tests/formatting green:
   machine; arrival price sampled at activation; filled+working <= total
   invariant), `Order_manager` (owns the id generator;
   `activate_due`/`expire_due` sweeps), `Algorithm_intf` (first-class
-  modules; `on_bar` sees only the *previous* bar), `Twap`, and the
-  `Immediate` one-shot baseline.
+  modules; `on_bar` sees only the *previous* bar), `Twap`, `Pov`
+  (added 2026-08-03: cumulative demand = floor(rate x tape volume
+  observed since arrival) — floored because the rate is a ceiling;
+  min/max child-size knobs; demands the whole remainder at the
+  deadline bar so completion stays comparable with the schedule
+  algorithms; needed no driver change — algorithms accumulate tape
+  volume themselves from the per-bar context), and the `Immediate`
+  one-shot baseline.
 - `lib/simulation` complete and tested: `Fill_model` — Engine A
   (marketable orders fill at open +/- half-spread +/- square-root
   impact, capped by a shared 10%-of-bar-volume budget; resting limits
@@ -411,10 +418,12 @@ milestone shipped, and a first cut of the client UI (originally item
    coefficient make each term exactly computable (needs `Trading_day`
    and `Fill_model.Config` as inputs). Encode "components sum to total
    shortfall" as a hand-computed expect test.
-2. **VWAP** (market/execution track): TWAP with the schedule following
-   `Day_stats.volume_profile` instead of a straight line. Then POV
-   (the driver must expose realized tape volume to algorithms), then
-   implementation shortfall (needs an urgency model — hardest, last).
+2. **Remaining algorithms** (market/execution track): POV is DONE
+   (2026-08-03, see current state). VWAP (TWAP with the schedule
+   following `Day_stats.volume_profile`) is implemented on the
+   unmerged `ui7` branch — merge it to main. Then implementation
+   shortfall (needs an urgency model — hardest, last). POV's rolling
+   volume-window smoothing knob is still open.
 3. **Results screen** in the UI: per-order cost waterfall from the
    decomposition, benchmark table, same-day algorithm comparison.
 4. Run persistence (config + results as sexp files) and the local
