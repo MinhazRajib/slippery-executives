@@ -1,0 +1,30 @@
+(executable
+ (name main)
+ (modes js)
+ (js_of_ocaml
+  (flags
+   (:standard --effects=cps)))
+ (libraries
+  core
+  bonsai
+  bonsai.extra
+  bonsai_web
+  virtual_dom
+  execlab_types
+  execlab_market
+  execlab_alpha
+  execlab_execution
+  execlab_analytics
+  execlab_simulation)
+ (preprocess
+  (pps ppx_jane bonsai.ppx_bonsai ppx_html js_of_ocaml-ppx)))
+
+(rule
+ (targets embedded_data.ml)
+ (deps
+  gen_embedded_data.sh
+  (source_tree ../../../data))
+ (action
+  (with-stdout-to
+   embedded_data.ml
+   (run bash gen_embedded_data.sh ../../../data))))
