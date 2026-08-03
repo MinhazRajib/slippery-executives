@@ -209,15 +209,58 @@ let controls
   |}
 ;;
 
-(* ---------- the chart: price line, order windows, fill tick rows ---------- *)
+(* ---------- the chart: price line, order windows, crosshair ---------- *)
 
-let chart (replay : Replay.t) ~theme ~minute ~fills ~show_fills =
+(* Geometry shared by the renderer and the mouse-position inverse. *)
+let chart_w = 1140.
+let chart_left = 52.
+let chart_right = 20.
+let chart_plot_w = chart_w -. chart_left -. chart_right
+
+(* The hovered minute, from a mouse event over the chart svg: CSS pixels ->
+   viewBox units -> bar index, clamped to the replayed range. *)
+let minute_of_mouse
+  ~n
+  ~shown
+  (evt : Js_of_ocaml.Dom_html.mouseEvent Js_of_ocaml.Js.t)
+  =
+  let open Js_of_ocaml in
+  match Js.Opt.to_option evt##.currentTarget with
+  | None -> None
+  | Some target ->
+    let rect = target##getBoundingClientRect in
+    let x_px = Js.to_float evt##.clientX -. Js.to_float rect##.left in
+    let width = Float.of_int target##.clientWidth in
+    if Float.( <= ) width 0.
+    then None
+    else (
+      let svg_x = x_px *. (chart_w /. width) in
+      let ratio = (svg_x -. chart_left) /. chart_plot_w in
+      if Float.( < ) ratio 0. || Float.( > ) ratio 1.
+      then None
+      else
+        Some
+          (Int.max
+             0
+             (Int.min
+                shown
+                (Float.iround_nearest_exn (ratio *. Float.of_int (n - 1))))))
+;;
+
+let chart
+  (replay : Replay.t)
+  ~theme
+  ~minute
+  ~fills
+  ~show_fills
+  ~hover
+  ~set_hover
+  =
   let bars = replay.bars in
   let n = Array.length bars in
-  let w = 1140. in
-  let left = 52. in
-  let right = 20. in
-  let plot_w = w -. left -. right in
+  let w = chart_w in
+  let left = chart_left in
+  let plot_w = chart_plot_w in
   let top = 10. in
   let price_h = 340. in
   let axis_y = top +. price_h +. 18. in
@@ -236,6 +279,12 @@ let chart (replay : Replay.t) ~theme ~minute ~fills ~show_fills =
   let svg name attrs children = Vdom.Node.create_svg name ~attrs children in
   let attr = Vdom.Attr.create in
   let tooltip text = svg "title" [] [ Vdom.Node.text text ] in
+  let hover = Option.map hover ~f:(fun m -> Int.max 0 (Int.min m minute)) in
+  let hovered_in (parent : Replay.parent_replay) =
+    match hover with
+    | None -> false
+    | Some m -> m >= parent.arrival_minute && m <= parent.deadline_minute
+  in
   (* horizontal gridlines at round dollar levels *)
   let grid =
     let step = Float.max 1. (Float.round_up (span /. 5.)) in
@@ -299,10 +348,10 @@ let chart (replay : Replay.t) ~theme ~minute ~fills ~show_fills =
           [ attr "x" (fs x0)
           ; attr "y" (fs (top +. 4. +. (Float.of_int index *. 8.)))
           ; attr "width" (fs (Float.max 3. (x1 -. x0)))
-          ; attr "height" "4"
+          ; attr "height" (if hovered_in parent then "6" else "4")
           ; attr "rx" "2"
           ; attr "fill" (Styles.order_color theme index)
-          ; attr "fill-opacity" "0.9"
+          ; attr "fill-opacity" (if hovered_in parent then "1" else "0.9")
           ]
           [ window_tooltip index parent ])
     else
@@ -318,7 +367,9 @@ let chart (replay : Replay.t) ~theme ~minute ~fills ~show_fills =
             ; attr "width" (fs (Float.max 2. (x1 -. x0)))
             ; attr "height" (fs price_h)
             ; attr "fill" color
-            ; attr "fill-opacity" "0.07"
+            ; attr
+                "fill-opacity"
+                (if hovered_in parent then "0.14" else "0.07")
             ]
             [ window_tooltip index parent ]
         ; svg
@@ -438,12 +489,130 @@ let chart (replay : Replay.t) ~theme ~minute ~fills ~show_fills =
                  (Price.to_string_dollar fill.price))
           ])
   in
+  (* The Google-Finance-style crosshair: a dashed vertical at the hovered
+     minute, a dot on the close, and a small panel of that bar's numbers
+     (plus which order windows cover the moment). *)
+  let crosshair =
+    match hover with
+    | None -> []
+    | Some m ->
+      let bar = bars.(m) in
+      let cx = x m in
+      let close = Price.to_float bar.Market_bar.close in
+      let covering =
+        List.filter_mapi replay.parents ~f:(fun index parent ->
+          if m >= parent.arrival_minute && m <= parent.deadline_minute
+          then
+            Some
+              ( Styles.order_color theme index
+              , sprintf
+                  "O%d %s window"
+                  (index + 1)
+                  (side_str parent.instruction.Alpha_instruction.side) )
+          else None)
+      in
+      let box_w = 210. in
+      let line_h = 15. in
+      let box_h = 46. +. (Float.of_int (List.length covering) *. line_h) in
+      let box_x =
+        if Float.( > ) (cx +. 12. +. box_w) (left +. plot_w)
+        then cx -. 12. -. box_w
+        else cx +. 12.
+      in
+      let box_y = top +. 6. in
+      let label
+        ?(fill = theme.Styles.secondary)
+        ?(size = "11")
+        ?(weight = "400")
+        ~tx
+        ~ty
+        content
+        =
+        svg
+          "text"
+          [ attr "x" (fs tx)
+          ; attr "y" (fs ty)
+          ; attr "fill" fill
+          ; attr "font-size" size
+          ; attr "font-weight" weight
+          ]
+          [ Vdom.Node.text content ]
+      in
+      [ svg
+          "line"
+          [ attr "x1" (fs cx)
+          ; attr "x2" (fs cx)
+          ; attr "y1" (fs top)
+          ; attr "y2" (fs (top +. price_h))
+          ; attr "stroke" theme.Styles.faint
+          ; attr "stroke-width" "1"
+          ; attr "stroke-dasharray" "3 3"
+          ]
+          []
+      ; svg
+          "circle"
+          [ attr "cx" (fs cx)
+          ; attr "cy" (fs (y close))
+          ; attr "r" "3.5"
+          ; attr "fill" theme.Styles.blue
+          ; attr "stroke" theme.Styles.card_bg
+          ; attr "stroke-width" "1.5"
+          ]
+          []
+      ; svg
+          "rect"
+          [ attr "x" (fs box_x)
+          ; attr "y" (fs box_y)
+          ; attr "width" (fs box_w)
+          ; attr "height" (fs box_h)
+          ; attr "rx" "5"
+          ; attr "fill" theme.Styles.card_bg
+          ; attr "stroke" theme.Styles.chip_border
+          ; attr "fill-opacity" "0.96"
+          ]
+          []
+      ; label
+          ~fill:theme.Styles.text
+          ~size:"13"
+          ~weight:"700"
+          ~tx:(box_x +. 10.)
+          ~ty:(box_y +. 19.)
+          (sprintf "$%.2f · %s" close (hhmm bar.Market_bar.time))
+      ; label
+          ~tx:(box_x +. 10.)
+          ~ty:(box_y +. 36.)
+          (sprintf
+             "O %.2f  H %.2f  L %.2f  ·  vol %s"
+             (Price.to_float bar.Market_bar.open_)
+             (Price.to_float bar.Market_bar.high)
+             (Price.to_float bar.Market_bar.low)
+             (Int.to_string_hum
+                ~delimiter:','
+                (Size.to_int bar.Market_bar.volume)))
+      ]
+      @ List.mapi covering ~f:(fun i (color, text) ->
+        label
+          ~fill:color
+          ~weight:"600"
+          ~tx:(box_x +. 10.)
+          ~ty:(box_y +. 36. +. (Float.of_int (i + 1) *. line_h))
+          text)
+  in
   svg
     "svg"
     [ attr "viewBox" (sprintf "0 0 %s %s" (fs w) (fs h))
-    ; Styles.s "width:100%;display:block;"
+    ; Styles.s "width:100%;display:block;cursor:crosshair;"
+    ; Vdom.Attr.on_mousemove (fun evt ->
+        set_hover (minute_of_mouse ~n ~shown:minute evt))
+    ; Vdom.Attr.on_mouseleave (fun (_ : _) -> set_hover None)
     ]
-    (grid @ windows @ vwap_line @ time_axis @ price_line @ fill_dots)
+    (grid
+     @ windows
+     @ vwap_line
+     @ time_axis
+     @ price_line
+     @ fill_dots
+     @ crosshair)
 ;;
 
 let legend
@@ -873,6 +1042,8 @@ let sim_view
   ~toggle_theme
   ~to_results
   ~back
+  ~hover
+  ~set_hover
   =
   let fills = Replay.fills_upto replay ~minute in
   let page =
@@ -938,7 +1109,8 @@ let sim_view
           ~set_speed ~set_minute ~restart}
       <div %{Styles.card theme "padding-bottom:8px;"}>
         %{legend replay ~theme ~minute ~fills ~show_fills ~toggle_fills}
-        %{chart replay ~theme ~minute ~fills ~show_fills}
+        %{chart replay ~theme ~minute ~fills ~show_fills ~hover
+            ~set_hover}
       </div>
       %{orders_table replay ~theme ~fills ~minute}
       %{event_log replay ~theme ~fills ~minute}
@@ -1633,6 +1805,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let playing, set_playing = Bonsai.state true graph in
   let speed, set_speed = Bonsai.state 4 graph in
   let show_fills, set_show_fills = Bonsai.state false graph in
+  let hover, set_hover = Bonsai.state (None : int option) graph in
   let is_dark, set_is_dark = Bonsai.state false graph in
   let advance =
     let%arr playing and speed and replay and set_minute in
@@ -1698,6 +1871,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_speed
   and show_fills
   and set_show_fills
+  and hover
+  and set_hover
   and is_dark
   and set_is_dark
   and set_minute
@@ -1779,6 +1954,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~toggle_theme
         ~to_results:(goto Screen.Results)
         ~back:(goto Screen.Setup)
+        ~hover
+        ~set_hover
     | Results, Some r, Some (_ : Symbol.t * Date.t) ->
       results_view
         r
