@@ -87,20 +87,22 @@ let%expect_test "of_float_round_nearest rounds to the nearest cent" =
     0.0050 -> 1 cents
     -0.0050 -> 0 cents
     |}];
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Price.of_float_round_nearest Float.nan);
   [%expect
-    {| (Invalid_argument "Int.of_float: argument (nan) is out of range or NaN") |}]
+    {|
+    (raised (
+      Invalid_argument "Int.of_float: argument (nan) is out of range or NaN"))
+    |}]
 ;;
 
 let%expect_test "of_float_exn rejects sub-cent values" =
   List.iter [ 150.001; 150.009; 99.999 ] ~f:(fun f ->
-    Expect_test_helpers_core.require_does_raise (fun () ->
-      Price.of_float_exn f));
+    Expect_test_helpers_core.show_raise (fun () -> Price.of_float_exn f));
   [%expect
     {|
-    ("Price.of_float_exn: not representable as exact cents" (f 150.001))
-    ("Price.of_float_exn: not representable as exact cents" (f 150.009))
-    ("Price.of_float_exn: not representable as exact cents" (f 99.999))
+    (raised ("Price.of_float_exn: not representable as exact cents" (f 150.001)))
+    (raised ("Price.of_float_exn: not representable as exact cents" (f 150.009)))
+    (raised ("Price.of_float_exn: not representable as exact cents" (f 99.999)))
     |}]
 ;;

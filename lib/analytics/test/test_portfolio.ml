@@ -107,19 +107,20 @@ let%expect_test "marking a short: profits when the price falls" =
 
 let%expect_test "a zero-size fill is a fill-engine bug and raises" =
   let t = Portfolio.create ~starting_cash_cents:0 in
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Portfolio.apply_fill t (fill Buy 0 1000));
   [%expect
     {|
-    ("Portfolio.apply_fill: fill size must be positive"
-     (fill (
-       (fill_id   0)
-       (symbol    NVDA)
-       (price     1000)
-       (size      0)
-       (order_id  1)
-       (side      Buy)
-       (time      10:00:00.000000000)
-       (liquidity Taker))))
+    (raised (
+      "Portfolio.apply_fill: fill size must be positive"
+      (fill (
+        (fill_id   0)
+        (symbol    NVDA)
+        (price     1000)
+        (size      0)
+        (order_id  1)
+        (side      Buy)
+        (time      10:00:00.000000000)
+        (liquidity Taker)))))
     |}]
 ;;

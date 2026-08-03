@@ -166,24 +166,26 @@ let%expect_test "the deadline minute itself may still trade" =
 let%expect_test "overfilling submits and unknown ids raise" =
   let now = Time_ns.Ofday.of_string "10:10:00" in
   let t = Order_manager.activate_due manager ~now ~price_for in
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Order_manager.submit_exn t ~parent_index:1 ~request:(request 501) ~now);
   [%expect
     {|
-    ("Parent_order.add_child_exn: would exceed parent quantity"
-     (child_quantity 501)
-     (filled         0)
-     (working        0)
-     (total          500))
+    (raised (
+      "Parent_order.add_child_exn: would exceed parent quantity"
+      (child_quantity 501)
+      (filled         0)
+      (working        0)
+      (total          500)))
     |}];
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Order_manager.apply_fill_exn
       t
       (fill ~fill_id:1 ~order_id:99 ~size:1 ~time:"10:11:00"));
   [%expect
     {|
-    ("Order_manager: unknown order id"
+    (raised (
+      "Order_manager: unknown order id"
       (here     apply_fill_exn)
-      (order_id 99))
+      (order_id 99)))
     |}]
 ;;

@@ -235,19 +235,20 @@ let%expect_test "the synthetic bbo brackets the open with the remaining \
 ;;
 
 let%expect_test "submitting before any bar raises" =
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Fill_model.on_child_order
       (Fill_model.create config)
       (market_child ~id:1 ~side:Side.Buy ~quantity:100));
   [%expect
-    {| ("Fill_model: no bar has been seen yet" (here on_child_order)) |}]
+    {| (raised ("Fill_model: no bar has been seen yet" (here on_child_order))) |}]
 ;;
 
 let%expect_test "a market order in the resting list is a driver bug" =
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Fill_model.on_bar_advance
       (Fill_model.create config)
       ~bar:(bar ())
       ~resting_orders:[ market_child ~id:1 ~side:Side.Buy ~quantity:100 ]);
-  [%expect {| ("Fill_model: a market order cannot rest" (order_id 1)) |}]
+  [%expect
+    {| (raised ("Fill_model: a market order cannot rest" (order_id 1))) |}]
 ;;

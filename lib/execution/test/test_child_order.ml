@@ -53,21 +53,23 @@ let%expect_test "filling to zero flips status to Filled" =
 ;;
 
 let%expect_test "overfill and zero-size fills raise" =
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Child_order.apply_fill_exn order ~quantity:(Size.of_int 501));
   [%expect
     {|
-    ("Child_order.apply_fill_exn: invalid fill size"
-     (quantity    501)
-     (t.remaining 500))
+    (raised (
+      "Child_order.apply_fill_exn: invalid fill size"
+      (quantity    501)
+      (t.remaining 500)))
     |}];
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Child_order.apply_fill_exn order ~quantity:Size.zero);
   [%expect
     {|
-    ("Child_order.apply_fill_exn: invalid fill size"
-     (quantity    0)
-     (t.remaining 500))
+    (raised (
+      "Child_order.apply_fill_exn: invalid fill size"
+      (quantity    0)
+      (t.remaining 500)))
     |}]
 ;;
 
@@ -91,11 +93,12 @@ let%expect_test "operating on a dead order raises" =
   let canceled =
     Child_order.cancel_exn order ~reason:Cancel_reason.Algorithm_requested
   in
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Child_order.apply_fill_exn canceled ~quantity:(Size.of_int 100));
   [%expect
     {|
-    ("Child_order: order is not live"
+    (raised (
+      "Child_order: order is not live"
       (here apply_fill_exn)
       (t (
         (id 1)
@@ -107,13 +110,14 @@ let%expect_test "operating on a dead order raises" =
           (time_in_force Day)))
         (submitted_at 10:05:00.000000000)
         (remaining    500)
-        (status (Canceled Algorithm_requested)))))
+        (status (Canceled Algorithm_requested))))))
     |}];
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Child_order.cancel_exn canceled ~reason:Cancel_reason.Deadline_expired);
   [%expect
     {|
-    ("Child_order: order is not live"
+    (raised (
+      "Child_order: order is not live"
       (here cancel_exn)
       (t (
         (id 1)
@@ -125,7 +129,7 @@ let%expect_test "operating on a dead order raises" =
           (time_in_force Day)))
         (submitted_at 10:05:00.000000000)
         (remaining    500)
-        (status (Canceled Algorithm_requested)))))
+        (status (Canceled Algorithm_requested))))))
     |}]
 ;;
 

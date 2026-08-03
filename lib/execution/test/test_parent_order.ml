@@ -70,14 +70,15 @@ let%expect_test "activation samples the arrival price, exactly once" =
     ((status Active) (arrival_price (15000)) (filled 0) (working 0)
      (remaining 1000))
     |}];
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Parent_order.activate_exn active ~arrival_price:(Price.of_int_cents 1));
   [%expect
     {|
-    ("Parent_order: unexpected status"
+    (raised (
+      "Parent_order: unexpected status"
       (here     activate_exn)
       (expected Pending)
-      (actual   Active))
+      (actual   Active)))
     |}]
 ;;
 
@@ -91,15 +92,16 @@ let%expect_test "children and fills move both ledgers" =
     ((status Active) (arrival_price (15000)) (filled 0) (working 600)
      (remaining 400))
     |}];
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Parent_order.add_child_exn parent (child ~id:2 ~quantity:500 ()));
   [%expect
     {|
-    ("Parent_order.add_child_exn: would exceed parent quantity"
-     (child_quantity 500)
-     (filled         0)
-     (working        600)
-     (total          1000))
+    (raised (
+      "Parent_order.add_child_exn: would exceed parent quantity"
+      (child_quantity 500)
+      (filled         0)
+      (working        600)
+      (total          1000)))
     |}];
   let parent =
     Parent_order.apply_fill_exn
@@ -129,33 +131,35 @@ let%expect_test "children and fills move both ledgers" =
 ;;
 
 let%expect_test "a fill for an unknown order raises" =
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Parent_order.apply_fill_exn active (fill ~fill_id:1 ~order_id:99 ~size:1));
   [%expect
     {|
-    ("Parent_order.apply_fill_exn: unknown order id"
-     (fill (
-       (fill_id   1)
-       (symbol    NVDA)
-       (price     15000)
-       (size      1)
-       (order_id  99)
-       (side      Buy)
-       (time      10:06:30.000000000)
-       (liquidity Taker))))
+    (raised (
+      "Parent_order.apply_fill_exn: unknown order id"
+      (fill (
+        (fill_id   1)
+        (symbol    NVDA)
+        (price     15000)
+        (size      1)
+        (order_id  99)
+        (side      Buy)
+        (time      10:06:30.000000000)
+        (liquidity Taker)))))
     |}]
 ;;
 
 let%expect_test "a child for the wrong symbol raises" =
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Parent_order.add_child_exn
       active
       (child ~symbol:"AMD" ~id:1 ~quantity:100 ()));
   [%expect
     {|
-    ("Parent_order.add_child_exn: child symbol does not match instruction"
-     (child_symbol       AMD)
-     (instruction_symbol NVDA))
+    (raised (
+      "Parent_order.add_child_exn: child symbol does not match instruction"
+      (child_symbol       AMD)
+      (instruction_symbol NVDA)))
     |}]
 ;;
 
@@ -173,22 +177,24 @@ let%expect_test "expiry cancels live children and freezes the parent" =
      (remaining 1000))
     (Canceled Deadline_expired)
     |}];
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Parent_order.apply_fill_exn parent (fill ~fill_id:1 ~order_id:3 ~size:1));
   [%expect
     {|
-    ("Parent_order: unexpected status"
+    (raised (
+      "Parent_order: unexpected status"
       (here     apply_fill_exn)
       (expected Active)
-      (actual   Expired))
+      (actual   Expired)))
     |}];
-  Expect_test_helpers_core.require_does_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     Parent_order.add_child_exn pending (child ~id:4 ~quantity:100 ()));
   [%expect
     {|
-    ("Parent_order: unexpected status"
+    (raised (
+      "Parent_order: unexpected status"
       (here     add_child_exn)
       (expected Active)
-      (actual   Pending))
+      (actual   Pending)))
     |}]
 ;;

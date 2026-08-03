@@ -22,5 +22,6 @@
     (< 0.27)))
   (odoc :with-doc)
   core
+  core_unix
   ppx_jane
   (expect_test_helpers_core :with-test)))
