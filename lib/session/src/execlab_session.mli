@@ -24,8 +24,9 @@ end
 
 module Params : sig
   (** The fill model's knobs plus each algorithm's own. [fill_config] prices
-      Engine A and is the grading's spread attribution either way; the
-      synthetic engine has its own internal calibration. *)
+      Engine A and is its grading's spread attribution; a synthetic run's
+      grading attributes zero spread — the exchange has no configured toll,
+      so everything beyond drift is impact. *)
   type t =
     { fill_config : Fill_model.Config.t
     ; pov_rate : float (** POV's share of observed tape volume *)

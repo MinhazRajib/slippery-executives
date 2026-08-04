@@ -97,3 +97,35 @@ let%expect_test "an unknown algorithm is an error, not an exception" =
       (known "twap, vwap, pov, is, immediate")))
     |}]
 ;;
+
+let%expect_test "a synthetic run attributes no configured spread: the \
+                 residual is all impact, and the identity still holds"
+  =
+  let outcome =
+    Or_error.ok_exn
+      (run
+         ~day
+         ~forecast_days:[]
+         ~instructions
+         ~algo_name:"twap"
+         ~params:
+           { Params.default with
+             engine = Engine_choice.Synthetic { seed = 1 }
+           })
+  in
+  let grading = (List.hd_exn outcome.graded).Graded.grading in
+  printf "spread: %d\n" grading.spread_cost_cents;
+  printf "impact at least 0: %b\n" (grading.impact_cost_cents >= 0);
+  printf
+    "splits exactly: %b\n"
+    (grading.friction_cost_cents
+     = grading.timing_cost_cents
+       + grading.spread_cost_cents
+       + grading.impact_cost_cents);
+  [%expect
+    {|
+    spread: 0
+    impact at least 0: true
+    splits exactly: true
+    |}]
+;;

@@ -103,10 +103,10 @@ module Outcome = struct
   ;;
 end
 
-let grade ~day ~fill_config (result : Driver.t) =
+let grade ~day ~attribution_half_spread (result : Driver.t) =
   let day_vwap = Day_stats.vwap day in
   let terminal_price = Benchmarks.terminal_price day in
-  let half_spread = fill_config.Fill_model.Config.half_spread in
+  let half_spread = attribution_half_spread in
   List.map (Order_manager.parents result.manager) ~f:(fun parent ->
     let open Or_error.Let_syntax in
     let instruction = parent.Parent_order.instruction in
@@ -149,9 +149,21 @@ let run ~day ~forecast_days ~instructions ~algo_name ~(params : Params.t) =
   in
   let algo_result = run_one algorithm in
   let baseline_result = run_one (module Immediate) in
-  let fill_config = params.fill_config in
-  let%bind algo_gradings = grade ~day ~fill_config algo_result in
-  let%bind baseline_gradings = grade ~day ~fill_config baseline_result in
+  (* Spread attribution follows the engine that produced the fills. Engine A
+     prices takers at open +/- the configured half-spread, so that knob is
+     the exact toll; Engine B's costs are the ladder walked level by level —
+     there is no separate spread toll, so the whole beyond-drift residual is
+     attributed to impact. *)
+  let attribution_half_spread =
+    match params.engine with
+    | Engine_choice.Bar_model ->
+      params.fill_config.Fill_model.Config.half_spread
+    | Synthetic { seed = (_ : int) } -> Price.of_int_cents 0
+  in
+  let%bind algo_gradings = grade ~day ~attribution_half_spread algo_result in
+  let%bind baseline_gradings =
+    grade ~day ~attribution_half_spread baseline_result
+  in
   let%map graded =
     List.map2_exn algo_gradings baseline_gradings ~f:(fun algo baseline ->
       let%map.Or_error value_add_cents =
