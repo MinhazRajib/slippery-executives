@@ -37,6 +37,9 @@ let print_instructions filename =
    a minute. 0.15% keeps the tape-chasing visible. *)
 let default_pov_rate = 0.0015
 
+(* Front-loads noticeably without slamming the tape; see the mli. *)
+let default_is_urgency = 2.0
+
 (* VWAP's forecast: the average volume curve of every *other* session we have
    for the symbol, so the algorithm never sees the day it is about to trade.
    With no other sessions on disk, fall back to the day's own curve (the old,
@@ -69,12 +72,13 @@ let algorithm_named ~symbol ~date ~(day : Trading_day.t) = function
   | "immediate" -> (module Immediate : Algorithm_intf.S)
   | "vwap" -> Vwap.create ~profile:(forecast_profile ~symbol ~date ~day)
   | "pov" -> Pov.create ~participation_rate:default_pov_rate ()
+  | "is" -> Implementation_shortfall.create ~urgency:default_is_urgency ()
   | other ->
     raise_s
       [%message
         "Unknown algorithm"
           (other : string)
-          ~known:"twap, vwap, pov, immediate"]
+          ~known:"twap, vwap, pov, is, immediate"]
 ;;
 
 let fills_for_parent (result : Driver.t) (parent : Parent_order.t) =
@@ -158,6 +162,7 @@ let () =
     eprintf
       "usage: main.exe <alpha.csv>                        (parse only)\n";
     eprintf
-      "       main.exe <alpha.csv> <SYMBOL> <DATE> [twap|vwap|pov|immediate]\n";
+      "       main.exe <alpha.csv> <SYMBOL> <DATE> \
+       [twap|vwap|pov|is|immediate]\n";
     exit 2
 ;;
