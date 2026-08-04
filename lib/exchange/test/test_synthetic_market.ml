@@ -341,17 +341,18 @@ let limit_child ~id ~quantity ~price_cents =
 ;;
 
 let%expect_test "a resting limit waits its turn in the queue" =
-  (* Two client buys rest through the same flow, each wanting more than the
-     bar will give them. One improves on the best bid by posting 150.00,
-     where no agent is showing, so it is alone at the front of its queue. The
-     other joins the crowd at 149.99 and must wait for the size displayed
-     ahead of it to be served first — so it fills exactly that much less.
-     Both are paid the spread rather than paying it: maker fills at their own
-     limit.
+  (* Two client buys rest through the same flow, each wanting far more than
+     the bar will give them. One improves on the best bid by posting 150.00,
+     where no agent is showing; the other joins the crowd at 149.99, behind
+     the 1,022 shares displayed there.
 
-     The arithmetic is checkable by eye below: 1,022 shares are shown at
-     149.99, and in the first bar the improver takes 9,785 to the joiner's
-     8,763 — a difference of exactly 1,022. Both finish in the second bar. *)
+     A bar trades a finite amount, and price priority decides who gets it. In
+     the first bar the improver takes the entire servable sell flow — 9,785
+     shares — and nothing reaches the joiner at all. In the second the
+     improver finishes its 20,000 with 10,215 more, and of the 4,720 shares
+     of flow left over the joiner must first serve the 1,022 ahead of it,
+     filling 3,698. Both are paid the spread rather than paying it: maker
+     fills at their own limit. *)
   let market, (_ : Fill.t list) =
     Synthetic_market.on_bar_advance
       (Synthetic_market.create Synthetic_market.Config.default)
@@ -407,10 +408,9 @@ let%expect_test "a resting limit waits its turn in the queue" =
     {|
     agent size displayed at 149.99: 1022
       filled 9785 @ $150.00 (maker)
-      filled 8763 @ $149.99 (maker)
       filled 10215 @ $150.00 (maker)
-      filled 11237 @ $149.99 (maker)
+      filled 3698 @ $149.99 (maker)
     order 1 total filled: 20000
-    order 2 total filled: 20000
+    order 2 total filled: 3698
     |}]
 ;;

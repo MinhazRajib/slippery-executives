@@ -49,9 +49,12 @@ type t =
   ; next_fill_id : int
   ; print_notional : float (* dollars, everything that traded *)
   ; print_volume : int
-  ; client_pressure : int
-      (* signed shares clients have taken, decayed each bar: what the makers
-         remember about being run over *)
+  ; client_pressure : float
+      (* signed participation clients have taken — their share of the volume
+         of the bar they actually traded in — decayed each bar: what the
+         makers remember about being run over. Shares would be the wrong
+         unit: 76,000 of them is a beating in a thin minute and a rounding
+         error in a busy one. *)
   ; queues : int Order_id.Map.t
       (* resting client order -> agent shares still ahead of it at its price,
          counted when it was posted *)
@@ -68,7 +71,7 @@ let create config =
   ; next_fill_id = 1
   ; print_notional = 0.
   ; print_volume = 0
-  ; client_pressure = 0
+  ; client_pressure = 0.
   ; queues = Order_id.Map.empty
   ; flow = []
   }
@@ -89,16 +92,15 @@ let rung_cents t (bar : Market_bar.t) =
    the {e permanent} half of impact — it survives the rebuilding of the
    ladders and fades over bars instead — so a buyer who keeps lifting offers
    finds the offers rising to meet him. *)
-let pressure_shift_cents t (bar : Market_bar.t) =
-  let volume = Size.to_int bar.volume in
-  if t.client_pressure = 0 || volume <= 0
+let pressure_shift_cents t (_ : Market_bar.t) =
+  if Float.( = ) t.client_pressure 0.
   then 0
   else (
     let magnitude =
       Float.of_int (Price.to_int_cents t.config.permanent_impact_coefficient)
-      *. Float.sqrt (Int.abs t.client_pressure // volume)
+      *. Float.sqrt (Float.abs t.client_pressure)
     in
-    (if t.client_pressure > 0 then 1 else -1)
+    (if Float.( > ) t.client_pressure 0. then 1 else -1)
     * Float.iround_nearest_exn magnitude)
 ;;
 
@@ -248,7 +250,7 @@ let servable_volume t ~(child : Child_order.t) ~limit =
     | (Buy | Sell), (Buy | Sell) -> 0)
 ;;
 
-let fill_resting t ~(child : Child_order.t) =
+let fill_resting t ~claimed ~(child : Child_order.t) =
   match child.request.order_type with
   | Market ->
     raise_s
@@ -257,7 +259,9 @@ let fill_resting t ~(child : Child_order.t) =
           ~order_id:(child.id : Order_id.t)]
   | Limit limit ->
     let ahead = Option.value (Map.find t.queues child.id) ~default:0 in
-    let served = servable_volume t ~child ~limit in
+    (* The bar traded a finite amount: whatever better-priced resting orders
+       have already claimed is gone, and cannot fill this one too. *)
+    let served = Int.max 0 (servable_volume t ~child ~limit - claimed) in
     let queue_drain = Int.min ahead served in
     let ours =
       Int.min (Size.to_int child.remaining) (served - queue_drain)
@@ -268,12 +272,32 @@ let fill_resting t ~(child : Child_order.t) =
       }
     in
     if ours <= 0
-    then t, []
+    then t, claimed + queue_drain, []
     else (
       let t, fill =
         make_fill t ~child ~price:limit ~size:ours ~liquidity:Liquidity.Maker
       in
-      t, [ fill ])
+      t, claimed + queue_drain + ours, [ fill ])
+;;
+
+(* Price priority, then arrival: the best-priced resting order gets first
+   claim on the bar's flow, and what it takes is not there for the next. Buys
+   and sells draw on opposite flows, so each side keeps its own running
+   claim. *)
+let in_priority_order resting_orders =
+  let limit_cents (child : Child_order.t) =
+    match child.request.order_type with
+    | Limit limit -> Price.to_int_cents limit
+    | Market -> 0
+  in
+  let buys, sells =
+    List.partition_tf resting_orders ~f:(fun (child : Child_order.t) ->
+      match child.request.side with Buy -> true | Sell -> false)
+  in
+  List.stable_sort buys ~compare:(fun a b ->
+    Int.compare (limit_cents b) (limit_cents a))
+  @ List.stable_sort sells ~compare:(fun a b ->
+    Int.compare (limit_cents a) (limit_cents b))
 ;;
 
 let on_bar_advance t ~bar ~resting_orders =
@@ -292,9 +316,7 @@ let on_bar_advance t ~bar ~resting_orders =
   let t =
     { t with
       current_bar = Some bar
-    ; client_pressure =
-        Float.iround_towards_zero_exn
-          (Float.of_int t.client_pressure *. t.config.Config.pressure_decay)
+    ; client_pressure = t.client_pressure *. t.config.Config.pressure_decay
     ; queues =
         Map.filter_keys t.queues ~f:(fun id ->
           List.exists resting_orders ~f:(fun (child : Child_order.t) ->
@@ -307,9 +329,24 @@ let on_bar_advance t ~bar ~resting_orders =
       ~bar
       ~fundamental_cents:(Price.to_int_cents bar.Market_bar.open_)
   in
-  List.fold resting_orders ~init:(t, []) ~f:(fun (t, fills) child ->
-    let t, new_fills = fill_resting t ~child in
-    t, fills @ new_fills)
+  let (t, (_ : int), (_ : int)), fills =
+    List.fold_map
+      (in_priority_order resting_orders)
+      ~init:(t, 0, 0)
+      ~f:(fun (t, buy_claimed, sell_claimed) (child : Child_order.t) ->
+        match child.request.side with
+        | Buy ->
+          let t, buy_claimed, fills =
+            fill_resting t ~claimed:buy_claimed ~child
+          in
+          (t, buy_claimed, sell_claimed), fills
+        | Sell ->
+          let t, sell_claimed, fills =
+            fill_resting t ~claimed:sell_claimed ~child
+          in
+          (t, buy_claimed, sell_claimed), fills)
+  in
+  t, List.concat fills
 ;;
 
 let on_child_order t (child : Child_order.t) =
@@ -335,7 +372,23 @@ let on_child_order t (child : Child_order.t) =
     { t with
       book
     ; client_pressure =
-        t.client_pressure + (Side.sign child.request.side * taken)
+        (* Participation is measured against the bar the shares were actually
+           taken from, and the running total is clamped, so the remembered
+           aggression stays bounded by the coefficient however hard a client
+           leans. *)
+        (let participation =
+           match t.current_bar with
+           | None -> 0.
+           | Some bar ->
+             let volume = Size.to_int bar.Market_bar.volume in
+             if volume <= 0 then 0. else taken // volume
+         in
+         Float.clamp_exn
+           ~min:(-1.)
+           ~max:1.
+           (t.client_pressure
+            +. (Float.of_int (Side.sign child.request.side) *. participation)
+           ))
     }
   in
   let t =
