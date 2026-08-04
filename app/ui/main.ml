@@ -2245,6 +2245,30 @@ let cost_cell ~theme cents =
   {%html|<span %{style}>#{dollars_signed cents}</span>|}
 ;;
 
+(* Board totals arrive as Int63 (32-bit browser ints would overflow on large
+   positions), so they format through floats. *)
+let pnl_cell_int63 ~theme cents =
+  let dollars = Run_summary.dollars cents in
+  let color =
+    if Float.( > ) dollars 0.
+    then theme.Styles.green
+    else if Float.( < ) dollars 0.
+    then theme.Styles.red
+    else theme.Styles.faint
+  in
+  let style =
+    Styles.s
+      ("color:" ^ color ^ ";font-size:13px;font-weight:600;" ^ Styles.mono)
+  in
+  let text =
+    sprintf
+      "%s$%s"
+      (if Float.( < ) dollars 0. then "-" else "+")
+      (Float.to_string_hum ~delimiter:',' ~decimals:2 (Float.abs dollars))
+  in
+  {%html|<span %{style}>#{text}</span>|}
+;;
+
 (* P&L convention: positive = money made, so green. *)
 let pnl_cell ~theme cents =
   let color =
@@ -2594,8 +2618,8 @@ let results_view
               <span %{dim}>#{Int.to_string (index + 1)}</span>
               <span>#{row.player}</span>
               <span %{dim}>#{String.uppercase row.algo_name}</span>
-              <span>%{pnl_cell ~theme row.summary.value_add_cents}</span>
-              <span>%{pnl_cell ~theme row.summary.net_cents}</span>
+              <span>%{pnl_cell_int63 ~theme row.summary.value_add_cents}</span>
+              <span>%{pnl_cell_int63 ~theme row.summary.net_cents}</span>
               <span %{dim}>#{capture}</span>
               <span %{dim}>#{String.prefix row.submitted_at 16}</span>
             </div>
@@ -2607,7 +2631,10 @@ let results_view
           %{Styles.s
               "display:flex;gap:12px;align-items:center;padding:14px 16px 8px 16px;"}>
           <span %{title_style}>Leaderboard</span>
-          <span %{faint_style}>· this day · this alpha · server-verified</span>
+          <span %{faint_style}>
+            · this day · this alpha · this engine · scored by the server
+            under house physics
+          </span>
           <span
             %{Styles.s
                 "margin-left:auto;display:flex;gap:8px;align-items:center;"}>
@@ -2903,6 +2930,10 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
           { Leaderboard.Request.symbol = r.symbol
           ; date = r.date
           ; alpha_hash = alpha_hash r.alpha_text
+          ; engine_name =
+              (match r.params.Execlab_session.Params.engine with
+               | Execlab_session.Engine_choice.Bar_model -> "bar"
+               | Synthetic { seed = (_ : int) } -> "synthetic")
           }
       in
       (match response with

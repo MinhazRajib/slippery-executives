@@ -21,13 +21,24 @@ end
 
 module Run_summary = struct
   type t =
-    { value_add_cents : int
-    ; net_cents : int
-    ; gross_cents : int
+    { value_add_cents : Int63.t
+    ; net_cents : Int63.t
+    ; gross_cents : Int63.t
     ; alpha_capture : float option
-    ; shortfall_cents : int
+    ; shortfall_cents : Int63.t
     }
   [@@deriving sexp, equal]
+
+  let of_cents ~value_add ~net ~gross ~alpha_capture ~shortfall =
+    { value_add_cents = Int63.of_int value_add
+    ; net_cents = Int63.of_int net
+    ; gross_cents = Int63.of_int gross
+    ; alpha_capture
+    ; shortfall_cents = Int63.of_int shortfall
+    }
+  ;;
+
+  let dollars cents = Int63.to_float cents /. 100.
 end
 
 module Leaderboard_row = struct
@@ -62,6 +73,7 @@ module Leaderboard = struct
       { symbol : Symbol.t
       ; date : Date.t
       ; alpha_hash : string
+      ; engine_name : string
       }
     [@@deriving sexp, equal]
   end

@@ -7,27 +7,56 @@ let now_string () =
   |> String.tr ~target:' ' ~replacement:'T'
 ;;
 
-let params_of_config (config : Run_config.t) =
+(* A leaderboard compares {e executions}, so the physics must be the house's,
+   not the submitter's: the fill model is pinned to its defaults and a
+   synthetic run's seed is derived from the board's own identity, so everyone
+   on a board faces the identical market and nobody wins by turning impact
+   off or shopping for a kind seed. The algorithm's own knobs stay free —
+   those are the strategy. *)
+let canonical_params (config : Run_config.t) =
+  let open Or_error.Let_syntax in
+  let finite name value ~check ~message =
+    if Float.is_finite value && check value
+    then Ok value
+    else
+      Or_error.error_s
+        [%message "bad parameter" ~_:(name : string) (value : float) message]
+  in
+  let%bind pov_rate =
+    finite
+      "pov_rate"
+      config.pov_rate
+      ~check:(fun v -> Float.( > ) v 0. && Float.( <= ) v 1.)
+      ~message:"a fraction in (0, 1]"
+  in
+  let%map is_urgency =
+    finite
+      "is_urgency"
+      config.is_urgency
+      ~check:(fun v -> Float.( >= ) v 0. && Float.( <= ) v 10_000.)
+      ~message:"in [0, 10000]"
+  in
   { Execlab_session.Params.fill_config =
-      { half_spread = Price.of_int_cents config.half_spread_cents
-      ; max_participation = config.max_participation
-      ; impact_coefficient =
-          Price.of_int_cents config.impact_coefficient_cents
-      }
-  ; pov_rate = config.pov_rate
-  ; is_urgency = config.is_urgency
+      Execlab_simulation.Fill_model.Config.default
+  ; pov_rate
+  ; is_urgency
   ; engine =
       (match config.engine_name with
        | "synthetic" ->
          Execlab_session.Engine_choice.Synthetic
-           { seed = config.engine_seed }
+           { seed =
+               String.fold
+                 (alpha_hash config.alpha_text)
+                 ~init:17
+                 ~f:(fun acc c -> ((acc * 31) + Char.to_int c) % 100_003)
+           }
        | (_ : string) -> Execlab_session.Engine_choice.Bar_model)
   }
 ;;
 
 (* The server never trusts a client's numbers: it re-runs the submitted
-   config itself (the simulator is deterministic, so the config is the proof
-   of its own score) and stores only its own grading. *)
+   config itself under canonical physics (the simulator is deterministic, so
+   the config is the proof of its own score) and stores only its own grading. *)
 let submit_run ~data_dir ~runs_dir (config : Run_config.t) =
   let open Or_error.Let_syntax in
   let%bind () =
@@ -35,6 +64,7 @@ let submit_run ~data_dir ~runs_dir (config : Run_config.t) =
     then Or_error.error_string "player name is empty"
     else Ok ()
   in
+  let%bind params = canonical_params config in
   let%bind day =
     Catalog.load ~data_dir ~symbol:config.symbol ~date:config.date
   in
@@ -49,16 +79,15 @@ let submit_run ~data_dir ~runs_dir (config : Run_config.t) =
            ~excluding:config.date)
       ~instructions:parsed.instructions
       ~algo_name:config.algo_name
-      ~params:(params_of_config config)
+      ~params
   in
   let summary =
-    { Run_summary.value_add_cents =
-        Execlab_session.Outcome.value_add_cents outcome
-    ; net_cents = Execlab_session.Outcome.net_cents outcome
-    ; gross_cents = Execlab_session.Outcome.gross_cents outcome
-    ; alpha_capture = Execlab_session.Outcome.alpha_capture outcome
-    ; shortfall_cents = Execlab_session.Outcome.shortfall_cents outcome
-    }
+    Run_summary.of_cents
+      ~value_add:(Execlab_session.Outcome.value_add_cents outcome)
+      ~net:(Execlab_session.Outcome.net_cents outcome)
+      ~gross:(Execlab_session.Outcome.gross_cents outcome)
+      ~alpha_capture:(Execlab_session.Outcome.alpha_capture outcome)
+      ~shortfall:(Execlab_session.Outcome.shortfall_cents outcome)
   in
   let record =
     { Store.Record.config; summary; submitted_at = now_string () }
@@ -70,6 +99,7 @@ let submit_run ~data_dir ~runs_dir (config : Run_config.t) =
       ~symbol:config.symbol
       ~date:config.date
       ~alpha_hash:(alpha_hash config.alpha_text)
+      ~engine_name:config.engine_name
   in
   Ok { Submit_run.Response.summary; leaderboard }
 ;;
@@ -82,6 +112,7 @@ let leaderboard ~runs_dir (request : Leaderboard.Request.t) =
           ~symbol:request.symbol
           ~date:request.date
           ~alpha_hash:request.alpha_hash
+          ~engine_name:request.engine_name
     }
 ;;
 

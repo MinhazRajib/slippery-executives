@@ -1,0 +1,5 @@
+(executable
+ (name check)
+ (libraries core core_unix execlab.protocol execlab.types)
+ (preprocess
+  (pps ppx_jane)))

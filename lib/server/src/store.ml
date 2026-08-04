@@ -19,13 +19,18 @@ module Record = struct
   ;;
 end
 
-let board_dir ~runs_dir ~symbol ~date ~alpha_hash =
+(* One board per (symbol, day, alpha, engine): a bar-model run and a
+   synthetic-exchange run of the same alpha are different contests. *)
+let board_dir ~runs_dir ~symbol ~date ~alpha_hash ~engine_name =
   runs_dir
   ^/ sprintf
-       "%s-%s-%s"
+       "%s-%s-%s-%s"
        (Symbol.to_string symbol)
        (Date.to_string date)
        alpha_hash
+       (match engine_name with
+        | "synthetic" -> "synthetic"
+        | (_ : string) -> "bar")
 ;;
 
 let save ~runs_dir (record : Record.t) =
@@ -35,6 +40,7 @@ let save ~runs_dir (record : Record.t) =
       ~symbol:record.config.symbol
       ~date:record.config.date
       ~alpha_hash:(alpha_hash record.config.alpha_text)
+      ~engine_name:record.config.engine_name
   in
   Core_unix.mkdir_p dir;
   let file =
@@ -53,8 +59,8 @@ let save ~runs_dir (record : Record.t) =
     ~data:(Sexp.to_string_hum [%sexp (record : Record.t)])
 ;;
 
-let load_board ~runs_dir ~symbol ~date ~alpha_hash =
-  let dir = board_dir ~runs_dir ~symbol ~date ~alpha_hash in
+let load_board ~runs_dir ~symbol ~date ~alpha_hash ~engine_name =
+  let dir = board_dir ~runs_dir ~symbol ~date ~alpha_hash ~engine_name in
   match Sys_unix.readdir dir with
   | exception (_ : exn) -> []
   | files ->
@@ -67,7 +73,7 @@ let load_board ~runs_dir ~symbol ~date ~alpha_hash =
     |> List.sort
          ~compare:
            (Comparable.lift
-              (Comparable.reverse Int.compare)
+              (Comparable.reverse Int63.compare)
               ~f:(fun (row : Leaderboard_row.t) ->
                 row.summary.value_add_cents))
 ;;

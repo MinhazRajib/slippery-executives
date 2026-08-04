@@ -25,4 +25,5 @@ val load_board
   -> symbol:Symbol.t
   -> date:Date.t
   -> alpha_hash:string
+  -> engine_name:string
   -> Leaderboard_row.t list

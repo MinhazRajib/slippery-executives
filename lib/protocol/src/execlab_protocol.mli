@@ -34,15 +34,30 @@ module Run_config : sig
 end
 
 module Run_summary : sig
-  (** The aggregate grade of one run, totalled across its orders. *)
+  (** The aggregate grade of one run, totalled across its orders. Cents are
+      [Int63.t], not [int]: the browser client is js_of_ocaml, where [int] is
+      32 bits, and a large enough position (a few million shares of a $200
+      name) exceeds that — as an [int] those totals arrive as an unparseable
+      sexp and poison every later read of the board. *)
   type t =
-    { value_add_cents : int (** vs the immediate baseline *)
-    ; net_cents : int
-    ; gross_cents : int
+    { value_add_cents : Int63.t (** vs the immediate baseline *)
+    ; net_cents : Int63.t
+    ; gross_cents : Int63.t
     ; alpha_capture : float option
-    ; shortfall_cents : int
+    ; shortfall_cents : Int63.t
     }
   [@@deriving sexp, equal]
+
+  val of_cents
+    :  value_add:int
+    -> net:int
+    -> gross:int
+    -> alpha_capture:float option
+    -> shortfall:int
+    -> t
+
+  (** Dollars, for display only. *)
+  val dollars : Int63.t -> float
 end
 
 module Leaderboard_row : sig
@@ -79,6 +94,7 @@ module Leaderboard : sig
       { symbol : Symbol.t
       ; date : Date.t
       ; alpha_hash : string (** see {!alpha_hash} *)
+      ; engine_name : string (** boards are per-engine *)
       }
     [@@deriving sexp, equal]
   end
