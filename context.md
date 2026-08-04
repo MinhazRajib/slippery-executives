@@ -406,37 +406,31 @@ Known debt:
 
 ## Roadmap (near-term, in order)
 
-Everything through the original items 1-7 is DONE (2026-08-04): the
-MVP, all four algorithms (TWAP, VWAP with a leave-one-out forecast
-profile, POV, and implementation shortfall — an Almgren-Chriss
-front-loaded schedule behind a single dimensionless `urgency` knob),
-the TCA decomposition (`friction = timing + spread + impact`, exact in
-integer cents, enforced by hand-computed expect tests), and the
-six-screen wizard client (dashboard with localStorage run history,
-day picker over the whole bundled catalog, alpha paste-and-preview,
-setup/confirm, the replay screen with a hover crosshair, and a results
-screen with the cost-breakdown and P&L tables plus CSV export of
-per-order results and raw fills). CI builds and tests the engine + CLI
-on the stock public toolchain; the UI builds locally on the
-preview/OxCaml toolchain only.
+Everything in the original plan through Engine B now EXISTS
+(2026-08-04): the four algorithms with parameter forms, the TCA metric
+tree, the six-screen wizard client, a thin blocking HTTP server
+(bin/server.exe: static client + two sexp endpoints over
+lib/protocol), run persistence as sexp files (one directory per
+(symbol, date, alpha-hash) — a leaderboard is a directory listing),
+server-verified leaderboards (the server re-runs submitted configs;
+determinism is the anti-cheat), a shared lib/session pipeline behind
+the CLI, the browser, and the server, and Engine B — lib/exchange's
+synthetic exchange behind the Engine_intf seam: maker ladders and a
+seeded noise tape calibrated per bar, cross-platform-deterministic via
+an Int32 LCG, selectable everywhere ("synthetic[:seed]" in the CLI,
+the Fill engine pills in the UI).
 
-What remains, in order:
+What remains:
 
-1. **Algorithm parameter forms**: urgency, POV rate, and the fill
-   model's knobs are hardcoded defaults — surface them on the setup
-   screen (the friend's app/ui/client has a reference
-   implementation with text fields).
-2. **Run persistence beyond localStorage** (config + results as sexp
-   files) and the local same-strategy leaderboard; "retest with a
-   different algo" flows from stored configs.
-3. **Server split** (Async RPC at the one client<->server seam): real
-   data hosting replaces the embedded catalog, alpha uploads stay
-   client-side, the server re-runs submitted configs (determinism as
-   anti-cheat), and the multiplayer fixed-alpha leaderboard arrives.
-4. **Engine B**, the synthetic exchange reusing jsip's book/matching
-   engine with the historical path as the fundamental.
-
-Smaller open items: POV's rolling volume-window smoothing knob;
-prior-days-only VWAP forecasts once users can pick dates freely;
-js_of_ocaml --release to shrink the ~70MB dev bundle; retiring or
-archiving app/ui/client now that its screens are integrated.
+1. **Serving story**: bin/server.exe replaces `python3 -m http.server`
+   — run it and the client, leaderboard included, is one process.
+   Currently local-only; real hosting/auth is deliberately out of
+   scope.
+2. **Engine B v2**: client limit orders resting in the book with real
+   queue position (v1 keeps Engine A's strict-through convention);
+   grading attribution tuned to exchange fills (timing/impact split
+   currently assumes Engine A's open±spread pricing).
+3. **Cross-day experiments**: run one alpha across every session and
+   algorithm — the league-table script.
+4. Housekeeping: retire app/ui/client (screens integrated),
+   js_of_ocaml --release bundle, prior-days-only VWAP forecasts.
