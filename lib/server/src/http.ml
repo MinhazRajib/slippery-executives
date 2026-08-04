@@ -12,6 +12,11 @@ end
 (* Reads one request from [reader]: request line, headers to the blank line,
    then exactly Content-Length bytes of body. Returns [None] on a closed or
    malformed connection — the caller just drops it. *)
+(* Bodies beyond this are dropped as malformed: nothing in the protocol is
+   remotely this large, and Bytes.create of an attacker-chosen (or negative)
+   Content-Length must never run. *)
+let max_body_bytes = 8 * 1024 * 1024
+
 let read_request reader =
   let open Option.Let_syntax in
   let%bind request_line = In_channel.input_line reader in
@@ -35,6 +40,13 @@ let read_request reader =
         | Some (_ : string * string) | None -> headers length)
   in
   let%bind length = headers None in
+  let%bind length =
+    match length with
+    | None -> Some None
+    | Some length when length >= 0 && length <= max_body_bytes ->
+      Some (Some length)
+    | Some (_ : int) -> None
+  in
   let%map body =
     match length with
     | None -> Some ""
@@ -102,12 +114,23 @@ let serve_forever ~port ~handle =
     socket
     ~addr:(ADDR_INET (Core_unix.Inet_addr.bind_any, port));
   Core_unix.listen socket ~backlog:16;
+  (* A client vanishing mid-response must be a dropped connection, not a
+     fatal SIGPIPE to the whole process. Core's [Signal] has no handler
+     installer outside Async, so this goes through Stdlib — the server is
+     single-domain, which is what the multidomain alert is about. *)
+  Stdlib.Sys.set_signal
+    Stdlib.Sys.sigpipe
+    Stdlib.Sys.Signal_ignore [@alert "-unsafe_multidomain"];
   eprintf "execlab server listening on http://localhost:%d\n%!" port;
   (* One connection at a time: two players and a demo do not need more, and
      sequential means no locking anywhere. *)
   let rec loop () =
     let client, (_ : Core_unix.sockaddr) = Core_unix.accept socket in
     (try
+       (* The loop is sequential, so a silent client must not wedge it: reads
+          and writes give up after ten seconds. *)
+       Core_unix.setsockopt_float client SO_RCVTIMEO 10.;
+       Core_unix.setsockopt_float client SO_SNDTIMEO 10.;
        let reader = Core_unix.in_channel_of_descr client in
        let writer = Core_unix.out_channel_of_descr client in
        (match read_request reader with
