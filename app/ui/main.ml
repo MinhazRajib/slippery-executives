@@ -4,6 +4,7 @@ open Bonsai.Let_syntax
 open! Execlab_types
 open! Execlab_market
 open! Execlab_analytics
+open Execlab_protocol
 
 (* Wizard flow (adapted from app/ui/client's seven screens): Dashboard ->
    Choose_day -> Alpha -> Setup (algorithm + confirm) -> Sim -> Results. *)
@@ -2236,6 +2237,12 @@ let results_view
   ~new_sim
   ~to_dashboard
   ~toggle_theme
+  ~player
+  ~set_player
+  ~board
+  ~submit_status
+  ~submit
+  ~refresh_board
   =
   let rows = replay.results.rows in
   let sum f = List.sum (module Int) rows ~f in
@@ -2431,6 +2438,166 @@ let results_view
     Styles.s
       ("color:" ^ theme.Styles.text ^ ";font-size:14px;font-weight:600;")
   in
+  let leaderboard_card =
+    let title_style =
+      Styles.s
+        ("color:" ^ theme.Styles.text ^ ";font-size:14px;font-weight:600;")
+    in
+    let dim =
+      Styles.s ("color:" ^ theme.Styles.secondary ^ ";font-size:12.5px;")
+    in
+    let faint_style =
+      Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:12.5px;")
+    in
+    let name_input =
+      let input_style =
+        Styles.s
+          ("width:140px;background:"
+           ^ theme.Styles.page_bg
+           ^ ";color:"
+           ^ theme.Styles.text
+           ^ ";border:1px solid "
+           ^ theme.Styles.chip_border
+           ^ ";border-radius:4px;padding:6px 8px;font-size:12.5px;"
+           ^ Styles.mono)
+      in
+      {%html|
+        <input
+          type="text"
+          placeholder="your name"
+          %{Vdom.Attr.string_property "value" player}
+          %{input_style}
+          on_input=%{fun (_ : _) name -> set_player name} />
+      |}
+    in
+    let submit_button =
+      let style =
+        Styles.s
+          ("background:"
+           ^ theme.Styles.blue
+           ^ ";color:#ffffff;border:none;border-radius:5px;padding:7px \
+              14px;cursor:pointer;font-size:12.5px;font-weight:700;")
+      in
+      {%html|
+        <button class="btn" %{style} on_click=%{fun _ -> submit}>
+          Submit to leaderboard
+        </button>
+      |}
+    in
+    let refresh_button =
+      let style =
+        Styles.s
+          ("background:"
+           ^ theme.Styles.chip_bg
+           ^ ";color:"
+           ^ theme.Styles.secondary
+           ^ ";border:1px solid "
+           ^ theme.Styles.chip_border
+           ^ ";border-radius:5px;padding:7px \
+              12px;cursor:pointer;font-size:12.5px;font-weight:600;")
+      in
+      {%html|
+        <button class="btn" %{style} on_click=%{fun _ -> refresh_board}>
+          Refresh
+        </button>
+      |}
+    in
+    let status =
+      match submit_status with
+      | None -> []
+      | Some text -> [ {%html|<span %{faint_style}>#{text}</span>|} ]
+    in
+    let columns = "44px 160px 90px 130px 130px 80px 1fr" in
+    let head_row =
+      Styles.s
+        ("display:grid;grid-template-columns:"
+         ^ columns
+         ^ ";column-gap:10px;white-space:nowrap;padding:10px 16px 6px \
+            16px;border-bottom:1px solid "
+         ^ theme.Styles.hairline
+         ^ ";"
+         ^ Styles.table_label theme)
+    in
+    let board_rows =
+      match board with
+      | None ->
+        [ {%html|
+            <div %{Styles.s "padding:10px 16px;"}>
+              <span %{faint_style}>
+                Submit this run, or refresh to see standing entries.
+              </span>
+            </div>
+          |}
+        ]
+      | Some [] ->
+        [ {%html|
+            <div %{Styles.s "padding:10px 16px;"}>
+              <span %{faint_style}>
+                No submissions for this day and alpha yet — be first.
+              </span>
+            </div>
+          |}
+        ]
+      | Some rows ->
+        List.mapi rows ~f:(fun index (row : Leaderboard_row.t) ->
+          let style =
+            Styles.s
+              ("display:grid;grid-template-columns:"
+               ^ columns
+               ^ ";column-gap:10px;white-space:nowrap;padding:7px \
+                  16px;font-size:12.5px;color:"
+               ^ theme.Styles.text
+               ^ ";border-bottom:1px solid "
+               ^ theme.Styles.hairline
+               ^ ";"
+               ^ Styles.mono)
+          in
+          let capture =
+            match row.summary.alpha_capture with
+            | None -> "n/a"
+            | Some capture -> sprintf "%.1f%%" (capture *. 100.)
+          in
+          {%html|
+            <div %{style}>
+              <span %{dim}>#{Int.to_string (index + 1)}</span>
+              <span>#{row.player}</span>
+              <span %{dim}>#{String.uppercase row.algo_name}</span>
+              <span>%{pnl_cell ~theme row.summary.value_add_cents}</span>
+              <span>%{pnl_cell ~theme row.summary.net_cents}</span>
+              <span %{dim}>#{capture}</span>
+              <span %{dim}>#{String.prefix row.submitted_at 16}</span>
+            </div>
+          |})
+    in
+    {%html|
+      <div %{Styles.card theme "padding-bottom:4px;"}>
+        <div
+          %{Styles.s
+              "display:flex;gap:12px;align-items:center;padding:14px 16px 8px 16px;"}>
+          <span %{title_style}>Leaderboard</span>
+          <span %{faint_style}>· this day · this alpha · server-verified</span>
+          <span
+            %{Styles.s
+                "margin-left:auto;display:flex;gap:8px;align-items:center;"}>
+            *{status}
+            %{name_input}
+            %{submit_button}
+            %{refresh_button}
+          </span>
+        </div>
+        <div %{head_row}>
+          <span>rank</span>
+          <span>player</span>
+          <span>algo</span>
+          <span>vs immediate</span>
+          <span>net P&L</span>
+          <span>capture</span>
+          <span>submitted</span>
+        </div>
+        *{board_rows}
+      </div>
+    |}
+  in
   let buttons = Styles.s "display:flex;gap:10px;align-items:center;" in
   let export_name suffix =
     sprintf
@@ -2504,6 +2671,7 @@ let results_view
         *{List.mapi rows ~f:results_row}
         %{results_totals}
       </div>
+      %{leaderboard_card}
       <div %{buttons}>
         %{primary_button ~theme ~on_click:(fun _ -> new_sim)
             "New simulation"}
@@ -2520,6 +2688,30 @@ let results_view
       </div>
     </div>
   |}
+;;
+
+(* ---------- the leaderboard seam ---------- *)
+
+let submit_run_effect = Effect.of_deferred_fun Net.submit_run
+let fetch_board_effect = Effect.of_deferred_fun Net.leaderboard
+
+let persist_player =
+  Effect.of_sync_fun (fun name -> Storage.set Storage.player_key name)
+;;
+
+let config_of (replay : Replay.t) ~player =
+  let fill = replay.params.Execlab_session.Params.fill_config in
+  { Run_config.player
+  ; symbol = replay.symbol
+  ; date = replay.date
+  ; alpha_text = replay.alpha_text
+  ; algo_name = replay.algo_name
+  ; half_spread_cents = Price.to_int_cents fill.half_spread
+  ; max_participation = fill.max_participation
+  ; impact_coefficient_cents = Price.to_int_cents fill.impact_coefficient
+  ; pov_rate = replay.params.pov_rate
+  ; is_urgency = replay.params.is_urgency
+  }
 ;;
 
 (* ---------- the app ---------- *)
@@ -2568,6 +2760,17 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     Bonsai.state (None : Error.t option) graph
   in
   let runs, set_runs = Bonsai.state (History.load ()) graph in
+  let player, set_player =
+    Bonsai.state
+      (Option.value (Storage.get Storage.player_key) ~default:"")
+      graph
+  in
+  let board, set_board =
+    Bonsai.state (None : Leaderboard_row.t list option) graph
+  in
+  let submit_status, set_submit_status =
+    Bonsai.state (None : string option) graph
+  in
   let replay, set_replay = Bonsai.state (None : Replay.t option) graph in
   let minute, set_minute = Bonsai.state' 0 graph in
   let playing, set_playing = Bonsai.state true graph in
@@ -2633,6 +2836,41 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     let%bind.Effect () = set_minute (fun (_ : int) -> 0) in
     set_playing true
   in
+  let submit =
+    let%arr replay and player and set_board and set_submit_status in
+    match replay with
+    | None -> Effect.Ignore
+    | Some r ->
+      let%bind.Effect () = set_submit_status (Some "submitting…") in
+      let%bind.Effect response = submit_run_effect (config_of r ~player) in
+      (match response with
+       | Ok resp ->
+         let%bind.Effect () =
+           set_board (Some resp.Submit_run.Response.leaderboard)
+         in
+         set_submit_status (Some "verified by the server ✓")
+       | Error error ->
+         set_submit_status
+           (Some ("submit failed: " ^ Error.to_string_hum error)))
+  in
+  let refresh_board =
+    let%arr replay and set_board and set_submit_status in
+    match replay with
+    | None -> Effect.Ignore
+    | Some r ->
+      let%bind.Effect response =
+        fetch_board_effect
+          { Leaderboard.Request.symbol = r.symbol
+          ; date = r.date
+          ; alpha_hash = alpha_hash r.alpha_text
+          }
+      in
+      (match response with
+       | Ok resp -> set_board (Some resp.Leaderboard.Response.rows)
+       | Error error ->
+         set_submit_status
+           (Some ("refresh failed: " ^ Error.to_string_hum error)))
+  in
   let%arr screen
   and selection
   and set_selection
@@ -2661,7 +2899,13 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_minute
   and set_screen
   and start
-  and restart in
+  and restart
+  and player
+  and set_player
+  and board
+  and submit_status
+  and submit
+  and refresh_board in
   let theme = if is_dark then Styles.dark else Styles.paper in
   let toggle_theme =
     let next = if is_dark then Styles.paper else Styles.dark in
@@ -2756,6 +3000,14 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~new_sim:(goto Screen.Choose_day)
         ~to_dashboard:(goto Screen.Dashboard)
         ~toggle_theme
+        ~player
+        ~set_player:(fun name ->
+          let%bind.Effect () = set_player name in
+          persist_player name)
+        ~board
+        ~submit_status
+        ~submit
+        ~refresh_board
   in
   let shell =
     Styles.s
@@ -2768,4 +3020,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   {%html|<div %{shell}>%{body}</div>|}
 ;;
 
-let () = Bonsai_web.Start.start app
+let () =
+  Async_js.init ();
+  Bonsai_web.Start.start app
+;;

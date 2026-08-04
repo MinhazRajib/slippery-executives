@@ -7,6 +7,7 @@
   core_unix.sys_unix
   execlab_types
   execlab_market
+  execlab_alpha
   execlab_session
   execlab_protocol)
  (preprocess

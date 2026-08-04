@@ -38,6 +38,10 @@ type t =
   { symbol : Symbol.t
   ; date : Date.t
   ; algo_name : string
+  ; alpha_text : string
+  ; params : Execlab_session.Params.t
+      (* what this run actually used — the submit-to-leaderboard config must
+         reproduce the run exactly *)
   ; bars : Market_bar.t array
   ; fills : Fill.t array
   ; parents : parent_replay list
@@ -296,6 +300,8 @@ let run ~symbol ~date ~alpha_text ~algo_name ~(params : Params.t) =
   { symbol
   ; date
   ; algo_name
+  ; alpha_text
+  ; params
   ; bars
   ; fills
   ; parents
