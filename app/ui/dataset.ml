@@ -52,6 +52,19 @@ let load ~symbol ~date : Trading_day.t Or_error.t =
     Data_loader.parse ~symbol ~date contents
 ;;
 
+(* Parsed days are memoized: the choose-day preview re-renders on every state
+   change and must not re-parse 390 rows each time. *)
+let day_cache : Trading_day.t Or_error.t Hashtbl.M(String).t =
+  Hashtbl.create (module String)
+;;
+
+let load_cached ~symbol ~date =
+  Hashtbl.find_or_add
+    day_cache
+    (Symbol.to_string symbol ^ "/" ^ Date.to_string date)
+    ~default:(fun () -> load ~symbol ~date)
+;;
+
 (* Parsing every session of a symbol costs ~4k rows, so summaries are
    memoized: the first visit to a symbol's calendar pays once. *)
 let summary_cache : Day_summary.t list Hashtbl.M(Symbol).t =

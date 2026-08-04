@@ -103,6 +103,116 @@ let theme_button ~theme ~is_dark ~toggle_theme =
   |}
 ;;
 
+module Icon = struct
+  let make ?(size = 15) path_d =
+    let attr = Vdom.Attr.create in
+    Vdom.Node.create_svg
+      "svg"
+      ~attrs:
+        [ attr "width" (Int.to_string size)
+        ; attr "height" (Int.to_string size)
+        ; attr "viewBox" "0 0 24 24"
+        ; attr "fill" "none"
+        ; attr "stroke" "currentColor"
+        ; attr "stroke-width" "2.2"
+        ; attr "stroke-linecap" "round"
+        ; attr "stroke-linejoin" "round"
+        ; Styles.s "flex-shrink:0;vertical-align:-2px;"
+        ]
+      [ Vdom.Node.create_svg "path" ~attrs:[ attr "d" path_d ] [] ]
+  ;;
+
+  let check = make "M20 6L9 17l-5-5"
+
+  let calendar ?size () =
+    make
+      ?size
+      "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 \
+       0 1-2-2V6a2 2 0 0 1 2-2z"
+  ;;
+
+  let file ?size () =
+    make
+      ?size
+      "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6"
+  ;;
+
+  let sliders ?size () =
+    make ?size "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"
+  ;;
+
+  let play ?size () = make ?size "M6 3l14 9-14 9V3z"
+  let flag ?size () = make ?size "M4 22V4c5-3 9 3 16 0v12c-7 3-11-3-16 0"
+
+  let upload ?size () =
+    make
+      ?size
+      "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"
+  ;;
+
+  let arrow_right ?size () = make ?size "M5 12h14M12 5l7 7-7 7"
+  let arrow_left ?size () = make ?size "M19 12H5M12 19l-7-7 7-7"
+end
+
+let wizard_steps =
+  [ "Day", Icon.calendar ~size:13 ()
+  ; "Alpha", Icon.file ~size:13 ()
+  ; "Setup", Icon.sliders ~size:13 ()
+  ; "Simulate", Icon.play ~size:13 ()
+  ; "Results", Icon.flag ~size:13 ()
+  ]
+;;
+
+let step_progress ~theme ~current =
+  let station index (name, icon) =
+    let state =
+      if index < current
+      then `Done
+      else if index = current
+      then `Active
+      else `Upcoming
+    in
+    let bg, color, weight =
+      match state with
+      | `Done -> theme.Styles.blue_soft, theme.Styles.blue, "600"
+      | `Active -> theme.Styles.blue, "#ffffff", "700"
+      | `Upcoming -> "transparent", theme.Styles.faint, "600"
+    in
+    let chip =
+      Styles.s
+        ("display:inline-flex;align-items:center;gap:6px;background:"
+         ^ bg
+         ^ ";color:"
+         ^ color
+         ^ ";border-radius:999px;padding:5px \
+            12px;font-size:12px;font-weight:"
+         ^ weight
+         ^ ";white-space:nowrap;")
+    in
+    let glyph =
+      match state with `Done -> Icon.check | `Active | `Upcoming -> icon
+    in
+    {%html|<span %{chip}>%{glyph} #{name}</span>|}
+  in
+  let sep =
+    Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:11px;margin:0 2px;")
+  in
+  let stations =
+    List.concat_mapi wizard_steps ~f:(fun index step ->
+      let chip = station index step in
+      if index = 0
+      then [ chip ]
+      else [ {%html|<span %{sep}>—</span>|}; chip ])
+  in
+  {%html|
+    <div
+      %{Styles.s
+          "display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-top:10px;"}>
+      *{stations}
+    </div>
+  |}
+;;
+
 (* ---------- controls ---------- *)
 
 let pill ~theme ~active ~on_click label =
@@ -1206,6 +1316,7 @@ let sim_view
         <div %{sub_style}>
           source: <span %{Styles.code_chip theme}>#{command}</span>
         </div>
+        %{step_progress ~theme ~current:3}
       </div>
       %{controls replay ~theme ~minute ~playing ~speed ~zoom ~set_playing
           ~set_speed ~set_zoom ~set_minute ~restart}
@@ -1222,57 +1333,6 @@ let sim_view
 
 (* Small inline SVG glyphs (Lucide outlines), stroke = currentColor so they
    inherit the surrounding text color in either theme. *)
-module Icon = struct
-  let make ?(size = 15) path_d =
-    let attr = Vdom.Attr.create in
-    Vdom.Node.create_svg
-      "svg"
-      ~attrs:
-        [ attr "width" (Int.to_string size)
-        ; attr "height" (Int.to_string size)
-        ; attr "viewBox" "0 0 24 24"
-        ; attr "fill" "none"
-        ; attr "stroke" "currentColor"
-        ; attr "stroke-width" "2.2"
-        ; attr "stroke-linecap" "round"
-        ; attr "stroke-linejoin" "round"
-        ; Styles.s "flex-shrink:0;vertical-align:-2px;"
-        ]
-      [ Vdom.Node.create_svg "path" ~attrs:[ attr "d" path_d ] [] ]
-  ;;
-
-  let check = make "M20 6L9 17l-5-5"
-
-  let calendar ?size () =
-    make
-      ?size
-      "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 \
-       0 1-2-2V6a2 2 0 0 1 2-2z"
-  ;;
-
-  let file ?size () =
-    make
-      ?size
-      "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6"
-  ;;
-
-  let sliders ?size () =
-    make ?size "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"
-  ;;
-
-  let play ?size () = make ?size "M6 3l14 9-14 9V3z"
-  let flag ?size () = make ?size "M4 22V4c5-3 9 3 16 0v12c-7 3-11-3-16 0"
-
-  let upload ?size () =
-    make
-      ?size
-      "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"
-  ;;
-
-  let arrow_right ?size () = make ?size "M5 12h14M12 5l7 7-7 7"
-  let arrow_left ?size () = make ?size "M19 12H5M12 19l-7-7 7-7"
-end
-
 let algo_pill ~theme ~selected ~on_click label =
   let bg = if selected then theme.Styles.blue else theme.Styles.chip_bg in
   let color = if selected then "#ffffff" else theme.Styles.secondary in
@@ -1335,65 +1395,6 @@ let instruction_row ~theme (instruction : Alpha_instruction.t) =
 
 (* The wizard's five stations, in order; [step_progress] renders where the
    user is, with completed stations checked off. *)
-let wizard_steps =
-  [ "Day", Icon.calendar ~size:13 ()
-  ; "Alpha", Icon.file ~size:13 ()
-  ; "Setup", Icon.sliders ~size:13 ()
-  ; "Simulate", Icon.play ~size:13 ()
-  ; "Results", Icon.flag ~size:13 ()
-  ]
-;;
-
-let step_progress ~theme ~current =
-  let station index (name, icon) =
-    let state =
-      if index < current
-      then `Done
-      else if index = current
-      then `Active
-      else `Upcoming
-    in
-    let bg, color, weight =
-      match state with
-      | `Done -> theme.Styles.blue_soft, theme.Styles.blue, "600"
-      | `Active -> theme.Styles.blue, "#ffffff", "700"
-      | `Upcoming -> "transparent", theme.Styles.faint, "600"
-    in
-    let chip =
-      Styles.s
-        ("display:inline-flex;align-items:center;gap:6px;background:"
-         ^ bg
-         ^ ";color:"
-         ^ color
-         ^ ";border-radius:999px;padding:5px \
-            12px;font-size:12px;font-weight:"
-         ^ weight
-         ^ ";white-space:nowrap;")
-    in
-    let glyph =
-      match state with `Done -> Icon.check | `Active | `Upcoming -> icon
-    in
-    {%html|<span %{chip}>%{glyph} #{name}</span>|}
-  in
-  let sep =
-    Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:11px;margin:0 2px;")
-  in
-  let stations =
-    List.concat_mapi wizard_steps ~f:(fun index step ->
-      let chip = station index step in
-      if index = 0
-      then [ chip ]
-      else [ {%html|<span %{sep}>—</span>|}; chip ])
-  in
-  {%html|
-    <div
-      %{Styles.s
-          "display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-top:10px;"}>
-      *{stations}
-    </div>
-  |}
-;;
-
 (* Shared page chrome for the wizard screens: brand, title, optional back
    link, theme toggle, and (when [step] is given) the progress rail. *)
 let wizard_header
@@ -1722,7 +1723,7 @@ let choose_day_view
       ("color:" ^ theme.Styles.faint ^ ";font-size:12px;" ^ Styles.mono)
   in
   let cell_base =
-    "width:46px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:5px;font-size:12.5px;"
+    "width:56px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:8px;font-size:13.5px;"
     ^ Styles.mono
   in
   let cell date_opt =
@@ -1768,7 +1769,7 @@ let choose_day_view
         in
         {%html|
           <button
-            class="btn"
+            class="btn cell-pop"
             %{style}
             title=%{Date.to_string date}
             on_click=%{fun _ -> select browse_symbol date}>
@@ -1795,7 +1796,7 @@ let choose_day_view
          ^ ";font-size:13px;font-weight:700;margin:14px 0 8px;")
     in
     let grid =
-      Styles.s "display:grid;grid-template-columns:repeat(5,46px);gap:4px;"
+      Styles.s "display:grid;grid-template-columns:repeat(5,56px);gap:4px;"
     in
     let rows = List.concat_map (month_weeks ~year ~month) ~f:Fn.id in
     {%html|
@@ -1815,68 +1816,160 @@ let choose_day_view
   in
   let picker_row = Styles.s "display:flex;gap:12px;align-items:center;" in
   let label = Styles.s (Styles.label theme) in
-  let section_label = Styles.s (Styles.label theme ^ "margin-bottom:8px;") in
-  let summary_rows =
-    let row_base =
-      "display:grid;grid-template-columns:110px 1fr 1fr 1fr \
-       1fr;column-gap:10px;align-items:baseline;"
-    in
-    let head =
-      Styles.s
-        (row_base
-         ^ "padding:8px 0 6px 0;border-bottom:1px solid "
-         ^ theme.Styles.hairline
-         ^ ";"
-         ^ Styles.label theme)
-    in
-    let num = "text-align:right;" in
-    let summary_row (s : Dataset.Day_summary.t) =
-      let selected =
-        match selection with
-        | Some (sym, d) ->
-          Symbol.equal sym browse_symbol && Date.equal d s.date
-        | None -> false
-      in
-      let style =
-        Styles.s
-          (row_base
-           ^ "padding:7px 6px;font-size:13px;border-bottom:1px solid "
-           ^ theme.Styles.hairline
-           ^ ";cursor:pointer;border-radius:4px;background:"
-           ^ (if selected then theme.Styles.blue_soft else "transparent")
-           ^ ";color:"
-           ^ theme.Styles.text
-           ^ ";"
-           ^ Styles.mono)
-      in
-      let hover_class =
-        if selected then Vdom.Attr.empty else Vdom.Attr.class_ "hoverable"
-      in
-      let cell = Styles.s num in
+  (* The click-to-reveal preview: sparkline + session stats for the selected
+     day, or a prompt when nothing is chosen yet. *)
+  let day_preview =
+    let empty message =
       {%html|
         <div
-          %{style}
-          %{hover_class}
-          on_click=%{fun _ -> select browse_symbol s.date}>
-          <span>#{Date.to_string s.date}</span>
-          <span %{cell}>#{sprintf "%.2f" s.open_}</span>
-          <span %{cell}>#{sprintf "%.2f" s.close}</span>
-          <span %{cell}>#{sprintf "%+.0f bps" s.return_bps}</span>
-          <span %{cell}>#{Float.to_string_hum ~delimiter:',' ~decimals:0
-                            (Float.of_int s.volume)}</span>
+          %{Styles.card
+              theme
+              "padding:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:300px;"}>
+          <span %{Styles.s ("color:" ^ theme.Styles.faint ^ ";")}>
+            %{Icon.calendar ~size:30 ()}
+          </span>
+          <span
+            %{Styles.s
+                ("color:"
+                 ^ theme.Styles.secondary
+                 ^ ";font-size:14px;font-weight:600;")}>
+            #{message}
+          </span>
+          <span
+            %{Styles.s
+                ("color:" ^ theme.Styles.faint ^ ";font-size:12px;")}>
+            solid dates have bundled market data
+          </span>
         </div>
       |}
     in
-    {%html|
-      <div %{head}>
-        <span>session</span>
-        <span %{Styles.s num}>open</span>
-        <span %{Styles.s num}>close</span>
-        <span %{Styles.s num}>day move</span>
-        <span %{Styles.s num}>volume</span>
-      </div>
-    |}
-    :: List.map (Dataset.summaries_for browse_symbol) ~f:summary_row
+    match selection with
+    | None -> empty "Pick a session to preview it"
+    | Some (symbol, date) ->
+      (match Dataset.load_cached ~symbol ~date with
+       | Error (_ : Error.t) -> empty "No data for that session"
+       | Ok day ->
+         let bars = day.Trading_day.bars in
+         let closes =
+           List.map bars ~f:(fun bar -> Price.to_float bar.Market_bar.close)
+         in
+         let open_ = Price.to_float (List.hd_exn bars).Market_bar.open_ in
+         let close = List.last_exn closes in
+         let volume =
+           List.sum (module Int) bars ~f:(fun bar ->
+             Size.to_int bar.Market_bar.volume)
+         in
+         let move_bps = (close -. open_) /. open_ *. 10000. in
+         let sparkline =
+           let w = 520. in
+           let h = 110. in
+           let pad = 6. in
+           let lo =
+             List.min_elt closes ~compare:Float.compare
+             |> Option.value ~default:0.
+           in
+           let hi =
+             List.max_elt closes ~compare:Float.compare
+             |> Option.value ~default:1.
+           in
+           let span = Float.max (hi -. lo) 0.01 in
+           let count = List.length closes in
+           let pt i v =
+             sprintf
+               "%.1f,%.1f"
+               (pad
+                +. (Float.of_int i
+                    /. Float.of_int (Int.max 1 (count - 1))
+                    *. (w -. (2. *. pad))))
+               (pad +. ((hi -. v) /. span *. (h -. (2. *. pad))))
+           in
+           let pts = String.concat ~sep:" " (List.mapi closes ~f:pt) in
+           let area =
+             sprintf
+               "%.1f,%.1f %s %.1f,%.1f"
+               pad
+               (h -. pad)
+               pts
+               (w -. pad)
+               (h -. pad)
+           in
+           let svg name attrs children =
+             Vdom.Node.create_svg name ~attrs children
+           in
+           let attr = Vdom.Attr.create in
+           svg
+             "svg"
+             [ attr "viewBox" (sprintf "0 0 %.0f %.0f" w h)
+             ; Styles.s "width:100%;display:block;margin:10px 0 14px;"
+             ]
+             [ svg
+                 "polygon"
+                 [ attr "points" area
+                 ; attr "fill" theme.Styles.blue
+                 ; attr "fill-opacity" "0.08"
+                 ]
+                 []
+             ; svg
+                 "polyline"
+                 [ attr "points" pts
+                 ; attr "fill" "none"
+                 ; attr "stroke" theme.Styles.blue
+                 ; attr "stroke-width" "1.8"
+                 ; attr "stroke-linejoin" "round"
+                 ]
+                 []
+             ]
+         in
+         let stat ~label:text value =
+           let tile =
+             Styles.s
+               ("display:flex;flex-direction:column;gap:2px;background:"
+                ^ theme.Styles.chip_bg
+                ^ ";border-radius:8px;padding:10px 14px;")
+           in
+           let value_style =
+             Styles.s
+               ("font-size:16px;font-weight:700;color:"
+                ^ theme.Styles.text
+                ^ ";"
+                ^ Styles.mono)
+           in
+           {%html|
+             <div %{tile}>
+               <span %{Styles.s (Styles.label theme)}>#{text}</span>
+               <span %{value_style}>#{value}</span>
+             </div>
+           |}
+         in
+         let title_row =
+           Styles.s
+             ("display:flex;justify-content:space-between;align-items:baseline;color:"
+              ^ theme.Styles.text
+              ^ ";font-size:16px;font-weight:700;")
+         in
+         let tiles =
+           Styles.s
+             "display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;"
+         in
+         {%html|
+           <div %{Styles.card theme "padding:20px;"}>
+             <div %{title_row}>
+               <span>
+                 #{Symbol.to_string symbol} · #{Date.to_string date}
+               </span>
+               <span %{hint}>1-minute closes, 09:30–15:59</span>
+             </div>
+             %{sparkline}
+             <div %{tiles}>
+               %{stat ~label:"open" (sprintf "$%.2f" open_)}
+               %{stat ~label:"close" (sprintf "$%.2f" close)}
+               %{stat ~label:"day move" (sprintf "%+.0f bps" move_bps)}
+               %{stat ~label:"volume"
+                   (Float.to_string_hum ~delimiter:',' ~decimals:0
+                      (Float.of_int volume))}
+             </div>
+           </div>
+         |})
   in
   let selection_hint =
     match selection with
@@ -1904,10 +1997,7 @@ let choose_day_view
           </div>
           *{List.map months ~f:month_grid}
         </div>
-        <div %{Styles.card theme "padding:20px;"}>
-          <div %{section_label}>Sessions — click to select</div>
-          *{summary_rows}
-        </div>
+        %{day_preview}
       </div>
       <div %{Styles.s ("display:flex;justify-content:flex-end;" ^ Styles.label theme)}>
         #{selection_hint}
@@ -1961,7 +2051,7 @@ let sample_alphas symbol =
         ; "14:30:00", "SELL", 3000, "15:55:00"
         ] )
   ; ( "Busy tape"
-    , "Six overlapping orders both ways — stress the order manager."
+    , "Six orders both ways across the day — a full blotter."
     , csv
         [ "09:40:00", "BUY", 1500, "10:30:00"
         ; "10:20:00", "SELL", 1000, "11:15:00"
@@ -1969,6 +2059,13 @@ let sample_alphas symbol =
         ; "12:15:00", "SELL", 1500, "13:45:00"
         ; "13:30:00", "BUY", 1000, "14:30:00"
         ; "14:45:00", "SELL", 2000, "15:45:00"
+        ] )
+  ; ( "Crossfire (overlapping)"
+    , "Three windows fighting over the same hour — see them overlap."
+    , csv
+        [ "10:30:00", "BUY", 3000, "12:30:00"
+        ; "11:00:00", "SELL", 2000, "12:00:00"
+        ; "11:15:00", "BUY", 2500, "13:00:00"
         ] )
   ]
 ;;
@@ -2112,6 +2209,15 @@ let alpha_view
       <div %{Styles.s two_col}>
         <div %{Styles.card theme "padding:20px;"}>
           <div %{section_label}>Samples</div>
+          <div
+            %{Styles.s
+                ("color:"
+                 ^ theme.Styles.faint
+                 ^ ";font-size:11.5px;margin-bottom:8px;")}>
+            written for #{Symbol.to_string symbol} — the symbol you picked;
+            a run trades one stock per session (multi-stock strategies are
+            on the roadmap)
+          </div>
           <div %{samples_row}>
             *{List.map (sample_alphas symbol) ~f:sample_card}
           </div>
@@ -2613,7 +2719,7 @@ let results_view
             *{this_run}
           </span>
           <span %{capture_style}>#{capture_text}</span>
-          <div %{track}><div %{bar}></div></div>
+          <div %{track}><div class="grow-x" %{bar}></div></div>
           <span %{Styles.s "text-align:right;"}>
             %{pnl_cell ~theme run.value_add_cents}
           </span>

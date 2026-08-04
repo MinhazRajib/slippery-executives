@@ -85,6 +85,47 @@
           transparent 70%
         );
       }
+      /* Cards cascade in: each direct child of a page enters with a small
+         stagger, so screens assemble instead of popping. */
+      .page > * {
+        animation: fade-up 0.3s ease both;
+      }
+      .page > *:nth-child(2) {
+        animation-delay: 0.05s;
+      }
+      .page > *:nth-child(3) {
+        animation-delay: 0.1s;
+      }
+      .page > *:nth-child(4) {
+        animation-delay: 0.15s;
+      }
+      .page > *:nth-child(5) {
+        animation-delay: 0.2s;
+      }
+      .page > *:nth-child(n + 6) {
+        animation-delay: 0.25s;
+      }
+      /* Calendar cells pop slightly on hover. */
+      .cell-pop {
+        transition:
+          transform 0.12s ease,
+          filter 0.15s ease,
+          box-shadow 0.15s ease;
+      }
+      .cell-pop:hover {
+        transform: scale(1.08);
+      }
+      /* Leaderboard bars sweep out from the left on entry. */
+      .grow-x {
+        transform-origin: left center;
+        animation: grow-x 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+        animation-delay: 0.25s;
+      }
+      @keyframes grow-x {
+        from {
+          transform: scaleX(0);
+        }
+      }
       @media (max-width: 760px) {
         .page {
           margin: 8px auto !important;
@@ -95,7 +136,10 @@
         .fade,
         .btn,
         .raise,
-        .hoverable {
+        .hoverable,
+        .page > *,
+        .cell-pop,
+        .grow-x {
           animation: none;
           transition: none;
         }
