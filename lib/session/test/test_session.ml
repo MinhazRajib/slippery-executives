@@ -129,3 +129,37 @@ let%expect_test "a synthetic run attributes no configured spread: the \
     splits exactly: true
     |}]
 ;;
+
+let%expect_test "instructions for another symbol are rejected, whichever \
+                 front submits them"
+  =
+  let foreign =
+    [ Or_error.ok_exn
+        (Alpha_instruction.create
+           ~arrival_time:(Time_ns.Ofday.of_string "10:05:00")
+           ~symbol:(Symbol.of_string "TSLA")
+           ~side:Side.Buy
+           ~quantity:(Size.of_int 100)
+           ~deadline:(Time_ns.Ofday.of_string "11:00:00"))
+    ]
+  in
+  print_s
+    [%sexp
+      (Or_error.ignore_m
+         (run
+            ~day
+            ~forecast_days:[]
+            ~instructions:foreign
+            ~algo_name:"twap"
+            ~params:Params.default)
+       : unit Or_error.t)];
+  [%expect
+    {|
+    (Error
+     ("instruction symbol does not match the day"
+      (instruction
+       ((arrival_time 10:05:00.000000000) (symbol TSLA) (side Buy) (quantity 100)
+        (deadline 11:00:00.000000000)))
+      (day NVDA)))
+    |}]
+;;

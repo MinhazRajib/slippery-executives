@@ -81,8 +81,10 @@ module Outcome : sig
 end
 
 (** Runs [algo_name] and the immediate baseline over the same instructions
-    and grades both. Errors bubble up from the algorithm name, the
-    benchmarks, and the grading — never raises on user input. *)
+    and grades both. Every instruction must name [day]'s own symbol — the
+    check lives here so all three fronts (CLI, browser, server) enforce it
+    identically. Errors bubble up from the algorithm name, the benchmarks,
+    and the grading — never raises on user input. *)
 val run
   :  day:Trading_day.t
   -> forecast_days:Trading_day.t list

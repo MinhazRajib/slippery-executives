@@ -136,6 +136,22 @@ let grade ~day ~attribution_half_spread (result : Driver.t) =
 
 let run ~day ~forecast_days ~instructions ~algo_name ~(params : Params.t) =
   let open Or_error.Let_syntax in
+  let%bind () =
+    match
+      List.find instructions ~f:(fun instruction ->
+        not
+          (Symbol.equal
+             instruction.Alpha_instruction.symbol
+             day.Trading_day.symbol))
+    with
+    | None -> Ok ()
+    | Some instruction ->
+      Or_error.error_s
+        [%message
+          "instruction symbol does not match the day"
+            (instruction : Alpha_instruction.t)
+            ~day:(day.Trading_day.symbol : Symbol.t)]
+  in
   let%bind algorithm =
     algorithm_named ~day ~forecast_days ~params algo_name
   in

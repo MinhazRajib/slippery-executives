@@ -280,19 +280,6 @@ let run ~symbol ~date ~alpha_text ~algo_name ~(params : Params.t) =
   let%bind day = Dataset.load ~symbol ~date in
   let%bind instructions = parse_alpha alpha_text in
   let%bind () =
-    match
-      List.find instructions ~f:(fun instruction ->
-        not (Symbol.equal instruction.Alpha_instruction.symbol symbol))
-    with
-    | None -> Ok ()
-    | Some instruction ->
-      Or_error.error_s
-        [%message
-          "instruction symbol does not match the chosen day"
-            (instruction : Alpha_instruction.t)
-            (symbol : Symbol.t)]
-  in
-  let%bind () =
     if List.is_empty instructions
     then Or_error.error_string "the alpha has no instructions"
     else Ok ()

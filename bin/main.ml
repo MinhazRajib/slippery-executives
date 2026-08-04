@@ -54,17 +54,6 @@ let run_report ~alpha_file ~symbol ~date ~algo_name ~engine =
       ~excluding:date
   in
   let instructions = (parse_alpha alpha_file).instructions in
-  (match
-     List.find instructions ~f:(fun instruction ->
-       not (Symbol.equal instruction.Alpha_instruction.symbol symbol))
-   with
-   | None -> ()
-   | Some instruction ->
-     raise_s
-       [%message
-         "Instruction symbol does not match the loaded day"
-           (instruction : Alpha_instruction.t)
-           (symbol : Symbol.t)]);
   let outcome =
     Or_error.ok_exn
       (Execlab_session.run
