@@ -1,0 +1,2 @@
+timestamp,symbol,side,quantity,deadline
+10:00:00,META,BUY,20000,10:15:00

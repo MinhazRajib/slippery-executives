@@ -1,5 +1,5 @@
 (executables
- (names main server)
+ (names main server sweep demo)
  (libraries
   execlab_types
   execlab_market

@@ -200,3 +200,44 @@ let%expect_test "urgency far beyond sinh's overflow point stays finite: \
        (time_in_force IOC))))
     |}]
 ;;
+
+let%expect_test "zero urgency agrees with twap share for share, every \
+                 minute of the window"
+  =
+  (* Not merely the same shape: the same integer arithmetic. Rounding the
+     curve to nearest — what every other urgency does — parts company with
+     Twap's truncation whenever the ideal position lands past the half, which
+     is most minutes of a 55-minute window. *)
+  let quantity_of module_actions =
+    match (module_actions : Algorithm_intf.Action.t list) with
+    | [ Submit request ] -> Size.to_int request.Child_order.Request.quantity
+    | [] -> 0
+    | (_ : Algorithm_intf.Action.t list) -> -1
+  in
+  let at ~now =
+    let parent = active ~deadline:"11:00:00" in
+    let context =
+      { Algorithm_intf.Context.now = Time_ns.Ofday.of_string now
+      ; previous_bar
+      ; parent
+      ; live_orders = Parent_order.live_children parent
+      }
+    in
+    let module Is = (val Implementation_shortfall.create ~urgency:0. ()) in
+    let (_ : Is.state), is_actions = Is.on_bar (Is.init ~parent) context in
+    let (_ : Twap.state), twap_actions =
+      Twap.on_bar (Twap.init ~parent) context
+    in
+    quantity_of is_actions, quantity_of twap_actions
+  in
+  let disagreements =
+    List.filter_map (List.range 0 56) ~f:(fun minute ->
+      let now =
+        sprintf "%02d:%02d:00" (10 + ((5 + minute) / 60)) ((5 + minute) % 60)
+      in
+      let is, twap = at ~now in
+      if is = twap then None else Some (now, is, twap))
+  in
+  print_s [%sexp (disagreements : (string * int * int) list)];
+  [%expect {| () |}]
+;;
