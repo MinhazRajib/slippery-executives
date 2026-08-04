@@ -2048,6 +2048,8 @@ let setup_view
   ~alpha_text
   ~algo
   ~set_algo
+  ~param_text
+  ~set_param_text
   ~start
   ~run_error
   ~toggle_theme
@@ -2083,6 +2085,81 @@ let setup_view
       (Symbol.to_string symbol)
       (Date.to_string date)
   in
+  let param_field ~label:text ~value ~set =
+    let input_style =
+      Styles.s
+        ("width:110px;background:"
+         ^ theme.Styles.page_bg
+         ^ ";color:"
+         ^ theme.Styles.text
+         ^ ";border:1px solid "
+         ^ theme.Styles.chip_border
+         ^ ";border-radius:4px;padding:5px 8px;font-size:12.5px;"
+         ^ Styles.mono)
+    in
+    let label_style =
+      Styles.s ("color:" ^ theme.Styles.secondary ^ ";font-size:12px;")
+    in
+    {%html|
+      <label %{Styles.s "display:flex;flex-direction:column;gap:4px;"}>
+        <span %{label_style}>#{text}</span>
+        <input
+          type="text"
+          %{Vdom.Attr.string_property "value" value}
+          %{input_style}
+          on_input=%{fun (_ : _) v -> set v} />
+      </label>
+    |}
+  in
+  let params_card =
+    let update f value = set_param_text (f param_text value) in
+    let fill_fields =
+      [ param_field
+          ~label:"half spread $"
+          ~value:param_text.Replay.Param_text.half_spread
+          ~set:
+            (update (fun p v -> { p with Replay.Param_text.half_spread = v }))
+      ; param_field
+          ~label:"participation cap"
+          ~value:param_text.Replay.Param_text.participation
+          ~set:
+            (update (fun p v ->
+               { p with Replay.Param_text.participation = v }))
+      ; param_field
+          ~label:"impact coeff $"
+          ~value:param_text.Replay.Param_text.impact
+          ~set:(update (fun p v -> { p with Replay.Param_text.impact = v }))
+      ]
+    in
+    let algo_fields =
+      if String.equal algo "pov"
+      then
+        [ param_field
+            ~label:"participation rate"
+            ~value:param_text.Replay.Param_text.pov_rate
+            ~set:
+              (update (fun p v -> { p with Replay.Param_text.pov_rate = v }))
+        ]
+      else if String.equal algo "is"
+      then
+        [ param_field
+            ~label:"urgency (0 = TWAP)"
+            ~value:param_text.Replay.Param_text.urgency
+            ~set:
+              (update (fun p v -> { p with Replay.Param_text.urgency = v }))
+        ]
+      else []
+    in
+    {%html|
+      <div %{Styles.card theme "padding:20px;"}>
+        <div %{section_label}>Parameters</div>
+        <div %{Styles.s "display:flex;gap:14px;flex-wrap:wrap;"}>
+          *{fill_fields}
+          *{algo_fields}
+        </div>
+      </div>
+    |}
+  in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
       %{wizard_header ~step:2 ~theme ~is_dark ~toggle_theme
@@ -2098,6 +2175,8 @@ let setup_view
                 ~on_click:(fun _ -> set_algo "vwap") "VWAP"}
             %{algo_pill ~theme ~selected:(String.equal algo "pov")
                 ~on_click:(fun _ -> set_algo "pov") "POV"}
+            %{algo_pill ~theme ~selected:(String.equal algo "is")
+                ~on_click:(fun _ -> set_algo "is") "IS"}
             %{algo_pill ~theme ~selected:(String.equal algo "immediate")
                 ~on_click:(fun _ -> set_algo "immediate") "Immediate"}
           </div>
@@ -2107,6 +2186,7 @@ let setup_view
           *{instructions}
         </div>
       </div>
+      %{params_card}
       *{error_card}
       %{nav_footer ~theme
           ~back:("Alpha", back)
@@ -2493,6 +2573,9 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let playing, set_playing = Bonsai.state true graph in
   let speed, set_speed = Bonsai.state 4 graph in
   let show_fills, set_show_fills = Bonsai.state false graph in
+  let param_text, set_param_text =
+    Bonsai.state Replay.Param_text.default graph
+  in
   let hover, set_hover = Bonsai.state (None : int option) graph in
   let is_dark, set_is_dark = Bonsai.state false graph in
   (* The symbol whose calendar the choose-day screen is browsing; distinct
@@ -2517,6 +2600,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     let%arr algo
     and selection
     and alpha_text
+    and param_text
     and runs
     and set_runs
     and set_run_error
@@ -2524,12 +2608,14 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     and set_screen
     and set_minute
     and set_playing in
-    match selection with
-    | None -> set_run_error (Some (Error.of_string "choose a day first"))
-    | Some (symbol, date) ->
+    match selection, Replay.parse_params param_text with
+    | None, _ -> set_run_error (Some (Error.of_string "choose a day first"))
+    | Some (_ : Symbol.t * Date.t), Error error -> set_run_error (Some error)
+    | Some (symbol, date), Ok params ->
       let%bind.Effect result =
         Effect.of_sync_fun
-          (fun () -> Replay.run ~symbol ~date ~alpha_text ~algo_name:algo)
+          (fun () ->
+            Replay.run ~symbol ~date ~alpha_text ~algo_name:algo ~params)
           ()
       in
       (match result with
@@ -2554,6 +2640,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_alpha_text
   and algo
   and set_algo
+  and param_text
+  and set_param_text
   and run_error
   and runs
   and replay
@@ -2634,6 +2722,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~alpha_text
         ~algo
         ~set_algo
+        ~param_text
+        ~set_param_text
         ~start
         ~run_error
         ~toggle_theme
