@@ -13,11 +13,24 @@
     produces bit-identical fills natively and in the browser, which the
     server's re-run-to-verify anti-cheat depends on.
 
-    v1 simplifications, on purpose: client limit orders never rest in the
-    book (resting fills keep Engine A's strict-through-at-the-limit
-    convention, so there is no queue position yet), and the background tape
-    of bar [m] is printed when bar [m+1] opens — client-visible mechanics
-    only ever see fresh ladders at each bar's open. *)
+    Impact has both halves. The {e temporary} half is the ladder walk itself,
+    undone when the makers requote. The {e permanent} half is their memory:
+    taking liquidity moves a signed pressure that shifts the quote centre
+    with the square root of participation and decays each bar, so a buyer who
+    keeps lifting offers finds the offers rising to meet him — information
+    leaking into the price, as it does on a real tape. With no client orders
+    the pressure stays zero and the calibration is untouched.
+
+    A resting client limit takes a real place in the queue: it records the
+    agent size displayed at its price when it arrives, and fills only from
+    the flow that would have reached it once that size is served. Improving
+    on a price nobody shows puts you at the front; joining a crowded one
+    makes you wait.
+
+    Simplifications kept on purpose: the background tape of bar [m] is
+    printed when bar [m+1] opens, so client submissions always meet fresh
+    ladders at a bar's open, and a resting order's fill is recognized at the
+    following bar's boundary. *)
 
 open! Core
 open! Execlab_types
@@ -26,7 +39,20 @@ open! Execlab_execution
 open! Execlab_simulation
 
 module Config : sig
-  type t = { seed : int } [@@deriving sexp_of]
+  (** The market's calibration. [rung_range_divisor] sets how wide the makers
+      quote — one rung is the bar's range over the divisor, floored at a cent
+      — and 30 puts a median large-cap minute's touch on {!Fill_model}'s
+      default spread, so the two engines agree about ordinary trades and
+      differ only about size. [permanent_impact_coefficient] is the quote
+      shift at full participation, and [pressure_decay] the share of
+      remembered client aggression that survives each bar. *)
+  type t =
+    { seed : int
+    ; rung_range_divisor : int
+    ; permanent_impact_coefficient : Price.t
+    ; pressure_decay : float
+    }
+  [@@deriving sexp_of]
 
   val default : t
 end

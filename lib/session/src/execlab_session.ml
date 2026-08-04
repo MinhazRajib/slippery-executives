@@ -158,7 +158,9 @@ let run ~day ~forecast_days ~instructions ~algo_name ~(params : Params.t) =
   let engine () =
     match params.engine with
     | Engine_choice.Bar_model -> Fill_model.engine params.fill_config
-    | Synthetic { seed } -> Execlab_exchange.Synthetic_market.engine { seed }
+    | Synthetic { seed } ->
+      Execlab_exchange.Synthetic_market.engine
+        { Execlab_exchange.Synthetic_market.Config.default with seed }
   in
   let run_one algorithm =
     Driver.run ~day ~instructions ~algorithm ~engine:(engine ()) ()

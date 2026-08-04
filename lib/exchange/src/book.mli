@@ -20,6 +20,11 @@ val set_side : t -> side:Side.t -> (Price.t * int) list -> t
 (** Best price on a book side, if any liquidity rests there. *)
 val best : t -> side:Side.t -> Price.t option
 
+(** Agent size displayed at exactly this price on [side] — what a client
+    order posting there would have to queue behind. Zero if nobody is showing
+    that price. *)
+val size_at : t -> side:Side.t -> price:Price.t -> int
+
 (** A taker walks the opposite side, best level first, until [size] is done,
     the book side runs dry, or the next level no longer crosses [limit]
     ([None] = market order). Returns the fills as (maker price, size), best
