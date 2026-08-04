@@ -8,6 +8,7 @@
       html,
       body {
         margin: 0;
+        font-size: 16.5px;
         background: #e8ecf3;
         color-scheme: light;
         scrollbar-width: thin;
@@ -64,7 +65,25 @@
         border-radius: 4px;
       }
       .fade {
-        animation: fade-up 0.24s ease;
+        animation: fade-up 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      /* Everything that is not explicitly instant eases on the same curve,
+         so panels, chips and tints settle rather than snap. */
+      button,
+      select,
+      input,
+      textarea,
+      .tile,
+      .card-lift {
+        transition:
+          background 0.16s ease,
+          border-color 0.16s ease,
+          color 0.16s ease,
+          box-shadow 0.18s ease,
+          transform 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .card-lift:hover {
+        transform: translateY(-2px);
       }
       @keyframes fade-up {
         from {

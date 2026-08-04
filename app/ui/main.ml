@@ -1244,8 +1244,8 @@ let primary_button ?(enabled = true) ?icon ~theme ~on_click label =
        ^ theme.Styles.blue
        ^ ";color:"
        ^ theme.Styles.page_bg
-       ^ ";border:none;border-radius:8px;padding:13px \
-          26px;cursor:pointer;font-size:15px;font-weight:700;align-self:flex-start;box-shadow:0 \
+       ^ ";border:none;border-radius:10px;padding:15px \
+          30px;cursor:pointer;font-size:16px;font-weight:700;align-self:flex-start;box-shadow:0 \
           2px 10px "
        ^ theme.Styles.blue
        ^ "44;")
@@ -1269,8 +1269,8 @@ let secondary_button ?icon ~theme ~on_click label =
        ^ theme.Styles.text
        ^ ";border:1px solid "
        ^ theme.Styles.chip_border
-       ^ ";border-radius:8px;padding:12px \
-          22px;cursor:pointer;font-size:14px;font-weight:600;")
+       ^ ";border-radius:10px;padding:14px \
+          24px;cursor:pointer;font-size:15px;font-weight:600;")
   in
   let glyph = match icon with None -> [] | Some icon -> [ icon ] in
   {%html|
@@ -1358,7 +1358,7 @@ let sim_view
   in
   let page =
     Styles.s
-      "display:flex;flex-direction:column;gap:16px;max-width:1240px;margin:0 \
+      "display:flex;flex-direction:column;gap:20px;max-width:1320px;margin:0 \
        auto;padding:28px 20px;"
   in
   let title_style =
@@ -1438,8 +1438,8 @@ let algo_pill ~theme ~selected ~on_click label =
        ^ bg
        ^ ";color:"
        ^ color
-       ^ ";border:none;border-radius:8px;padding:10px \
-          20px;cursor:pointer;font-size:14px;font-weight:700;"
+       ^ ";border:none;border-radius:10px;padding:12px \
+          24px;cursor:pointer;font-size:15px;font-weight:700;"
        ^ ring)
   in
   let mark = if selected then [ Icon.check ] else [] in
@@ -1544,7 +1544,7 @@ let wizard_header
 ;;
 
 let narrow_page =
-  "display:flex;flex-direction:column;gap:16px;max-width:1240px;margin:32px \
+  "display:flex;flex-direction:column;gap:20px;max-width:1320px;margin:32px \
    auto;padding:20px;"
 ;;
 
@@ -1863,7 +1863,7 @@ let landing_view
          ^ ";font-size:12.5px;line-height:1.5;")
     in
     {%html|
-      <div class="raise" %{tile}>
+      <div class="raise card-lift" %{tile}>
         <span %{value_style}>#{value}</span>
         <span %{label_style}>#{label}</span>
       </div>
@@ -1909,7 +1909,7 @@ let landing_view
            ^ ";font-size:12.5px;line-height:1.6;")
       in
       {%html|
-        <div class="raise" %{card}>
+        <div class="raise card-lift" %{card}>
           <span %{name_style}>#{name}</span>
           <span %{blurb_style}>#{blurb}</span>
         </div>
@@ -2035,6 +2035,170 @@ let pnl_cell_int63 ~theme cents =
       (Float.to_string_hum ~delimiter:',' ~decimals:2 (Float.abs dollars))
   in
   {%html|<span %{style}>#{text}</span>|}
+;;
+
+let run_record (replay : Replay.t) =
+  let rows = replay.results.rows in
+  let sum f = List.sum (module Int) rows ~f in
+  let net =
+    sum (fun row -> row.Replay.grading.Transaction_cost.net_pnl_cents)
+  in
+  let gross =
+    sum (fun row -> row.Replay.grading.gross_theoretical_pnl_cents)
+  in
+  let filled = sum (fun row -> Size.to_int row.Replay.grading.filled) in
+  let ordered = sum (fun row -> Size.to_int row.Replay.grading.quantity) in
+  (* One shortfall number for the whole run: each order's bps weighted by the
+     shares that actually traded, since an unfilled order has no execution to
+     grade. *)
+  let shortfall_bps =
+    let weighted =
+      List.sum (module Float) rows ~f:(fun row ->
+        match row.Replay.grading.fill_metrics with
+        | None -> 0.
+        | Some metrics ->
+          metrics.Transaction_cost.Fill_metrics.shortfall_bps
+          *. Float.of_int (Size.to_int row.Replay.grading.filled))
+    in
+    if filled > 0 then weighted /. Float.of_int filled else 0.
+  in
+  { History.Run_record.symbol = replay.symbol
+  ; date = replay.date
+  ; algo_name = replay.algo_name
+  ; alpha_capture = (if gross > 0 then Some (net // gross) else None)
+  ; value_add_cents = replay.results.total_value_add_cents
+  ; net_cents = net
+  ; shortfall_bps
+  ; completion =
+      (if ordered > 0
+       then Float.of_int filled /. Float.of_int ordered
+       else 0.)
+  }
+;;
+
+(* ---------- "what changed?" ---------- *)
+
+(* A single before/after readout. [better] decides the color and arrow, so
+   each metric declares its own direction: capture and completion are better
+   when they rise, shortfall when it falls. *)
+let delta_tile ~theme ~label ~value ~delta ~better ~unit_ =
+  let color =
+    match better with
+    | `Better -> theme.Styles.green
+    | `Worse -> theme.Styles.red
+    | `Same -> theme.Styles.faint
+  in
+  let arrow =
+    match better with
+    | `Better -> "\u{2191}"
+    | `Worse -> "\u{2193}"
+    | `Same -> "\u{2192}"
+  in
+  let tile =
+    Styles.s
+      ("display:flex;flex-direction:column;gap:3px;background:"
+       ^ theme.Styles.chip_bg
+       ^ ";border:1px solid "
+       ^ theme.Styles.chip_border
+       ^ ";border-radius:10px;padding:14px 16px;")
+  in
+  let value_style =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.text
+       ^ ";font-size:24px;font-weight:800;"
+       ^ Styles.mono)
+  in
+  let delta_style =
+    Styles.s
+      ("color:" ^ color ^ ";font-size:13px;font-weight:700;" ^ Styles.mono)
+  in
+  {%html|
+    <div %{tile}>
+      <span %{Styles.s (Styles.label theme)}>#{label}</span>
+      <span %{value_style}>#{value}</span>
+      <span %{delta_style}>#{arrow} #{delta} #{unit_}</span>
+    </div>
+  |}
+;;
+
+let what_changed ~theme ~(current : History.Run_record.t) ~previous =
+  match (previous : History.Run_record.t option) with
+  | None -> []
+  | Some previous ->
+    let direction ~higher_is_better ~now ~before =
+      let epsilon = 1e-9 in
+      if Float.( < ) (Float.abs (now -. before)) epsilon
+      then `Same
+      else if Bool.equal (Float.( > ) now before) higher_is_better
+      then `Better
+      else `Worse
+    in
+    let capture_of (record : History.Run_record.t) =
+      Option.value record.alpha_capture ~default:0. *. 100.
+    in
+    let capture_now = capture_of current
+    and capture_before = capture_of previous in
+    let completion_now = current.completion *. 100.
+    and completion_before = previous.completion *. 100. in
+    let grid =
+      Styles.s
+        "display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;"
+    in
+    let heading =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.text
+         ^ ";font-size:15px;font-weight:700;margin-bottom:3px;")
+    in
+    let sub =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.faint
+         ^ ";font-size:12.5px;margin-bottom:14px;")
+    in
+    [ {%html|
+        <div %{Styles.card theme "padding:20px;"}>
+          <div %{heading}>What changed?</div>
+          <div %{sub}>
+            #{sprintf "versus your previous run — %s %s, %s"
+                (Symbol.to_string previous.symbol)
+                (Date.to_string previous.date)
+                (String.uppercase previous.algo_name)}
+          </div>
+          <div %{grid}>
+            %{delta_tile ~theme ~label:"Alpha captured"
+                ~value:(sprintf "%.1f%%" capture_now)
+                ~delta:(sprintf "%+.1f" (capture_now -. capture_before))
+                ~better:(direction ~higher_is_better:true ~now:capture_now
+                           ~before:capture_before)
+                ~unit_:"pts"}
+            %{delta_tile ~theme ~label:"Implementation shortfall"
+                ~value:(sprintf "%.1f bp" current.shortfall_bps)
+                ~delta:(sprintf "%+.1f"
+                          (current.shortfall_bps -. previous.shortfall_bps))
+                ~better:(direction ~higher_is_better:false
+                           ~now:current.shortfall_bps
+                           ~before:previous.shortfall_bps)
+                ~unit_:"bp"}
+            %{delta_tile ~theme ~label:"Completion"
+                ~value:(sprintf "%.0f%%" completion_now)
+                ~delta:(sprintf "%+.0f" (completion_now -. completion_before))
+                ~better:(direction ~higher_is_better:true ~now:completion_now
+                           ~before:completion_before)
+                ~unit_:"pts"}
+            %{delta_tile ~theme ~label:"Execution bonus"
+                ~value:(dollars_signed current.value_add_cents)
+                ~delta:(dollars_signed
+                          (current.value_add_cents - previous.value_add_cents))
+                ~better:(direction ~higher_is_better:true
+                           ~now:(Float.of_int current.value_add_cents)
+                           ~before:(Float.of_int previous.value_add_cents))
+                ~unit_:""}
+          </div>
+        </div>
+      |}
+    ]
 ;;
 
 (* ---------- my runs: the execution notebook ---------- *)
@@ -3106,6 +3270,212 @@ let alpha_view
 
 (* ---------- algorithm + confirm ---------- *)
 
+(* ---------- algorithm reference cards ---------- *)
+
+(* Each algorithm as a scannable card instead of a paragraph: the shape of
+   the bet, where it wins, where it breaks, and who actually runs it. The
+   accent color is the card's identity across the setup screen. *)
+let algorithm_cards =
+  [ ( "twap"
+    , "TWAP"
+    , "Equal slices on the clock"
+    , [ "Calm, steady market"
+      ; "Large order, plenty of time"
+      ; "You want a predictable finish"
+      ]
+    , [ "Volume swings hard"; "Price trends against you all day" ]
+    , "The default institutional slicer — boring on purpose." )
+  ; ( "vwap"
+    , "VWAP"
+    , "Follows the forecast volume curve"
+    , [ "The day looks like a normal day"
+      ; "You are judged against the day's average price"
+      ]
+    , [ "News breaks and volume stops matching history" ]
+    , "Desks filling a benchmark order they will be graded on." )
+  ; ( "pov"
+    , "POV"
+    , "A fixed share of whatever actually trades"
+    , [ "You care about hiding in real volume"
+      ; "Liquidity is unpredictable"
+      ]
+    , [ "The tape dries up and you never finish"
+      ; "You need a guaranteed completion time"
+      ]
+    , "Traders who would rather be late than obvious." )
+  ; ( "is"
+    , "IS"
+    , "Balances impact now against drift later"
+    , [ "The price is moving and waiting is risky"
+      ; "You want front-loading without dumping"
+      ]
+    , [ "Very quiet markets, where the urgency premium is wasted" ]
+    , "Anyone with a short-lived signal to capture." )
+  ; ( "immediate"
+    , "Immediate"
+    , "Everything at once, right now"
+    , [ "The signal decays in minutes"
+      ; "The order is small next to the volume"
+      ]
+    , [ "Large orders — you pay the whole impact yourself" ]
+    , "The baseline every other run is scored against." )
+  ]
+;;
+
+let algorithm_detail ~theme ~algo =
+  match
+    List.find algorithm_cards ~f:(fun (key, _, _, _, _, _) ->
+      String.equal key algo)
+  with
+  | None -> []
+  | Some ((_ : string), name, tagline, best, weak, typical) ->
+    let bullet ~color ~mark text =
+      let row =
+        Styles.s
+          "display:flex;gap:8px;align-items:flex-start;font-size:12.5px;line-height:1.55;"
+      in
+      let mark_style =
+        Styles.s ("color:" ^ color ^ ";font-weight:800;flex-shrink:0;")
+      in
+      let text_style = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
+      {%html|
+        <div %{row}>
+          <span %{mark_style}>#{mark}</span>
+          <span %{text_style}>#{text}</span>
+        </div>
+      |}
+    in
+    let group ~heading ~color ~mark items =
+      {%html|
+        <div %{Styles.s "display:flex;flex-direction:column;gap:5px;"}>
+          <span %{Styles.s (Styles.label theme)}>#{heading}</span>
+          *{List.map items ~f:(bullet ~color ~mark)}
+        </div>
+      |}
+    in
+    let name_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.blue
+         ^ ";font-size:16px;font-weight:800;"
+         ^ Styles.mono)
+    in
+    let tagline_style =
+      Styles.s
+        ("color:" ^ theme.Styles.text ^ ";font-size:13.5px;font-weight:600;")
+    in
+    let typical_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.faint
+         ^ ";font-size:12.5px;line-height:1.55;border-top:1px solid "
+         ^ theme.Styles.hairline
+         ^ ";padding-top:10px;")
+    in
+    [ {%html|
+        <div
+          class="fade"
+          %{Styles.s
+              ("display:flex;flex-direction:column;gap:12px;background:"
+               ^ theme.Styles.chip_bg
+               ^ ";border:1px solid "
+               ^ theme.Styles.chip_border
+               ^ ";border-radius:10px;padding:16px;margin-top:14px;")}>
+          <div>
+            <div %{name_style}>#{name}</div>
+            <div %{tagline_style}>#{tagline}</div>
+          </div>
+          %{group ~heading:"Best when" ~color:theme.Styles.green
+              ~mark:"\u{2713}" best}
+          %{group ~heading:"Weak when" ~color:theme.Styles.red
+              ~mark:"\u{2717}" weak}
+          <div %{typical_style}>Typically used by: #{typical}</div>
+        </div>
+      |}
+    ]
+;;
+
+(* ---------- parameter presets ---------- *)
+
+(* Plain-language stances that fill in the algorithm knobs. They move the
+   strategy's own dials only — the fill-model numbers are the market, not the
+   trader, so a preset never touches those. *)
+let presets =
+  [ "Passive", "Trade slowly, hide in the volume", 0.0008, 0.0
+  ; "Balanced", "A middle-of-the-road pace", 0.0015, 1.0
+  ; "Aggressive", "Front-load and finish early", 0.0040, 5.0
+  ]
+;;
+
+let preset_row ~theme ~param_text ~set_param_text =
+  let current_pov = param_text.Replay.Param_text.pov_rate in
+  let current_urgency = param_text.Replay.Param_text.urgency in
+  let matches (_, _, pov, urgency) =
+    String.equal current_pov (sprintf "%.4f" pov)
+    && String.equal current_urgency (sprintf "%.1f" urgency)
+  in
+  let is_custom = not (List.exists presets ~f:matches) in
+  let chip ~selected ~title ~subtitle ~on_click =
+    let style =
+      Styles.s
+        ("display:flex;flex-direction:column;gap:2px;text-align:left;background:"
+         ^ (if selected then theme.Styles.blue_soft else theme.Styles.chip_bg)
+         ^ ";border:1px solid "
+         ^ (if selected then theme.Styles.blue else theme.Styles.chip_border)
+         ^ ";border-radius:9px;padding:10px \
+            14px;cursor:pointer;flex:1;min-width:150px;")
+    in
+    let title_style =
+      Styles.s
+        ("font-size:13px;font-weight:700;color:"
+         ^ (if selected then theme.Styles.blue else theme.Styles.text)
+         ^ ";")
+    in
+    let sub_style =
+      Styles.s ("font-size:11.5px;color:" ^ theme.Styles.secondary ^ ";")
+    in
+    {%html|
+      <button class="btn" %{style} on_click=%{on_click}>
+        <span %{title_style}>#{title}</span>
+        <span %{sub_style}>#{subtitle}</span>
+      </button>
+    |}
+  in
+  let preset_chip (name, blurb, pov, urgency) =
+    chip
+      ~selected:(matches (name, blurb, pov, urgency))
+      ~title:name
+      ~subtitle:blurb
+      ~on_click:(fun _ ->
+        set_param_text
+          { param_text with
+            Replay.Param_text.pov_rate = sprintf "%.4f" pov
+          ; urgency = sprintf "%.1f" urgency
+          })
+  in
+  {%html|
+    <div>
+      <div %{Styles.s (Styles.label theme ^ "margin-bottom:8px;")}>
+        How hard to push
+      </div>
+      <div %{Styles.s "display:flex;gap:8px;flex-wrap:wrap;"}>
+        *{List.map presets ~f:preset_chip}
+        %{chip ~selected:is_custom ~title:"Custom"
+            ~subtitle:"Your own numbers below"
+            ~on_click:(fun _ -> Effect.Ignore)}
+      </div>
+      <div
+        %{Styles.s
+            ("color:"
+             ^ theme.Styles.faint
+             ^ ";font-size:11.5px;margin-top:8px;line-height:1.5;")}>
+        POV uses the participation rate; IS uses the urgency dial. TWAP and
+        VWAP follow their own schedules and ignore both.
+      </div>
+    </div>
+  |}
+;;
+
 let setup_view
   ~theme
   ~is_dark
@@ -3244,7 +3614,10 @@ let setup_view
     in
     {%html|
       <div %{Styles.card theme "padding:20px;"}>
-        <div %{section_label}>Parameters</div>
+        %{preset_row ~theme ~param_text ~set_param_text}
+        <div %{Styles.s (Styles.label theme ^ "margin:18px 0 8px 0;")}>
+          Market friction
+        </div>
         <div %{Styles.s "display:flex;gap:14px;flex-wrap:wrap;"}>
           *{fill_fields}
           *{algo_fields}
@@ -3278,6 +3651,7 @@ let setup_view
             %{algo_pill ~theme ~selected:(String.equal algo "immediate")
                 ~on_click:(fun _ -> set_algo "immediate") "Immediate"}
           </div>
+          *{algorithm_detail ~theme ~algo}
         </div>
         <div %{Styles.card theme "padding:20px;"}>
           <div %{section_label}>Alpha instructions</div>
@@ -3333,6 +3707,7 @@ let results_view
   ~theme
   ~is_dark
   ~open_help
+  ~previous_run
   ~to_sim
   ~new_sim
   ~to_dashboard
@@ -3769,7 +4144,6 @@ let results_view
         <div %{head_row}>
           <span>rank</span>
           <span>player</span>
-          <span>algo</span>
           <span>vs immediate</span>
           <span>net P&L</span>
           <span>capture</span>
@@ -3807,7 +4181,7 @@ let results_view
   in
   let page =
     Styles.s
-      "display:flex;flex-direction:column;gap:16px;max-width:1240px;margin:0 \
+      "display:flex;flex-direction:column;gap:20px;max-width:1320px;margin:0 \
        auto;padding:28px 20px;"
   in
   {%html|
@@ -3817,6 +4191,7 @@ let results_view
                      + impact, plus opportunity on unfilled shares"
           ~back:(Some ("← Replay", to_sim)) ()}
       %{summary}
+      *{what_changed ~theme ~current:(run_record replay) ~previous:previous_run}
       <div %{Styles.card theme "padding-bottom:4px;"}>
         <div %{Styles.s "padding:14px 16px 0 16px;"}>
           <span %{title_style}>Execution cost breakdown</span>
@@ -3933,24 +4308,6 @@ let set_page_background =
 ;;
 
 (* One dashboard row per completed run, aggregated across its orders. *)
-let run_record (replay : Replay.t) =
-  let rows = replay.results.rows in
-  let sum f = List.sum (module Int) rows ~f in
-  let net =
-    sum (fun row -> row.Replay.grading.Transaction_cost.net_pnl_cents)
-  in
-  let gross =
-    sum (fun row -> row.Replay.grading.gross_theoretical_pnl_cents)
-  in
-  { History.Run_record.symbol = replay.symbol
-  ; date = replay.date
-  ; algo_name = replay.algo_name
-  ; alpha_capture = (if gross > 0 then Some (net // gross) else None)
-  ; value_add_cents = replay.results.total_value_add_cents
-  ; net_cents = net
-  }
-;;
-
 let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let screen, set_screen = Bonsai.state Screen.Landing graph in
   let show_help, set_show_help = Bonsai.state false graph in
@@ -3965,6 +4322,11 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     Bonsai.state (None : Error.t option) graph
   in
   let runs, set_runs = Bonsai.state (History.load ()) graph in
+  (* The run that was on top of the notebook when this one started — the
+     baseline the results screen diffs against. *)
+  let previous_run, set_previous_run =
+    Bonsai.state (None : History.Run_record.t option) graph
+  in
   let session, set_session =
     Bonsai.state (load_session () : Session.t option) graph
   in
@@ -4030,6 +4392,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     and set_playing
     and set_board
     and session
+    and set_previous_run
     and set_my_runs
     and set_submit_status in
     match selection, Replay.parse_params param_text with
@@ -4054,6 +4417,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
          let%bind.Effect () = set_replay (Some r) in
          let%bind.Effect () = set_minute (fun (_ : int) -> 0) in
          let%bind.Effect () = set_playing true in
+         let%bind.Effect () = set_previous_run (List.hd runs) in
          let%bind.Effect () = set_runs (History.add (run_record r) runs) in
          (* Signed-in users get an execution notebook: every completed run is
             recorded server-side, privately, the moment it finishes. The
@@ -4248,6 +4612,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_param_text
   and run_error
   and runs
+  and previous_run
   and replay
   and minute
   and playing
@@ -4408,6 +4773,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~theme
         ~is_dark
         ~open_help:(set_show_help true)
+        ~previous_run
         ~to_sim:(goto Screen.Sim)
         ~new_sim:(goto Screen.Choose_day)
         ~to_dashboard:(goto Screen.Dashboard)

@@ -13,6 +13,9 @@ module Run_record = struct
     ; alpha_capture : float option
     ; value_add_cents : int
     ; net_cents : int
+    ; shortfall_bps : float
+        (* fill-weighted across the run's orders; positive is worse *)
+    ; completion : float (* filled / ordered, 0 to 1 *)
     }
   [@@deriving sexp, equal]
 end

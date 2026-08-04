@@ -94,7 +94,7 @@ let card t extra =
      ^ t.card_bg
      ^ ";border:"
      ^ t.border
-     ^ ";border-radius:10px;"
+     ^ ";border-radius:12px;"
      ^ t.shadow
      ^ extra)
 ;;
