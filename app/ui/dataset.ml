@@ -26,6 +26,19 @@ let dates_for symbol =
   | None -> []
 ;;
 
+module Day_summary = struct
+  (* One row of the choose-day screen's session table. Return is
+     close-vs-open in bps; prices are floats because they are statistics
+     about the session, not tradeable prices. *)
+  type t =
+    { date : Date.t
+    ; open_ : float
+    ; close : float
+    ; return_bps : float
+    ; volume : int
+    }
+end
+
 let load ~symbol ~date : Trading_day.t Or_error.t =
   match
     List.find Embedded_data.files ~f:(fun (s, d, (_ : string)) ->
@@ -37,4 +50,32 @@ let load ~symbol ~date : Trading_day.t Or_error.t =
       [%message "no bundled data" (symbol : Symbol.t) (date : Date.t)]
   | Some ((_ : string), (_ : string), contents) ->
     Data_loader.parse ~symbol ~date contents
+;;
+
+(* Parsing every session of a symbol costs ~4k rows, so summaries are
+   memoized: the first visit to a symbol's calendar pays once. *)
+let summary_cache : Day_summary.t list Hashtbl.M(Symbol).t =
+  Hashtbl.create (module Symbol)
+;;
+
+let summaries_for symbol =
+  Hashtbl.find_or_add summary_cache symbol ~default:(fun () ->
+    List.filter_map (dates_for symbol) ~f:(fun date ->
+      match load ~symbol ~date with
+      | Error (_ : Error.t) -> None
+      | Ok day ->
+        let bars = day.Trading_day.bars in
+        let open_ = Price.to_float (List.hd_exn bars).Market_bar.open_ in
+        let close = Price.to_float (List.last_exn bars).Market_bar.close in
+        let volume =
+          List.sum (module Int) bars ~f:(fun bar ->
+            Size.to_int bar.Market_bar.volume)
+        in
+        Some
+          { Day_summary.date
+          ; open_
+          ; close
+          ; return_bps = (close -. open_) /. open_ *. 10000.
+          ; volume
+          }))
 ;;

@@ -1049,8 +1049,13 @@ let primary_button ~theme ~on_click label =
 ;;
 
 let narrow_page =
-  "display:flex;flex-direction:column;gap:16px;max-width:640px;margin:48px \
+  "display:flex;flex-direction:column;gap:16px;max-width:1240px;margin:32px \
    auto;padding:20px;"
+;;
+
+(* Side-by-side halves for the wizard screens; collapses on narrow windows. *)
+let two_col =
+  "display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px;align-items:start;"
 ;;
 
 (* ---------- dashboard ---------- *)
@@ -1099,12 +1104,12 @@ let dashboard_view ~theme ~is_dark ~runs ~new_sim ~toggle_theme =
       </div>
     |}
   in
-  let runs_body =
-    match runs with
+  let table body =
+    match body with
     | [] ->
       [ {%html|<div %{empty_style}>No runs yet — run your first simulation.</div>|}
       ]
-    | runs ->
+    | rows ->
       {%html|
         <div %{head_row}>
           <span>day</span>
@@ -1114,7 +1119,16 @@ let dashboard_view ~theme ~is_dark ~runs ~new_sim ~toggle_theme =
           <span>capture</span>
         </div>
       |}
-      :: List.map runs ~f:run_row
+      :: List.map rows ~f:run_row
+  in
+  let best =
+    runs
+    |> List.sort
+         ~compare:
+           (Comparable.lift
+              (Comparable.reverse Int.compare)
+              ~f:(fun (run : History.Run_record.t) -> run.value_add_cents))
+    |> fun sorted -> List.take sorted 5
   in
   {%html|
     <div %{Styles.s narrow_page}>
@@ -1124,9 +1138,15 @@ let dashboard_view ~theme ~is_dark ~runs ~new_sim ~toggle_theme =
                      execution" ~back:None}
       %{primary_button ~theme ~on_click:(fun _ -> new_sim)
           "New simulation →"}
-      <div %{Styles.card theme "padding:16px;"}>
-        <div %{section_label}>Recent runs</div>
-        *{runs_body}
+      <div %{Styles.s two_col}>
+        <div %{Styles.card theme "padding:16px;"}>
+          <div %{section_label}>Recent runs</div>
+          *{table runs}
+        </div>
+        <div %{Styles.card theme "padding:16px;"}>
+          <div %{section_label}>Best runs — by value added vs immediate</div>
+          *{table best}
+        </div>
       </div>
     </div>
   |}
@@ -1300,29 +1320,165 @@ let choose_day_view
   in
   let picker_row = Styles.s "display:flex;gap:12px;align-items:center;" in
   let label = Styles.s (Styles.label theme) in
+  let section_label = Styles.s (Styles.label theme ^ "margin-bottom:8px;") in
+  let summary_rows =
+    let row_base =
+      "display:grid;grid-template-columns:110px 1fr 1fr 1fr \
+       1fr;column-gap:10px;align-items:baseline;"
+    in
+    let head =
+      Styles.s
+        (row_base
+         ^ "padding:8px 0 6px 0;border-bottom:1px solid "
+         ^ theme.Styles.hairline
+         ^ ";"
+         ^ Styles.label theme)
+    in
+    let num = "text-align:right;" in
+    let summary_row (s : Dataset.Day_summary.t) =
+      let selected =
+        match selection with
+        | Some (sym, d) ->
+          Symbol.equal sym browse_symbol && Date.equal d s.date
+        | None -> false
+      in
+      let style =
+        Styles.s
+          (row_base
+           ^ "padding:7px 6px;font-size:13px;border-bottom:1px solid "
+           ^ theme.Styles.hairline
+           ^ ";cursor:pointer;border-radius:4px;background:"
+           ^ (if selected then theme.Styles.blue_soft else "transparent")
+           ^ ";color:"
+           ^ theme.Styles.text
+           ^ ";"
+           ^ Styles.mono)
+      in
+      let cell = Styles.s num in
+      {%html|
+        <div %{style} on_click=%{fun _ -> choose browse_symbol s.date}>
+          <span>#{Date.to_string s.date}</span>
+          <span %{cell}>#{sprintf "%.2f" s.open_}</span>
+          <span %{cell}>#{sprintf "%.2f" s.close}</span>
+          <span %{cell}>#{sprintf "%+.0f bps" s.return_bps}</span>
+          <span %{cell}>#{Float.to_string_hum ~delimiter:',' ~decimals:0
+                            (Float.of_int s.volume)}</span>
+        </div>
+      |}
+    in
+    {%html|
+      <div %{head}>
+        <span>session</span>
+        <span %{Styles.s num}>open</span>
+        <span %{Styles.s num}>close</span>
+        <span %{Styles.s num}>day move</span>
+        <span %{Styles.s num}>volume</span>
+      </div>
+    |}
+    :: List.map (Dataset.summaries_for browse_symbol) ~f:summary_row
+  in
   {%html|
     <div %{Styles.s narrow_page}>
       %{wizard_header ~theme ~is_dark ~toggle_theme
           ~title:"Choose a market day"
           ~subtitle:"pick a symbol, then a session from its calendar"
           ~back:(Some ("← Dashboard", back))}
-      <div %{Styles.card theme "padding:16px;"}>
-        <div %{picker_row}>
-          <span %{label}>Symbol</span>
-          <select
-            %{select_style}
-            on_change=%{fun (_ : _) value -> set_symbol (Symbol.of_string value)}>
-            *{List.map Dataset.symbols ~f:symbol_option}
-          </select>
-          <span %{hint}>#{sprintf "%d sessions available" (List.length sessions)}</span>
+      <div %{Styles.s two_col}>
+        <div %{Styles.card theme "padding:16px;"}>
+          <div %{picker_row}>
+            <span %{label}>Symbol</span>
+            <select
+              %{select_style}
+              on_change=%{fun (_ : _) value -> set_symbol (Symbol.of_string value)}>
+              *{List.map Dataset.symbols ~f:symbol_option}
+            </select>
+            <span %{hint}>#{sprintf "%d sessions available" (List.length sessions)}</span>
+          </div>
+          *{List.map months ~f:month_grid}
         </div>
-        *{List.map months ~f:month_grid}
+        <div %{Styles.card theme "padding:16px;"}>
+          <div %{section_label}>Sessions — click to select</div>
+          *{summary_rows}
+        </div>
       </div>
     </div>
   |}
 ;;
 
 (* ---------- alpha upload ---------- *)
+
+(* Canned instruction sets, generated for the chosen day's symbol so a sample
+   never trips the symbol-match check. Sizes stay demo-scale (see the POV
+   default-rate note in bin/main.ml). *)
+let sample_alphas symbol =
+  let s = Symbol.to_string symbol in
+  let csv rows =
+    String.concat
+      ~sep:"\n"
+      (List.map rows ~f:(fun (a, side, q, d) ->
+         sprintf "%s,%s,%s,%d,%s" a s side q d))
+    ^ "\n"
+  in
+  [ ( "Demo mix"
+    , csv
+        [ "10:00:00", "BUY", 5000, "11:00:00"
+        ; "11:30:00", "SELL", 3000, "13:00:00"
+        ; "14:00:00", "BUY", 2000, "14:30:00"
+        ] )
+  ; ( "Morning accumulation"
+    , csv
+        [ "09:45:00", "BUY", 3000, "11:00:00"
+        ; "10:15:00", "BUY", 3000, "12:00:00"
+        ; "11:00:00", "BUY", 2000, "12:30:00"
+        ] )
+  ; ( "Round trip"
+    , csv
+        [ "10:00:00", "BUY", 6000, "11:30:00"
+        ; "13:00:00", "SELL", 6000, "15:30:00"
+        ] )
+  ; ( "Afternoon liquidation"
+    , csv
+        [ "13:00:00", "SELL", 2500, "14:30:00"
+        ; "13:45:00", "SELL", 2500, "15:00:00"
+        ; "14:30:00", "SELL", 3000, "15:55:00"
+        ] )
+  ; ( "Busy tape"
+    , csv
+        [ "09:40:00", "BUY", 1500, "10:30:00"
+        ; "10:20:00", "SELL", 1000, "11:15:00"
+        ; "11:00:00", "BUY", 2000, "12:30:00"
+        ; "12:15:00", "SELL", 1500, "13:45:00"
+        ; "13:30:00", "BUY", 1000, "14:30:00"
+        ; "14:45:00", "SELL", 2000, "15:45:00"
+        ] )
+  ]
+;;
+
+(* Reads the first selected file as text and pours it into the alpha
+   textarea. The FileReader callback fires outside the DOM event, so the
+   state update is scheduled via [handle_non_dom_event_exn]. *)
+let read_alpha_file ~set_alpha_text files =
+  let open Js_of_ocaml in
+  Effect.of_sync_fun
+    (fun () ->
+      Js.Opt.iter
+        (files##item 0)
+        (fun file ->
+          let reader = new%js File.fileReader in
+          reader##.onload
+          := Dom.handler
+               (fun (_ : File.fileReader File.progressEvent Js.t) ->
+                  (match
+                     Js.Opt.to_option (File.CoerceTo.string reader##.result)
+                   with
+                   | None -> ()
+                   | Some text ->
+                     Vdom.Effect.Expert.handle_non_dom_event_exn
+                       (set_alpha_text (Js.to_string text)));
+                  Js._true);
+          reader##readAsText file))
+    ()
+;;
 
 let alpha_view
   ~theme
@@ -1375,9 +1531,42 @@ let alpha_view
         |}
       ]
   in
+  let sample_pill (name, csv) =
+    let style =
+      Styles.s
+        ("background:"
+         ^ theme.Styles.chip_bg
+         ^ ";color:"
+         ^ theme.Styles.secondary
+         ^ ";border:1px solid "
+         ^ theme.Styles.chip_border
+         ^ ";border-radius:4px;padding:4px \
+            10px;cursor:pointer;font-size:12px;font-weight:600;")
+    in
+    {%html|
+      <button %{style} on_click=%{fun _ -> set_alpha_text csv}>
+        #{name}
+      </button>
+    |}
+  in
+  let samples_row =
+    Styles.s "display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;"
+  in
+  let upload_label =
+    Styles.s
+      ("display:inline-block;background:"
+       ^ theme.Styles.chip_bg
+       ^ ";color:"
+       ^ theme.Styles.text
+       ^ ";border:1px solid "
+       ^ theme.Styles.chip_border
+       ^ ";border-radius:5px;padding:6px \
+          12px;cursor:pointer;font-size:12.5px;font-weight:600;margin-top:10px;"
+      )
+  in
   let subtitle =
     sprintf
-      "%s · %s — paste your alpha's output"
+      "%s · %s — paste, upload, or start from a sample"
       (Symbol.to_string symbol)
       (Date.to_string date)
   in
@@ -1386,17 +1575,34 @@ let alpha_view
       %{wizard_header ~theme ~is_dark ~toggle_theme
           ~title:"Alpha instructions" ~subtitle
           ~back:(Some ("← Choose day", back))}
-      <div %{Styles.card theme "padding:16px;"}>
-        <div %{section_label}>Alpha CSV</div>
-        <textarea
-          rows=%{10}
-          %{Vdom.Attr.create "spellcheck" "false"}
-          %{Vdom.Attr.string_property "value" alpha_text}
-          %{textarea_style}
-          on_input=%{fun (_ : _) text -> set_alpha_text text}></textarea>
-        <div %{hint}>arrival_time,symbol,side,quantity,deadline</div>
+      <div %{Styles.s two_col}>
+        <div %{Styles.card theme "padding:16px;"}>
+          <div %{section_label}>Samples</div>
+          <div %{samples_row}>
+            *{List.map (sample_alphas symbol) ~f:sample_pill}
+          </div>
+          <div %{section_label}>Alpha CSV</div>
+          <textarea
+            rows=%{14}
+            %{Vdom.Attr.create "spellcheck" "false"}
+            %{Vdom.Attr.string_property "value" alpha_text}
+            %{textarea_style}
+            on_input=%{fun (_ : _) text -> set_alpha_text text}></textarea>
+          <div %{hint}>arrival_time,symbol,side,quantity,deadline</div>
+          <label %{upload_label}>
+            Upload CSV file…
+            <input
+              type="file"
+              %{Vdom.Attr.create "accept" ".csv,text/csv"}
+              %{Styles.s "display:none;"}
+              %{Vdom.Attr.on_file_input (fun (_ : _) files ->
+                  read_alpha_file ~set_alpha_text files)} />
+          </label>
+        </div>
+        <div %{Styles.s "display:flex;flex-direction:column;gap:16px;"}>
+          *{preview}
+        </div>
       </div>
-      *{preview}
     </div>
   |}
 ;;
@@ -1451,22 +1657,24 @@ let setup_view
       %{wizard_header ~theme ~is_dark ~toggle_theme
           ~title:"New simulation" ~subtitle
           ~back:(Some ("← Alpha", back))}
-      <div %{Styles.card theme "padding:16px;"}>
-        <div %{section_label}>Execution algorithm</div>
-        <div %{pills}>
-          %{algo_pill ~theme ~selected:(String.equal algo "twap")
-              ~on_click:(fun _ -> set_algo "twap") "TWAP"}
-          %{algo_pill ~theme ~selected:(String.equal algo "vwap")
-              ~on_click:(fun _ -> set_algo "vwap") "VWAP"}
-          %{algo_pill ~theme ~selected:(String.equal algo "pov")
-              ~on_click:(fun _ -> set_algo "pov") "POV"}
-          %{algo_pill ~theme ~selected:(String.equal algo "immediate")
-              ~on_click:(fun _ -> set_algo "immediate") "Immediate"}
+      <div %{Styles.s two_col}>
+        <div %{Styles.card theme "padding:16px;"}>
+          <div %{section_label}>Execution algorithm</div>
+          <div %{pills}>
+            %{algo_pill ~theme ~selected:(String.equal algo "twap")
+                ~on_click:(fun _ -> set_algo "twap") "TWAP"}
+            %{algo_pill ~theme ~selected:(String.equal algo "vwap")
+                ~on_click:(fun _ -> set_algo "vwap") "VWAP"}
+            %{algo_pill ~theme ~selected:(String.equal algo "pov")
+                ~on_click:(fun _ -> set_algo "pov") "POV"}
+            %{algo_pill ~theme ~selected:(String.equal algo "immediate")
+                ~on_click:(fun _ -> set_algo "immediate") "Immediate"}
+          </div>
         </div>
-      </div>
-      <div %{Styles.card theme "padding:16px;"}>
-        <div %{section_label}>Alpha instructions</div>
-        *{instructions}
+        <div %{Styles.card theme "padding:16px;"}>
+          <div %{section_label}>Alpha instructions</div>
+          *{instructions}
+        </div>
       </div>
       *{error_card}
       %{primary_button ~theme ~on_click:(fun _ -> start) "Run simulation"}
