@@ -10,6 +10,7 @@ open Execlab_protocol
    Choose_day -> Alpha -> Setup (algorithm + confirm) -> Sim -> Results. *)
 module Screen = struct
   type t =
+    | Landing (** the marketing front door; not part of the wizard *)
     | Dashboard
     | Choose_day
     | Alpha
@@ -175,7 +176,7 @@ let step_progress ~theme ~current =
     let bg, color, weight =
       match state with
       | `Done -> theme.Styles.blue_soft, theme.Styles.blue, "600"
-      | `Active -> theme.Styles.blue, "#ffffff", "700"
+      | `Active -> theme.Styles.blue, theme.Styles.page_bg, "700"
       | `Upcoming -> "transparent", theme.Styles.faint, "600"
     in
     let chip =
@@ -1225,6 +1226,92 @@ let event_log (replay : Replay.t) ~theme ~fills ~minute =
 
 (* ---------- screens ---------- *)
 
+let primary_button ?(enabled = true) ?icon ~theme ~on_click label =
+  let style =
+    Styles.s
+      ("display:inline-flex;align-items:center;gap:8px;background:"
+       ^ theme.Styles.blue
+       ^ ";color:"
+       ^ theme.Styles.page_bg
+       ^ ";border:none;border-radius:8px;padding:13px \
+          26px;cursor:pointer;font-size:15px;font-weight:700;align-self:flex-start;box-shadow:0 \
+          2px 10px "
+       ^ theme.Styles.blue
+       ^ "44;")
+  in
+  let disabled = if enabled then Vdom.Attr.empty else Vdom.Attr.disabled in
+  let glyph = match icon with None -> [] | Some icon -> [ icon ] in
+  {%html|
+    <button class="btn" %{style} %{disabled} on_click=%{on_click}>
+      *{glyph}
+      #{label}
+    </button>
+  |}
+;;
+
+let secondary_button ?icon ~theme ~on_click label =
+  let style =
+    Styles.s
+      ("display:inline-flex;align-items:center;gap:8px;background:"
+       ^ theme.Styles.chip_bg
+       ^ ";color:"
+       ^ theme.Styles.text
+       ^ ";border:1px solid "
+       ^ theme.Styles.chip_border
+       ^ ";border-radius:8px;padding:12px \
+          22px;cursor:pointer;font-size:14px;font-weight:600;")
+  in
+  let glyph = match icon with None -> [] | Some icon -> [ icon ] in
+  {%html|
+    <button class="btn" %{style} on_click=%{on_click}>
+      *{glyph}
+      #{label}
+    </button>
+  |}
+;;
+
+(* The wizard's fixed navigation bar: Back bottom-left, Continue
+   bottom-right, in the same place on every step. Sticky so the actions stay
+   reachable on long screens. *)
+let nav_footer ?back ?next ~theme () =
+  let bar =
+    Styles.s
+      ("position:sticky;bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;background:"
+       ^ theme.Styles.card_bg
+       ^ ";border:"
+       ^ theme.Styles.border
+       ^ ";border-radius:10px;padding:12px 16px;"
+       ^ theme.Styles.shadow)
+  in
+  let back_node =
+    match back with
+    | Some (label, effect) ->
+      secondary_button
+        ~icon:(Icon.arrow_left ~size:14 ())
+        ~theme
+        ~on_click:(fun _ -> effect)
+        label
+    | None -> {%html|<span></span>|}
+  in
+  let next_node =
+    match next with
+    | Some (label, effect, enabled) ->
+      primary_button
+        ~enabled
+        ~icon:(Icon.arrow_right ~size:14 ())
+        ~theme
+        ~on_click:(fun _ -> effect)
+        label
+    | None -> {%html|<span></span>|}
+  in
+  {%html|
+    <div %{bar}>
+      %{back_node}
+      %{next_node}
+    </div>
+  |}
+;;
+
 let sim_view
   (replay : Replay.t)
   ~theme
@@ -1273,12 +1360,6 @@ let sim_view
     Styles.s
       ("color:" ^ theme.Styles.secondary ^ ";font-size:13px;line-height:1.7;")
   in
-  let back_style =
-    Styles.s
-      ("background:none;border:none;color:"
-       ^ theme.Styles.blue
-       ^ ";cursor:pointer;font-size:13px;font-weight:600;padding:0;")
-  in
   let head_row =
     Styles.s
       "display:flex;align-items:baseline;justify-content:space-between;"
@@ -1304,12 +1385,6 @@ let sim_view
           <span %{Styles.brand theme}>execlab</span>
           <span %{Styles.s "display:flex;gap:10px;align-items:center;"}>
             %{theme_button ~theme ~is_dark ~toggle_theme}
-            <button %{back_style} on_click=%{fun _ -> back}>
-              ← New simulation
-            </button>
-            <button %{back_style} on_click=%{fun _ -> to_results}>
-              Results →
-            </button>
           </span>
         </div>
         <div %{title_style}>#{title}</div>
@@ -1327,6 +1402,9 @@ let sim_view
       </div>
       %{orders_table replay ~theme ~fills ~minute}
       %{event_log replay ~theme ~fills ~minute}
+      %{nav_footer ~theme
+          ~back:("New simulation", back)
+          ~next:("Results", to_results, true) ()}
     </div>
   |}
 ;;
@@ -1335,7 +1413,9 @@ let sim_view
    inherit the surrounding text color in either theme. *)
 let algo_pill ~theme ~selected ~on_click label =
   let bg = if selected then theme.Styles.blue else theme.Styles.chip_bg in
-  let color = if selected then "#ffffff" else theme.Styles.secondary in
+  let color =
+    if selected then theme.Styles.page_bg else theme.Styles.secondary
+  in
   let ring =
     if selected
     then "box-shadow:0 2px 8px " ^ theme.Styles.blue ^ "55;"
@@ -1452,90 +1532,6 @@ let wizard_header
   |}
 ;;
 
-let primary_button ?(enabled = true) ?icon ~theme ~on_click label =
-  let style =
-    Styles.s
-      ("display:inline-flex;align-items:center;gap:8px;background:"
-       ^ theme.Styles.blue
-       ^ ";color:#ffffff;border:none;border-radius:8px;padding:13px \
-          26px;cursor:pointer;font-size:15px;font-weight:700;align-self:flex-start;box-shadow:0 \
-          2px 10px "
-       ^ theme.Styles.blue
-       ^ "44;")
-  in
-  let disabled = if enabled then Vdom.Attr.empty else Vdom.Attr.disabled in
-  let glyph = match icon with None -> [] | Some icon -> [ icon ] in
-  {%html|
-    <button class="btn" %{style} %{disabled} on_click=%{on_click}>
-      *{glyph}
-      #{label}
-    </button>
-  |}
-;;
-
-let secondary_button ?icon ~theme ~on_click label =
-  let style =
-    Styles.s
-      ("display:inline-flex;align-items:center;gap:8px;background:"
-       ^ theme.Styles.chip_bg
-       ^ ";color:"
-       ^ theme.Styles.text
-       ^ ";border:1px solid "
-       ^ theme.Styles.chip_border
-       ^ ";border-radius:8px;padding:12px \
-          22px;cursor:pointer;font-size:14px;font-weight:600;")
-  in
-  let glyph = match icon with None -> [] | Some icon -> [ icon ] in
-  {%html|
-    <button class="btn" %{style} on_click=%{on_click}>
-      *{glyph}
-      #{label}
-    </button>
-  |}
-;;
-
-(* The wizard's fixed navigation bar: Back bottom-left, Continue
-   bottom-right, in the same place on every step. Sticky so the actions stay
-   reachable on long screens. *)
-let nav_footer ?back ?next ~theme () =
-  let bar =
-    Styles.s
-      ("position:sticky;bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;background:"
-       ^ theme.Styles.card_bg
-       ^ ";border:"
-       ^ theme.Styles.border
-       ^ ";border-radius:10px;padding:12px 16px;"
-       ^ theme.Styles.shadow)
-  in
-  let back_node =
-    match back with
-    | Some (label, effect) ->
-      secondary_button
-        ~icon:(Icon.arrow_left ~size:14 ())
-        ~theme
-        ~on_click:(fun _ -> effect)
-        label
-    | None -> {%html|<span></span>|}
-  in
-  let next_node =
-    match next with
-    | Some (label, effect, enabled) ->
-      primary_button
-        ~enabled
-        ~icon:(Icon.arrow_right ~size:14 ())
-        ~theme
-        ~on_click:(fun _ -> effect)
-        label
-    | None -> {%html|<span></span>|}
-  in
-  {%html|
-    <div %{bar}>
-      %{back_node}
-      %{next_node}
-    </div>
-  |}
-;;
-
 let narrow_page =
   "display:flex;flex-direction:column;gap:16px;max-width:1240px;margin:32px \
    auto;padding:20px;"
@@ -1547,6 +1543,436 @@ let two_col =
 ;;
 
 (* ---------- dashboard ---------- *)
+
+(* ---------- landing page ---------- *)
+
+let landing_stats =
+  [ "66", "historical sessions — 6 symbols x 11 days, July 2026"
+  ; "25,740", "one-minute bars of real prices and volume"
+  ; "5", "execution algorithms, from naive to adaptive"
+  ; "2", "fill engines: bar model and synthetic order book"
+  ]
+;;
+
+let landing_sections =
+  [ ( "How a run works"
+    , "Five steps, no setup. Bring a CSV of trade instructions, pick a day \
+       and an algorithm, and watch the fills land against that day's real \
+       tape."
+    , [ ( "1. Pick a day"
+        , "One symbol, one real session from the bundled data: AAPL, GOOG, \
+           META, MSFT, NFLX, TSLA." )
+      ; ( "2. Load your alpha"
+        , "A CSV your model already produced — time, symbol, side, \
+           quantity, deadline — or start from a built-in sample." )
+      ; ( "3. Choose an algorithm"
+        , "TWAP, VWAP, POV, IS, or Immediate, with the market knobs that \
+           matter: half spread, participation cap, impact." )
+      ; ( "4. Watch it trade"
+        , "390 minutes on a scrubber at 1x, 4x or 16x: price chart, \
+           per-order fill ticks, running P&L, event log." )
+      ; ( "5. Get graded"
+        , "Every run is scored against the Immediate baseline on the same \
+           day, so you always see what your algorithm was worth." )
+      ] )
+  ; ( "The five algorithms"
+    , "Each one is a different bet about the day. They fail in different \
+       ways, and finding out where is the point of the lab."
+    , [ ( "TWAP"
+        , "Even slices across the clock. Ignores the market entirely — \
+           either discipline or negligence, depending on the session." )
+      ; ( "VWAP"
+        , "Follows the forecast volume curve, heavier at the open and \
+           close. Promises a finish time, not a market share." )
+      ; ( "POV"
+        , "Chases the volume that actually prints, at a fixed share of it. \
+           Promises a market share, not a finish time." )
+      ; ( "IS"
+        , "Implementation shortfall: trades the cost of moving fast against \
+           the risk of moving slow, and re-decides every minute." )
+      ; ( "Immediate"
+        , "Dump the whole order at once. The naive baseline every run is \
+           measured against — and it is not always the loser." )
+      ] )
+  ; ( "What gets measured"
+    , "The headline is alpha captured: what you kept divided by what the \
+       idea was worth on paper. Everything below it explains where the rest \
+       went."
+    , [ ( "Implementation shortfall"
+        , "Your average fill price against the price at the moment you \
+           decided, in dollars and basis points." )
+      ; ( "Cost split"
+        , "Shortfall broken into timing (the price moved), spread (the toll \
+           on demanding a fill), and impact (you moved it)." )
+      ; ( "Opportunity cost"
+        , "Shares that never traded before the deadline. A correct signal \
+           you failed to trade is a pure loss, and it is priced here." )
+      ; ( "VWAP slippage"
+        , "Your average price against the whole day's average. Did you \
+           trade better or worse than everyone else?" )
+      ; ( "Value added"
+        , "Your net P&L minus the Immediate baseline's, on the identical \
+           day — the number the leaderboard ranks." )
+      ] )
+  ; ( "The market model, stated plainly"
+    , "ExecLabs is a simulation calibrated to a real historical session, \
+       not a reconstruction of the real order book. The bars are real; the \
+       spread, the queue and the counterparties are modeled."
+    , [ ( "Bar fill engine"
+        , "Marketable orders fill at the bar price plus a half spread and a \
+           square-root impact penalty, capped at a share of that minute's \
+           volume." )
+      ; ( "Synthetic exchange"
+        , "A real limit order book with background agents. Impact emerges \
+           from price-time priority instead of a formula." )
+      ; ( "Deterministic replay"
+        , "The same config and seed give identical fills every time. Runs \
+           are reproducible artifacts, not anecdotes." )
+      ; ( "Calibrated, not reconstructed"
+        , "We never saw the true book. What is trustworthy is the \
+           comparison: every run faces the same distortions." )
+      ; ( "Server-verified leaderboard"
+        , "Submit a config and the server re-runs it under identical house \
+           physics. Nobody uploads a score, so only execution differs." )
+      ] )
+  ]
+;;
+
+let landing_view ~theme ~is_dark ~toggle_theme ~enter ~to_dashboard =
+  let page =
+    Styles.s
+      "display:flex;flex-direction:column;gap:28px;max-width:1240px;margin:0 \
+       auto;padding:36px 20px 60px;"
+  in
+  let brand_row =
+    Styles.s "display:flex;justify-content:space-between;align-items:center;"
+  in
+  let wordmark =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.text
+       ^ ";font-size:17px;font-weight:800;letter-spacing:0.01em;")
+  in
+  let hero =
+    Styles.s
+      "display:flex;flex-direction:column;gap:16px;padding:28px 0 8px;"
+  in
+  let headline =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.text
+       ^ ";font-size:clamp(30px,4.6vw,52px);font-weight:800;line-height:1.08;max-width:16ch;margin:0;"
+      )
+  in
+  let subhead =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.secondary
+       ^ ";font-size:16.5px;line-height:1.65;max-width:64ch;")
+  in
+  let accent =
+    Styles.s ("color:" ^ theme.Styles.blue ^ ";font-weight:700;")
+  in
+  let cta_row =
+    Styles.s "display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;"
+  in
+  let stat_grid =
+    Styles.s
+      "display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;"
+  in
+  let stat (value, label) =
+    let tile =
+      Styles.s
+        ("display:flex;flex-direction:column;gap:4px;background:"
+         ^ theme.Styles.chip_bg
+         ^ ";border:1px solid "
+         ^ theme.Styles.chip_border
+         ^ ";border-radius:10px;padding:16px 18px;")
+    in
+    let value_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.blue
+         ^ ";font-size:27px;font-weight:800;"
+         ^ Styles.mono)
+    in
+    let label_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.secondary
+         ^ ";font-size:12.5px;line-height:1.5;")
+    in
+    {%html|
+      <div class="raise" %{tile}>
+        <span %{value_style}>#{value}</span>
+        <span %{label_style}>#{label}</span>
+      </div>
+    |}
+  in
+  let section (title, body, items) =
+    let title_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.text
+         ^ ";font-size:21px;font-weight:800;margin-bottom:6px;")
+    in
+    let body_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.secondary
+         ^ ";font-size:14px;line-height:1.65;max-width:70ch;margin-bottom:14px;"
+        )
+    in
+    let grid =
+      Styles.s
+        "display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;"
+    in
+    let item (name, blurb) =
+      let card =
+        Styles.s
+          ("display:flex;flex-direction:column;gap:5px;background:"
+           ^ theme.Styles.card_bg
+           ^ ";border:"
+           ^ theme.Styles.border
+           ^ ";border-radius:10px;padding:16px 18px;height:100%;")
+      in
+      let name_style =
+        Styles.s
+          ("color:"
+           ^ theme.Styles.text
+           ^ ";font-size:13.5px;font-weight:700;")
+      in
+      let blurb_style =
+        Styles.s
+          ("color:"
+           ^ theme.Styles.secondary
+           ^ ";font-size:12.5px;line-height:1.6;")
+      in
+      {%html|
+        <div class="raise" %{card}>
+          <span %{name_style}>#{name}</span>
+          <span %{blurb_style}>#{blurb}</span>
+        </div>
+      |}
+    in
+    {%html|
+      <div>
+        <div %{title_style}>#{title}</div>
+        <div %{body_style}>#{body}</div>
+        <div %{grid}>*{List.map items ~f:item}</div>
+      </div>
+    |}
+  in
+  let closing =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.secondary
+       ^ ";font-size:15px;line-height:1.6;border-top:1px solid "
+       ^ theme.Styles.hairline
+       ^ ";padding-top:22px;")
+  in
+  {%html|
+    <div class="page fade" %{page}>
+      <div %{brand_row}>
+        <span %{wordmark}>ExecLabs</span>
+        %{theme_button ~theme ~is_dark ~toggle_theme}
+      </div>
+      <div %{hero}>
+        <h1 %{headline}>Backtest your execution, not just your alpha.</h1>
+        <div %{subhead}>
+          Your model says buy 50,000 shares by 11:00. The price you actually
+          get is not the price on the chart. ExecLabs replays your orders
+          minute by minute against a real historical trading session and
+          reports <span %{accent}>how much of the paper profit survived the
+          cost of trading it</span>.
+        </div>
+        <div %{cta_row}>
+          %{primary_button ~icon:(Icon.arrow_right ~size:15 ()) ~theme
+              ~on_click:(fun _ -> enter) "Run a simulation"}
+          %{secondary_button ~theme ~on_click:(fun _ -> to_dashboard)
+              "Browse past runs"}
+        </div>
+      </div>
+      <div %{stat_grid}>*{List.map landing_stats ~f:stat}</div>
+      *{List.map landing_sections ~f:section}
+      <div %{closing}>
+        Bring the orders your model already generated. Find out what they
+        actually cost.
+      </div>
+    </div>
+  |}
+;;
+
+(* ---------- metrics glossary ---------- *)
+
+(* Plain-English definitions for every number on the results screen, shown in
+   a modal behind the (?) button. Kept as data so the copy stays reviewable
+   in one place. *)
+let glossary_intro =
+  "This screen compares two worlds: the profit your trade ideas would have \
+   made in a perfect, costless market, and what was actually left after \
+   trading them in a real historical session. For anything labelled a cost, \
+   a positive number means money lost and a negative number means the \
+   market moved in your favor; for profit figures, positive is simply \
+   profit."
+;;
+
+let glossary_entries =
+  [ ( "Your alpha predicted / gross alpha"
+    , "The profit your trade ideas would have made if trading were instant \
+       and free."
+    , "The full ordered quantity valued from the arrival price to the \
+       session's close, with zero costs. It is the ceiling everything else \
+       is measured against." )
+  ; ( "You actually kept / net P&L"
+    , "What the trades really earned after every cost of executing them."
+    , "Gross alpha minus shortfall minus opportunity cost. A big gap below \
+       \"Your alpha predicted\" means execution ate the idea." )
+  ; ( "Alpha captured / capture"
+    , "The share of the predicted profit that survived trading, as a \
+       percentage."
+    , "Net P&L divided by gross alpha. 100% is costless execution; under \
+       50% means costs dominate. Blank when the prediction lost money, \
+       since the ratio is then meaningless." )
+  ; ( "Execution bonus / vs immediate"
+    , "Extra dollars your algorithm made versus dumping every order the \
+       instant it arrived."
+    , "Your net P&L minus the Immediate baseline's, on the identical orders \
+       and day. Positive means patience paid off; negative means trading it \
+       all at once would have been better." )
+  ; ( "= shortfall"
+    , "The total cost of execution: what the filled shares cost beyond the \
+       ideal price."
+    , "Exactly timing + spread + impact, with no leftover. Positive means \
+       money lost to execution; negative means the market moved your way. \
+       Lower is better." )
+  ; ( "timing"
+    , "What the market's own price drift between your decision and your \
+       fills cost you."
+    , "Compares each fill's minute against the arrival price. Positive: \
+       prices moved against you while you waited. Negative: the drift \
+       helped." )
+  ; ( "+ spread"
+    , "The toll for demanding an immediate fill instead of waiting for \
+       someone to meet you."
+    , "Buyers bid a little below what sellers ask; taking a fill now costs \
+       half that gap per share. Patient limit orders pay none of it." )
+  ; ( "+ impact"
+    , "How much your own buying or selling pushed the price against you."
+    , "Each fill's distance beyond its minute's opening price plus the \
+       spread toll. It grows with the share of that minute's volume you \
+       take, so trading faster raises it." )
+  ; ( "in bps"
+    , "The same shortfall as a share of price, so orders of any size can be \
+       compared."
+    , "Basis points: 1 bp = 0.01% of the arrival price. Roughly, 5 bps is \
+       cheap and 50 bps is expensive. Positive is always worse, on either \
+       side." )
+  ; ( "arrival price"
+    , "The market price at the moment an order went live — the scorecard's \
+       starting line."
+    , "The opening price of the first minute at or after the instruction's \
+       timestamp. Everything paid above it when buying, or received below \
+       it when selling, becomes shortfall." )
+  ; ( "avg fill"
+    , "The average price you actually traded at, weighted by the size of \
+       each fill."
+    , "Compare it with the arrival price: for a buy, lower is better; for a \
+       sell, higher is better." )
+  ; ( "day VWAP"
+    , "The average price the whole market traded at that day."
+    , "Volume-weighted average price: every trade in the session weighted \
+       by its size. Buying below it, or selling above it, beats the typical \
+       participant." )
+  ; ( "filled"
+    , "The share of the ordered quantity that actually traded before the \
+       deadline."
+    , "Less than 100% means the algorithm ran out of time or of willing \
+       counterparties, and the missing shares reappear as opportunity cost."
+    )
+  ; ( "opportunity"
+    , "The profit lost on shares that never traded."
+    , "Values the unfilled remainder from the arrival price to the session \
+       close. Positive: those shares would have made money you missed. \
+       Negative: a lucky escape, because the idea was wrong." )
+  ]
+;;
+
+let help_modal ~theme ~close =
+  let backdrop =
+    Styles.s
+      "position:fixed;inset:0;background:rgba(8,12,20,0.55);display:flex;align-items:flex-start;justify-content:center;padding:40px \
+       20px;z-index:50;overflow:auto;"
+  in
+  let panel =
+    Styles.s
+      ("background:"
+       ^ theme.Styles.card_bg
+       ^ ";border:"
+       ^ theme.Styles.border
+       ^ ";border-radius:12px;max-width:760px;width:100%;padding:24px;"
+       ^ theme.Styles.shadow)
+  in
+  let head =
+    Styles.s
+      "display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:10px;"
+  in
+  let title_style =
+    Styles.s
+      ("color:" ^ theme.Styles.text ^ ";font-size:19px;font-weight:800;")
+  in
+  let intro_style =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.secondary
+       ^ ";font-size:13px;line-height:1.65;margin-bottom:16px;")
+  in
+  let entry (term, plain, detail) =
+    let row =
+      Styles.s
+        ("padding:11px 0;border-top:1px solid " ^ theme.Styles.hairline ^ ";")
+    in
+    let term_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.blue
+         ^ ";font-size:13px;font-weight:700;margin-bottom:3px;"
+         ^ Styles.mono)
+    in
+    let plain_style =
+      Styles.s
+        ("color:" ^ theme.Styles.text ^ ";font-size:13px;line-height:1.55;")
+    in
+    let detail_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.faint
+         ^ ";font-size:12px;line-height:1.6;margin-top:2px;")
+    in
+    {%html|
+      <div %{row}>
+        <div %{term_style}>#{term}</div>
+        <div %{plain_style}>#{plain}</div>
+        <div %{detail_style}>#{detail}</div>
+      </div>
+    |}
+  in
+  {%html|
+    <div %{backdrop} on_click=%{fun _ -> close}>
+      <div
+        class="fade"
+        %{panel}
+        on_click=%{fun (_ : _) -> Effect.Ignore}>
+        <div %{head}>
+          <span %{title_style}>Reading your results</span>
+          %{secondary_button ~theme ~on_click:(fun _ -> close) "Close"}
+        </div>
+        <div %{intro_style}>#{glossary_intro}</div>
+        *{List.map glossary_entries ~f:entry}
+      </div>
+    </div>
+  |}
+;;
 
 let dashboard_view ~theme ~is_dark ~runs ~new_sim ~toggle_theme =
   let section_label = Styles.s (Styles.label theme ^ "margin-bottom:8px;") in
@@ -1746,7 +2172,9 @@ let choose_day_view
         let bg =
           if selected then theme.Styles.blue else theme.Styles.chip_bg
         in
-        let color = if selected then "#ffffff" else theme.Styles.text in
+        let color =
+          if selected then theme.Styles.page_bg else theme.Styles.text
+        in
         let border =
           if selected then theme.Styles.blue else theme.Styles.chip_border
         in
@@ -2023,35 +2451,37 @@ let sample_alphas symbol =
          sprintf "%s,%s,%s,%d,%s" a s side q d))
     ^ "\n"
   in
-  [ ( "Demo mix"
-    , "Two buys and a sell across the day — the standard tour."
+  [ ( "A typical day"
+    , "Buy in the morning, sell around noon, buy again after lunch. Start \
+       here."
     , csv
         [ "10:00:00", "BUY", 5000, "11:00:00"
         ; "11:30:00", "SELL", 3000, "13:00:00"
         ; "14:00:00", "BUY", 2000, "14:30:00"
         ] )
-  ; ( "Morning accumulation"
-    , "Build one long position through the open's deep liquidity."
+  ; ( "A morning of buying"
+    , "8,000 shares to buy as three overlapping orders, all done by 12:30."
     , csv
         [ "09:45:00", "BUY", 3000, "11:00:00"
         ; "10:15:00", "BUY", 3000, "12:00:00"
         ; "11:00:00", "BUY", 2000, "12:30:00"
         ] )
-  ; ( "Round trip"
-    , "Buy a block, hold through lunch, unwind before the close."
+  ; ( "Buy now, sell later"
+    , "Buy 6,000 shares in the morning, then sell them all back in the \
+       afternoon."
     , csv
         [ "10:00:00", "BUY", 6000, "11:30:00"
         ; "13:00:00", "SELL", 6000, "15:30:00"
         ] )
-  ; ( "Afternoon liquidation"
-    , "Sell down an inherited position against the closing ramp."
+  ; ( "Selling into the close"
+    , "8,000 shares to sell as three orders, the last ending at 15:55."
     , csv
         [ "13:00:00", "SELL", 2500, "14:30:00"
         ; "13:45:00", "SELL", 2500, "15:00:00"
         ; "14:30:00", "SELL", 3000, "15:55:00"
         ] )
-  ; ( "Busy tape"
-    , "Six orders both ways across the day — a full blotter."
+  ; ( "Busy day, six orders"
+    , "Six orders alternating buy, sell, buy, sell — 09:40 through 15:45."
     , csv
         [ "09:40:00", "BUY", 1500, "10:30:00"
         ; "10:20:00", "SELL", 1000, "11:15:00"
@@ -2060,8 +2490,8 @@ let sample_alphas symbol =
         ; "13:30:00", "BUY", 1000, "14:30:00"
         ; "14:45:00", "SELL", 2000, "15:45:00"
         ] )
-  ; ( "Crossfire (overlapping)"
-    , "Three windows fighting over the same hour — see them overlap."
+  ; ( "Three at once"
+    , "Two buys and a sell all live together from 11:15 to 12:00."
     , csv
         [ "10:30:00", "BUY", 3000, "12:30:00"
         ; "11:00:00", "SELL", 2000, "12:00:00"
@@ -2501,6 +2931,7 @@ let results_view
   (replay : Replay.t)
   ~theme
   ~is_dark
+  ~open_help
   ~runs
   ~to_sim
   ~new_sim
@@ -2595,9 +3026,38 @@ let results_view
       Styles.s
         "display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;"
     in
+    let help_button =
+      let style =
+        Styles.s
+          ("display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;background:"
+           ^ theme.Styles.chip_bg
+           ^ ";color:"
+           ^ theme.Styles.blue
+           ^ ";border:1px solid "
+           ^ theme.Styles.chip_border
+           ^ ";cursor:pointer;font-size:14px;font-weight:800;flex-shrink:0;"
+          )
+      in
+      {%html|
+        <button
+          class="btn"
+          %{style}
+          title="What do these numbers mean?"
+          on_click=%{fun _ -> open_help}>
+          ?
+        </button>
+      |}
+    in
+    let verdict_row =
+      Styles.s
+        "display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:12px;"
+    in
     {%html|
       <div %{Styles.card theme "padding:20px;"}>
-        <div %{verdict_style}>#{verdict}</div>
+        <div %{verdict_row}>
+          <span %{verdict_style}>#{verdict}</span>
+          %{help_button}
+        </div>
         <div %{tiles}>
           %{tile ~label:"Your alpha predicted"
               ~sub:"profit if every order filled instantly and free"
@@ -3103,7 +3563,7 @@ let results_view
        auto;padding:28px 20px;"
   in
   {%html|
-    <div %{page}>
+    <div class="page fade" %{page}>
       %{wizard_header ~step:4 ~theme ~is_dark ~toggle_theme ~title
           ~subtitle:"shortfall split into the metric tree: timing + spread \
                      + impact, plus opportunity on unfilled shares"
@@ -3230,7 +3690,8 @@ let run_record (replay : Replay.t) =
 ;;
 
 let app (local_ graph) : Vdom.Node.t Bonsai.t =
-  let screen, set_screen = Bonsai.state Screen.Dashboard graph in
+  let screen, set_screen = Bonsai.state Screen.Landing graph in
+  let show_help, set_show_help = Bonsai.state false graph in
   let selection, set_selection =
     Bonsai.state (None : (Symbol.t * Date.t) option) graph
   in
@@ -3386,6 +3847,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_speed
   and show_fills
   and set_show_fills
+  and show_help
+  and set_show_help
   and hover
   and set_hover
   and zoom
@@ -3440,6 +3903,13 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   in
   let body =
     match (screen : Screen.t), replay, selection with
+    | Landing, _, _ ->
+      landing_view
+        ~theme
+        ~is_dark
+        ~toggle_theme
+        ~enter:(goto Screen.Choose_day)
+        ~to_dashboard:(goto Screen.Dashboard)
     | Dashboard, _, _ -> dashboard ()
     | Choose_day, _, _ -> choose_day ()
     | (Alpha | Setup | Sim | Results), _, None -> choose_day ()
@@ -3496,6 +3966,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         r
         ~theme
         ~is_dark
+        ~open_help:(set_show_help true)
         ~runs
         ~to_sim:(goto Screen.Sim)
         ~new_sim:(goto Screen.Choose_day)
@@ -3519,7 +3990,22 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
        ^ (if is_dark then "dark" else "light")
        ^ ";font-family:system-ui,-apple-system,'Segoe UI',sans-serif;")
   in
-  {%html|<div %{shell}>%{body}</div>|}
+  (* Keyed on the screen so vdom *rebuilds* this subtree on navigation
+     instead of patching it in place — a patched element keeps running its
+     old animation state, which is why only the first screen visibly
+     animated. [display:contents] keeps the wrapper out of layout. *)
+  let overlay =
+    if show_help
+    then [ help_modal ~theme ~close:(set_show_help false) ]
+    else []
+  in
+  let keyed_body =
+    Vdom.Node.div
+      ~key:(Sexp.to_string [%sexp (screen : Screen.t)])
+      ~attrs:[ Styles.s "display:contents;" ]
+      [ body ]
+  in
+  {%html|<div class="shell-decor" %{shell}>%{keyed_body} *{overlay}</div>|}
 ;;
 
 let () =

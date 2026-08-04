@@ -27,46 +27,50 @@ type t =
   ; shadow : string
   }
 
+(* A cool "instrument panel" light theme: blue-grey slate page, pure white
+   cards so panels read as lifted surfaces. Order colors are spaced >= 18
+   CIEDE2000 from each other and from every reserved hue (blue price line,
+   orange vwap, green/red good-bad), so no two order marks are confusable. *)
 let paper =
-  { page_bg = "#f6ede2"
-  ; card_bg = "#fffaf3"
-  ; border = "1px solid #e8dbc9"
-  ; hairline = "#f0e6d8"
-  ; chip_bg = "#efe4d3"
-  ; text = "#33302e"
-  ; secondary = "#6b645d"
-  ; faint = "#a49c92"
-  ; blue = "#0f5499"
-  ; blue_soft = "#e0eaf3"
-  ; green = "#15803d"
-  ; red = "#b91c1c"
-  ; orange = "#d97706"
-  ; brown = "#8e3b2a"
-  ; order_colors = [| "#6d28d9"; "#0e7490"; "#be185d"; "#0f766e" |]
-  ; chip_border = "#e2d4bf"
+  { page_bg = "#e8ecf3"
+  ; card_bg = "#ffffff"
+  ; border = "1px solid #d2dae7"
+  ; hairline = "#e6ebf3"
+  ; chip_bg = "#edf1f8"
+  ; text = "#0f141c"
+  ; secondary = "#4c5a6d"
+  ; faint = "#5f6c80"
+  ; blue = "#1857c9"
+  ; blue_soft = "#cfe0ff"
+  ; green = "#0b7a55"
+  ; red = "#c81e3a"
+  ; orange = "#c2700a"
+  ; brown = "#6e3a24"
+  ; order_colors = [| "#7a24bd"; "#0f7d95"; "#c02a86"; "#6b6a12" |]
+  ; chip_border = "#dce3ee"
   ; shadow =
-      "box-shadow:0 1px 2px rgba(67,53,34,0.05),0 2px 6px \
-       rgba(67,53,34,0.04),0 8px 24px rgba(67,53,34,0.05);"
+      "box-shadow:0 1px 2px rgba(20,32,54,0.05),0 2px 6px \
+       rgba(20,32,54,0.04),0 8px 24px rgba(20,32,54,0.06);"
   }
 ;;
 
 let dark =
-  { page_bg = "#0a0e1a"
-  ; card_bg = "#111726"
-  ; border = "1px solid #212b40"
-  ; hairline = "#1a2234"
-  ; chip_bg = "#1c2536"
-  ; text = "#e6eaf2"
-  ; secondary = "#9aa5bb"
-  ; faint = "#64708a"
-  ; blue = "#3b82f6"
-  ; blue_soft = "#16243d"
-  ; green = "#22c55e"
-  ; red = "#ef4444"
-  ; orange = "#f59e0b"
-  ; brown = "#c4664a"
-  ; order_colors = [| "#a78bfa"; "#22d3ee"; "#f472b6"; "#2dd4bf" |]
-  ; chip_border = "#26314a"
+  { page_bg = "#080b11"
+  ; card_bg = "#121822"
+  ; border = "1px solid #26303f"
+  ; hairline = "#1c2431"
+  ; chip_bg = "#1b2230"
+  ; text = "#e9eef7"
+  ; secondary = "#a0adc0"
+  ; faint = "#8492a8"
+  ; blue = "#2f7dff"
+  ; blue_soft = "#132444"
+  ; green = "#2fd08a"
+  ; red = "#ff5c6c"
+  ; orange = "#f2a63b"
+  ; brown = "#cf8a6a"
+  ; order_colors = [| "#b98cff"; "#22d3ee"; "#e14aad"; "#b9d94e" |]
+  ; chip_border = "#2b3546"
   ; shadow =
       "box-shadow:0 1px 3px rgba(0,0,0,0.35),0 3px 8px rgba(0,0,0,0.25),0 \
        10px 28px rgba(0,0,0,0.2);"
