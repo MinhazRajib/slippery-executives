@@ -65,13 +65,27 @@ let record_print t ~price_cents ~size =
 let requote t ~(bar : Market_bar.t) ~fundamental_cents =
   let half = base_half_spread_cents bar in
   let volume = Size.to_int bar.volume in
+  (* A level whose price would fall to zero or below (a penny stock wider
+     than its own price) is dropped, not clamped: clamping would pile phantom
+     depth onto 1c and could distort the touch. The rng draw still happens
+     for every rung so ladders at ordinary prices are unchanged. *)
   let side rng direction =
-    List.fold_map maker_ladder ~init:rng ~f:(fun rng (steps, fraction) ->
-      let rng, size =
-        Rng.jitter rng ~around:(Float.of_int volume *. fraction) ~spread:0.25
-      in
-      let price_cents = fundamental_cents + (direction * half * steps) in
-      rng, (Price.of_int_cents (Int.max 1 price_cents), Float.to_int size))
+    let rng, levels =
+      List.fold_map maker_ladder ~init:rng ~f:(fun rng (steps, fraction) ->
+        let rng, size =
+          Rng.jitter
+            rng
+            ~around:(Float.of_int volume *. fraction)
+            ~spread:0.25
+        in
+        let price_cents = fundamental_cents + (direction * half * steps) in
+        rng, (price_cents, Float.to_int size))
+    in
+    ( rng
+    , List.filter_map levels ~f:(fun (price_cents, size) ->
+        if price_cents >= 1
+        then Some (Price.of_int_cents price_cents, size)
+        else None) )
   in
   let rng, asks = side t.rng 1 in
   let rng, bids = side rng (-1) in

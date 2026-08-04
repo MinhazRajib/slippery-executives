@@ -214,3 +214,30 @@ let%expect_test "the driver runs a whole session in the synthetic market \
     every fill within the ladder: true
     |}]
 ;;
+
+let%expect_test "a penny-priced bar drops ladder rungs below one cent \
+                 instead of piling them onto it"
+  =
+  (* Open 3c with a 1c base half-spread: the bid ladder computes 2c, 1c, -1c;
+     the -1c rung must vanish, not clamp onto the 1c level as phantom depth.
+     Bids stay strictly below asks. *)
+  let market, (_ : Fill.t list) =
+    Synthetic_market.on_bar_advance
+      (Synthetic_market.create { seed = 1 })
+      ~bar:(bar ~minute:0 ~open_:3 ~high:9 ~low:2 ~close:8 ~volume:50_000)
+      ~resting_orders:[]
+  in
+  let book = Synthetic_market.For_testing.book market in
+  let best side = Book.best book ~side in
+  printf
+    "bid < ask: %b\n"
+    (match best Side.Buy, best Side.Sell with
+     | Some bid, Some ask -> Price.( < ) bid ask
+     | (Some (_ : Price.t) | None), (Some (_ : Price.t) | None) -> false);
+  print_s [%sexp (book : Book.t)];
+  [%expect
+    {|
+    bid < ask: true
+    ((bids ((2 1217) (1 1968))) (asks ((4 1082) (5 2143) (7 2983))))
+    |}]
+;;
