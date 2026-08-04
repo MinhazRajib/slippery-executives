@@ -406,29 +406,37 @@ Known debt:
 
 ## Roadmap (near-term, in order)
 
-Items 1-5 of the original roadmap (execution design, analytics,
-Engine A, the driver, TWAP + Immediate end to end) are DONE — the MVP
-milestone shipped, and a first cut of the client UI (originally item
-8) landed early. What remains, in order:
+Everything through the original items 1-7 is DONE (2026-08-04): the
+MVP, all four algorithms (TWAP, VWAP with a leave-one-out forecast
+profile, POV, and implementation shortfall — an Almgren-Chriss
+front-loaded schedule behind a single dimensionless `urgency` knob),
+the TCA decomposition (`friction = timing + spread + impact`, exact in
+integer cents, enforced by hand-computed expect tests), and the
+six-screen wizard client (dashboard with localStorage run history,
+day picker over the whole bundled catalog, alpha paste-and-preview,
+setup/confirm, the replay screen with a hover crosshair, and a results
+screen with the cost-breakdown and P&L tables plus CSV export of
+per-order results and raw fills). CI builds and tests the engine + CLI
+on the stock public toolchain; the UI builds locally on the
+preview/OxCaml toolchain only.
 
-1. **TCA decomposition** (friend/analytics track): split shortfall
-   into spread + impact + timing/drift + opportunity inside
-   `Transaction_cost` — the engine's `half_spread` and impact
-   coefficient make each term exactly computable (needs `Trading_day`
-   and `Fill_model.Config` as inputs). Encode "components sum to total
-   shortfall" as a hand-computed expect test.
-2. **Remaining algorithms** (market/execution track): VWAP (merged
-   with ui7) and POV (2026-08-03, see current state) are DONE and
-   selectable in both the CLI and the UI setup screen. Implementation
-   shortfall remains (needs an urgency model — hardest, last). POV's
-   rolling volume-window smoothing knob is still open.
-3. **Results screen** in the UI: per-order cost waterfall from the
-   decomposition, benchmark table, same-day algorithm comparison.
-4. Run persistence (config + results as sexp files) and the local
-   same-strategy leaderboard; "retest with a different algo" flows
-   from stored configs.
-5. Server split (Async RPC at the one client<->server seam): real
-   symbol/date selection and alpha CSV upload replace embedded data;
-   the multiplayer fixed-alpha leaderboard arrives here.
-6. Engine B, the synthetic exchange reusing jsip's book/matching
+What remains, in order:
+
+1. **Algorithm parameter forms**: urgency, POV rate, and the fill
+   model's knobs are hardcoded defaults — surface them on the setup
+   screen (the friend's app/ui/client has a reference
+   implementation with text fields).
+2. **Run persistence beyond localStorage** (config + results as sexp
+   files) and the local same-strategy leaderboard; "retest with a
+   different algo" flows from stored configs.
+3. **Server split** (Async RPC at the one client<->server seam): real
+   data hosting replaces the embedded catalog, alpha uploads stay
+   client-side, the server re-runs submitted configs (determinism as
+   anti-cheat), and the multiplayer fixed-alpha leaderboard arrives.
+4. **Engine B**, the synthetic exchange reusing jsip's book/matching
    engine with the historical path as the fundamental.
+
+Smaller open items: POV's rolling volume-window smoothing knob;
+prior-days-only VWAP forecasts once users can pick dates freely;
+js_of_ocaml --release to shrink the ~70MB dev bundle; retiring or
+archiving app/ui/client now that its screens are integrated.
