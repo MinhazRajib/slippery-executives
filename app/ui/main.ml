@@ -4,6 +4,7 @@ open Bonsai.Let_syntax
 open! Execlab_types
 open! Execlab_market
 open! Execlab_analytics
+open Execlab_protocol
 
 (* Wizard flow (adapted from app/ui/client's seven screens): Dashboard ->
    Choose_day -> Alpha -> Setup (algorithm + confirm) -> Sim -> Results. *)
@@ -2154,6 +2155,8 @@ let setup_view
   ~alpha_text
   ~algo
   ~set_algo
+  ~param_text
+  ~set_param_text
   ~start
   ~run_error
   ~toggle_theme
@@ -2189,6 +2192,113 @@ let setup_view
       (Symbol.to_string symbol)
       (Date.to_string date)
   in
+  let param_field ~label:text ~value ~set =
+    let input_style =
+      Styles.s
+        ("width:110px;background:"
+         ^ theme.Styles.page_bg
+         ^ ";color:"
+         ^ theme.Styles.text
+         ^ ";border:1px solid "
+         ^ theme.Styles.chip_border
+         ^ ";border-radius:4px;padding:5px 8px;font-size:12.5px;"
+         ^ Styles.mono)
+    in
+    let label_style =
+      Styles.s ("color:" ^ theme.Styles.secondary ^ ";font-size:12px;")
+    in
+    {%html|
+      <label %{Styles.s "display:flex;flex-direction:column;gap:4px;"}>
+        <span %{label_style}>#{text}</span>
+        <input
+          type="text"
+          %{Vdom.Attr.string_property "value" value}
+          %{input_style}
+          on_input=%{fun (_ : _) v -> set v} />
+      </label>
+    |}
+  in
+  let params_card =
+    let update f value = set_param_text (f param_text value) in
+    let fill_fields =
+      [ param_field
+          ~label:"half spread $"
+          ~value:param_text.Replay.Param_text.half_spread
+          ~set:
+            (update (fun p v -> { p with Replay.Param_text.half_spread = v }))
+      ; param_field
+          ~label:"participation cap"
+          ~value:param_text.Replay.Param_text.participation
+          ~set:
+            (update (fun p v ->
+               { p with Replay.Param_text.participation = v }))
+      ; param_field
+          ~label:"impact coeff $"
+          ~value:param_text.Replay.Param_text.impact
+          ~set:(update (fun p v -> { p with Replay.Param_text.impact = v }))
+      ]
+    in
+    let algo_fields =
+      if String.equal algo "pov"
+      then
+        [ param_field
+            ~label:"participation rate"
+            ~value:param_text.Replay.Param_text.pov_rate
+            ~set:
+              (update (fun p v -> { p with Replay.Param_text.pov_rate = v }))
+        ]
+      else if String.equal algo "is"
+      then
+        [ param_field
+            ~label:"urgency (0 = TWAP)"
+            ~value:param_text.Replay.Param_text.urgency
+            ~set:
+              (update (fun p v -> { p with Replay.Param_text.urgency = v }))
+        ]
+      else []
+    in
+    let engine_pills =
+      let pill value label =
+        algo_pill
+          ~theme
+          ~selected:(String.equal param_text.Replay.Param_text.engine value)
+          ~on_click:(fun _ ->
+            update (fun p v -> { p with Replay.Param_text.engine = v }) value)
+          label
+      in
+      [ {%html|
+          <div %{Styles.s "display:flex;gap:8px;align-items:flex-end;"}>
+            %{pill "bar" "Bar model"}
+            %{pill "synthetic" "Synthetic exchange"}
+          </div>
+        |}
+      ]
+      @
+      if String.equal param_text.Replay.Param_text.engine "synthetic"
+      then
+        [ param_field
+            ~label:"seed"
+            ~value:param_text.Replay.Param_text.seed
+            ~set:(update (fun p v -> { p with Replay.Param_text.seed = v }))
+        ]
+      else []
+    in
+    {%html|
+      <div %{Styles.card theme "padding:20px;"}>
+        <div %{section_label}>Parameters</div>
+        <div %{Styles.s "display:flex;gap:14px;flex-wrap:wrap;"}>
+          *{fill_fields}
+          *{algo_fields}
+        </div>
+        <div %{Styles.s (Styles.label theme ^ "margin:14px 0 8px 0;")}>
+          Fill engine
+        </div>
+        <div %{Styles.s "display:flex;gap:14px;flex-wrap:wrap;"}>
+          *{engine_pills}
+        </div>
+      </div>
+    |}
+  in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
       %{wizard_header ~step:2 ~theme ~is_dark ~toggle_theme
@@ -2215,6 +2325,7 @@ let setup_view
           *{instructions}
         </div>
       </div>
+      %{params_card}
       *{error_card}
       %{nav_footer ~theme
           ~back:("Alpha", back)
@@ -2238,6 +2349,30 @@ let cost_cell ~theme cents =
     Styles.s ("color:" ^ color ^ ";font-size:13px;" ^ Styles.mono)
   in
   {%html|<span %{style}>#{dollars_signed cents}</span>|}
+;;
+
+(* Board totals arrive as Int63 (32-bit browser ints would overflow on large
+   positions), so they format through floats. *)
+let pnl_cell_int63 ~theme cents =
+  let dollars = Run_summary.dollars cents in
+  let color =
+    if Float.( > ) dollars 0.
+    then theme.Styles.green
+    else if Float.( < ) dollars 0.
+    then theme.Styles.red
+    else theme.Styles.faint
+  in
+  let style =
+    Styles.s
+      ("color:" ^ color ^ ";font-size:13px;font-weight:600;" ^ Styles.mono)
+  in
+  let text =
+    sprintf
+      "%s$%s"
+      (if Float.( < ) dollars 0. then "-" else "+")
+      (Float.to_string_hum ~delimiter:',' ~decimals:2 (Float.abs dollars))
+  in
+  {%html|<span %{style}>#{text}</span>|}
 ;;
 
 (* P&L convention: positive = money made, so green. *)
@@ -2266,6 +2401,12 @@ let results_view
   ~retest
   ~to_dashboard
   ~toggle_theme
+  ~player
+  ~set_player
+  ~board
+  ~submit_status
+  ~submit
+  ~refresh_board
   =
   let rows = replay.results.rows in
   let sum f = List.sum (module Int) rows ~f in
@@ -2661,6 +2802,169 @@ let results_view
     Styles.s
       ("color:" ^ theme.Styles.text ^ ";font-size:14px;font-weight:600;")
   in
+  let leaderboard_card =
+    let title_style =
+      Styles.s
+        ("color:" ^ theme.Styles.text ^ ";font-size:14px;font-weight:600;")
+    in
+    let dim =
+      Styles.s ("color:" ^ theme.Styles.secondary ^ ";font-size:12.5px;")
+    in
+    let faint_style =
+      Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:12.5px;")
+    in
+    let name_input =
+      let input_style =
+        Styles.s
+          ("width:140px;background:"
+           ^ theme.Styles.page_bg
+           ^ ";color:"
+           ^ theme.Styles.text
+           ^ ";border:1px solid "
+           ^ theme.Styles.chip_border
+           ^ ";border-radius:4px;padding:6px 8px;font-size:12.5px;"
+           ^ Styles.mono)
+      in
+      {%html|
+        <input
+          type="text"
+          placeholder="your name"
+          %{Vdom.Attr.string_property "value" player}
+          %{input_style}
+          on_input=%{fun (_ : _) name -> set_player name} />
+      |}
+    in
+    let submit_button =
+      let style =
+        Styles.s
+          ("background:"
+           ^ theme.Styles.blue
+           ^ ";color:#ffffff;border:none;border-radius:5px;padding:7px \
+              14px;cursor:pointer;font-size:12.5px;font-weight:700;")
+      in
+      {%html|
+        <button class="btn" %{style} on_click=%{fun _ -> submit}>
+          Submit to leaderboard
+        </button>
+      |}
+    in
+    let refresh_button =
+      let style =
+        Styles.s
+          ("background:"
+           ^ theme.Styles.chip_bg
+           ^ ";color:"
+           ^ theme.Styles.secondary
+           ^ ";border:1px solid "
+           ^ theme.Styles.chip_border
+           ^ ";border-radius:5px;padding:7px \
+              12px;cursor:pointer;font-size:12.5px;font-weight:600;")
+      in
+      {%html|
+        <button class="btn" %{style} on_click=%{fun _ -> refresh_board}>
+          Refresh
+        </button>
+      |}
+    in
+    let status =
+      match submit_status with
+      | None -> []
+      | Some text -> [ {%html|<span %{faint_style}>#{text}</span>|} ]
+    in
+    let columns = "44px 160px 90px 130px 130px 80px 1fr" in
+    let head_row =
+      Styles.s
+        ("display:grid;grid-template-columns:"
+         ^ columns
+         ^ ";column-gap:10px;white-space:nowrap;padding:10px 16px 6px \
+            16px;border-bottom:1px solid "
+         ^ theme.Styles.hairline
+         ^ ";"
+         ^ Styles.table_label theme)
+    in
+    let board_rows =
+      match board with
+      | None ->
+        [ {%html|
+            <div %{Styles.s "padding:10px 16px;"}>
+              <span %{faint_style}>
+                Submit this run, or refresh to see standing entries.
+              </span>
+            </div>
+          |}
+        ]
+      | Some [] ->
+        [ {%html|
+            <div %{Styles.s "padding:10px 16px;"}>
+              <span %{faint_style}>
+                No submissions for this day and alpha yet — be first.
+              </span>
+            </div>
+          |}
+        ]
+      | Some rows ->
+        List.mapi rows ~f:(fun index (row : Leaderboard_row.t) ->
+          let style =
+            Styles.s
+              ("display:grid;grid-template-columns:"
+               ^ columns
+               ^ ";column-gap:10px;white-space:nowrap;padding:7px \
+                  16px;font-size:12.5px;color:"
+               ^ theme.Styles.text
+               ^ ";border-bottom:1px solid "
+               ^ theme.Styles.hairline
+               ^ ";"
+               ^ Styles.mono)
+          in
+          let capture =
+            match row.summary.alpha_capture with
+            | None -> "n/a"
+            | Some capture -> sprintf "%.1f%%" (capture *. 100.)
+          in
+          {%html|
+            <div %{style}>
+              <span %{dim}>#{Int.to_string (index + 1)}</span>
+              <span>#{row.player}</span>
+              <span %{dim}>#{String.uppercase row.algo_name}</span>
+              <span>%{pnl_cell_int63 ~theme row.summary.value_add_cents}</span>
+              <span>%{pnl_cell_int63 ~theme row.summary.net_cents}</span>
+              <span %{dim}>#{capture}</span>
+              <span %{dim}>#{String.prefix row.submitted_at 16}</span>
+            </div>
+          |})
+    in
+    {%html|
+      <div %{Styles.card theme "padding-bottom:4px;"}>
+        <div
+          %{Styles.s
+              "display:flex;gap:12px;align-items:center;padding:14px 16px 8px 16px;"}>
+          <span %{title_style}>Leaderboard</span>
+          <span %{faint_style}>
+            · this day · this alpha · this engine · scored by the server
+            under house physics
+          </span>
+          <span
+            %{Styles.s
+                "margin-left:auto;display:flex;gap:8px;align-items:center;"}>
+            *{status}
+            %{name_input}
+            %{submit_button}
+            %{refresh_button}
+          </span>
+        </div>
+        <div %{head_row}>
+          <span>rank</span>
+          <span>player</span>
+          <span>algo</span>
+          <span>vs immediate</span>
+          <span>net P&L</span>
+          <span>capture</span>
+          <span>submitted</span>
+        </div>
+        *{board_rows}
+      </div>
+    |}
+  in
   let buttons = Styles.s "display:flex;gap:10px;align-items:center;" in
   let export_name suffix =
     sprintf
@@ -2735,6 +3039,7 @@ let results_view
         %{results_totals}
       </div>
       %{leaderboard}
+      %{leaderboard_card}
       <div %{buttons}>
         %{primary_button ~theme ~on_click:(fun _ -> new_sim)
             "New simulation"}
@@ -2751,6 +3056,38 @@ let results_view
       </div>
     </div>
   |}
+;;
+
+(* ---------- the leaderboard seam ---------- *)
+
+let submit_run_effect = Effect.of_deferred_fun Net.submit_run
+let fetch_board_effect = Effect.of_deferred_fun Net.leaderboard
+
+let persist_player =
+  Effect.of_sync_fun (fun name -> Storage.set Storage.player_key name)
+;;
+
+let config_of (replay : Replay.t) ~player =
+  let fill = replay.params.Execlab_session.Params.fill_config in
+  { Run_config.player
+  ; symbol = replay.symbol
+  ; date = replay.date
+  ; alpha_text = replay.alpha_text
+  ; algo_name = replay.algo_name
+  ; half_spread_cents = Price.to_int_cents fill.half_spread
+  ; max_participation = fill.max_participation
+  ; impact_coefficient_cents = Price.to_int_cents fill.impact_coefficient
+  ; pov_rate = replay.params.pov_rate
+  ; is_urgency = replay.params.is_urgency
+  ; engine_name =
+      (match replay.params.engine with
+       | Execlab_session.Engine_choice.Bar_model -> "bar"
+       | Synthetic { seed = (_ : int) } -> "synthetic")
+  ; engine_seed =
+      (match replay.params.engine with
+       | Execlab_session.Engine_choice.Bar_model -> 0
+       | Synthetic { seed } -> seed)
+  }
 ;;
 
 (* ---------- the app ---------- *)
@@ -2799,11 +3136,25 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     Bonsai.state (None : Error.t option) graph
   in
   let runs, set_runs = Bonsai.state (History.load ()) graph in
+  let player, set_player =
+    Bonsai.state
+      (Option.value (Storage.get Storage.player_key) ~default:"")
+      graph
+  in
+  let board, set_board =
+    Bonsai.state (None : Leaderboard_row.t list option) graph
+  in
+  let submit_status, set_submit_status =
+    Bonsai.state (None : string option) graph
+  in
   let replay, set_replay = Bonsai.state (None : Replay.t option) graph in
   let minute, set_minute = Bonsai.state' 0 graph in
   let playing, set_playing = Bonsai.state true graph in
   let speed, set_speed = Bonsai.state 4 graph in
   let show_fills, set_show_fills = Bonsai.state false graph in
+  let param_text, set_param_text =
+    Bonsai.state Replay.Param_text.default graph
+  in
   let hover, set_hover = Bonsai.state (None : int option) graph in
   (* Chart zoom: [None] = full session, [Some span] = span minutes centered
      on the playhead. *)
@@ -2831,24 +3182,34 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     let%arr algo
     and selection
     and alpha_text
+    and param_text
     and runs
     and set_runs
     and set_run_error
     and set_replay
     and set_screen
     and set_minute
-    and set_playing in
-    match selection with
-    | None -> set_run_error (Some (Error.of_string "choose a day first"))
-    | Some (symbol, date) ->
+    and set_playing
+    and set_board
+    and set_submit_status in
+    match selection, Replay.parse_params param_text with
+    | None, _ -> set_run_error (Some (Error.of_string "choose a day first"))
+    | Some (_ : Symbol.t * Date.t), Error error -> set_run_error (Some error)
+    | Some (symbol, date), Ok params ->
       let%bind.Effect result =
         Effect.of_sync_fun
-          (fun () -> Replay.run ~symbol ~date ~alpha_text ~algo_name:algo)
+          (fun () ->
+            Replay.run ~symbol ~date ~alpha_text ~algo_name:algo ~params)
           ()
       in
       (match result with
        | Error error -> set_run_error (Some error)
        | Ok r ->
+         (* A board belongs to one (day, alpha, engine): carrying the
+            previous run's rows or its "submitted" banner onto a new run's
+            results would be a lie. *)
+         let%bind.Effect () = set_board None in
+         let%bind.Effect () = set_submit_status None in
          let%bind.Effect () = set_run_error None in
          let%bind.Effect () = set_replay (Some r) in
          let%bind.Effect () = set_minute (fun (_ : int) -> 0) in
@@ -2861,6 +3222,45 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     let%bind.Effect () = set_minute (fun (_ : int) -> 0) in
     set_playing true
   in
+  let submit =
+    let%arr replay and player and set_board and set_submit_status in
+    match replay with
+    | None -> Effect.Ignore
+    | Some r ->
+      let%bind.Effect () = set_submit_status (Some "submitting…") in
+      let%bind.Effect response = submit_run_effect (config_of r ~player) in
+      (match response with
+       | Ok resp ->
+         let%bind.Effect () =
+           set_board (Some resp.Submit_run.Response.leaderboard)
+         in
+         set_submit_status (Some "verified by the server ✓")
+       | Error error ->
+         set_submit_status
+           (Some ("submit failed: " ^ Error.to_string_hum error)))
+  in
+  let refresh_board =
+    let%arr replay and set_board and set_submit_status in
+    match replay with
+    | None -> Effect.Ignore
+    | Some r ->
+      let%bind.Effect response =
+        fetch_board_effect
+          { Leaderboard.Request.symbol = r.symbol
+          ; date = r.date
+          ; alpha_hash = alpha_hash r.alpha_text
+          ; engine_name =
+              (match r.params.Execlab_session.Params.engine with
+               | Execlab_session.Engine_choice.Bar_model -> "bar"
+               | Synthetic { seed = (_ : int) } -> "synthetic")
+          }
+      in
+      (match response with
+       | Ok resp -> set_board (Some resp.Leaderboard.Response.rows)
+       | Error error ->
+         set_submit_status
+           (Some ("refresh failed: " ^ Error.to_string_hum error)))
+  in
   let%arr screen
   and selection
   and set_selection
@@ -2868,6 +3268,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_alpha_text
   and algo
   and set_algo
+  and param_text
+  and set_param_text
   and run_error
   and runs
   and replay
@@ -2889,7 +3291,13 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_minute
   and set_screen
   and start
-  and restart in
+  and restart
+  and player
+  and set_player
+  and board
+  and submit_status
+  and submit
+  and refresh_board in
   let theme = if is_dark then Styles.dark else Styles.paper in
   let toggle_theme =
     let next = if is_dark then Styles.paper else Styles.dark in
@@ -2950,6 +3358,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~alpha_text
         ~algo
         ~set_algo
+        ~param_text
+        ~set_param_text
         ~start
         ~run_error
         ~toggle_theme
@@ -2986,6 +3396,14 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~retest:(goto Screen.Setup)
         ~to_dashboard:(goto Screen.Dashboard)
         ~toggle_theme
+        ~player
+        ~set_player:(fun name ->
+          let%bind.Effect () = set_player name in
+          persist_player name)
+        ~board
+        ~submit_status
+        ~submit
+        ~refresh_board
   in
   let shell =
     Styles.s
@@ -2998,4 +3416,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   {%html|<div %{shell}>%{body}</div>|}
 ;;
 
-let () = Bonsai_web.Start.start app
+let () =
+  Async_js.init ();
+  Bonsai_web.Start.start app
+;;

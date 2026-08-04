@@ -155,3 +155,14 @@ let on_bar_advance t ~bar ~resting_orders =
     let t, new_fills = fill_resting t ~child ~bar in
     t, fills @ new_fills)
 ;;
+
+let engine config =
+  Engine_intf.Packed
+    ( (module struct
+        type nonrec t = t
+
+        let on_bar_advance = on_bar_advance
+        let on_child_order = on_child_order
+      end)
+    , create config )
+;;

@@ -406,49 +406,44 @@ Known debt:
 
 ## Roadmap (near-term, in order)
 
-Everything through the original items 1-7 is DONE (2026-08-04): the
-MVP, all four algorithms (TWAP, VWAP with a leave-one-out forecast
-profile, POV, and implementation shortfall — an Almgren-Chriss
-front-loaded schedule behind a single dimensionless `urgency` knob),
-the TCA decomposition (`friction = timing + spread + impact`, exact in
-integer cents, enforced by hand-computed expect tests), and the
-six-screen wizard client (dashboard with localStorage run history,
-day picker over the whole bundled catalog, alpha paste-and-preview,
-setup/confirm, the replay screen with a hover crosshair, and a results
-screen with the cost-breakdown and P&L tables plus CSV export of
-per-order results and raw fills). CI builds and tests the engine + CLI
-on the stock public toolchain; the UI builds locally on the
-preview/OxCaml toolchain only.
+Everything in the original plan through Engine B now EXISTS
+(2026-08-04): the four algorithms with parameter forms, the TCA metric
+tree, the six-screen wizard client, a thin blocking HTTP server
+(bin/server.exe: static client + two sexp endpoints over
+lib/protocol), run persistence as sexp files (one directory per
+(symbol, date, alpha-hash) — a leaderboard is a directory listing),
+server-verified leaderboards (the server re-runs submitted configs;
+determinism is the anti-cheat), a shared lib/session pipeline behind
+the CLI, the browser, and the server, and Engine B — lib/exchange's
+synthetic exchange behind the Engine_intf seam: maker ladders and a
+seeded noise tape calibrated per bar, cross-platform-deterministic via
+an Int32 LCG, selectable everywhere ("synthetic[:seed]" in the CLI,
+the Fill engine pills in the UI).
 
-What remains, in order:
+What remains:
 
-1. **Algorithm parameter forms**: urgency, POV rate, and the fill
-   model's knobs are hardcoded defaults — surface them on the setup
-   screen (the friend's app/ui/client has a reference
-   implementation with text fields).
-2. **Run persistence beyond localStorage** (config + results as sexp
-   files); "retest with a different algo" flows from stored configs.
-   The local same-day leaderboard shipped 2026-08-04 on the results
-   screen (best stored run per algorithm, rank badges, value-add
-   bars, a retest button) — fed by the localStorage scorecards until
-   real persistence lands. The results screen also gained a
-   plain-language verdict + big-tile summary the same day.
-3. **Multi-symbol alpha files.** `Alpha_instruction` carries a symbol
-   and the parser accepts mixed-symbol files, but `Driver.run` binds a
-   run to one `(symbol, Trading_day)` and the UI validates against the
-   chosen day. Multi-stock strategies need the driver to step several
-   Trading_days in lockstep (per-symbol fill models and day stats, one
-   clock), a portfolio spanning symbols, and a day picker that binds a
-   date rather than a (symbol, date) pair. Do after persistence; the
-   UI sample library should then grow multi-symbol presets.
-4. **Server split** (Async RPC at the one client<->server seam): real
-   data hosting replaces the embedded catalog, alpha uploads stay
-   client-side, the server re-runs submitted configs (determinism as
-   anti-cheat), and the multiplayer fixed-alpha leaderboard arrives.
-5. **Engine B**, the synthetic exchange reusing jsip's book/matching
-   engine with the historical path as the fundamental.
+1. **Serving story**: bin/server.exe replaces `python3 -m
+   http.server` — run it and the client, leaderboard included, is one
+   process. Local-only by design; hosting and auth stay out of scope.
+2. **Multi-symbol alpha files.** `Alpha_instruction` carries a symbol
+   and the parser accepts mixed-symbol files, but a run binds to one
+   `(symbol, Trading_day)` (the check now lives in
+   `Execlab_session.run`). Multi-stock strategies need the driver to
+   step several Trading_days in lockstep (per-symbol engines and day
+   stats, one clock), a portfolio spanning symbols, and a day picker
+   that binds a date rather than a (symbol, date) pair. The UI sample
+   library should then grow multi-symbol presets.
+3. **Engine B v2**: client limit orders resting in the book with real
+   queue position (v1 keeps Engine A's strict-through convention);
+   grading attribution tuned to exchange fills (a synthetic run
+   currently attributes zero spread and books the whole residual as
+   impact).
+4. **Cross-day experiments**: one alpha across every session, engine,
+   and algorithm — the league-table script.
 
 Smaller open items: POV's rolling volume-window smoothing knob;
-prior-days-only VWAP forecasts once users can pick dates freely;
-js_of_ocaml --release to shrink the ~70MB dev bundle; retiring or
-archiving app/ui/client now that its screens are integrated.
+prior-days-only VWAP forecasts once users pick dates freely;
+js_of_ocaml --release to shrink the ~70MB dev bundle; retiring
+app/ui/client now that its screens are integrated; the local
+localStorage scorecard list now coexists with the server leaderboard —
+they should merge into one view.

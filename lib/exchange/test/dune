@@ -1,0 +1,13 @@
+(library
+ (name execlab_exchange_test)
+ (libraries
+  execlab_exchange
+  execlab_types
+  execlab_market
+  execlab_execution
+  execlab_simulation
+  expect_test_helpers_core
+  core)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane)))
