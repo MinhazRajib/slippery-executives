@@ -12,11 +12,22 @@ module Screen = struct
   type t =
     | Landing (** the marketing front door; not part of the wizard *)
     | Dashboard
+    | My_runs (** the signed-in user's execution notebook *)
     | Choose_day
     | Alpha
     | Setup
     | Sim
     | Results
+  [@@deriving sexp, equal]
+end
+
+(* Which form the landing page is showing. [None] means the three-way choice;
+   signing in and creating an account share one form and differ only in which
+   endpoint they call. *)
+module Auth_mode = struct
+  type t =
+    | Sign_in
+    | Create_account
   [@@deriving sexp, equal]
 end
 
@@ -1638,7 +1649,156 @@ let landing_sections =
   ]
 ;;
 
-let landing_view ~theme ~is_dark ~toggle_theme ~enter ~to_dashboard =
+(* Shared field styling for the tiny auth form. *)
+let text_field ~theme ~kind ~value ~placeholder ~on_input =
+  let style =
+    Styles.s
+      ("background:"
+       ^ theme.Styles.page_bg
+       ^ ";color:"
+       ^ theme.Styles.text
+       ^ ";border:1px solid "
+       ^ theme.Styles.chip_border
+       ^ ";border-radius:8px;padding:11px 13px;font-size:14px;width:100%;")
+  in
+  {%html|
+    <input
+      type=%{kind}
+      %{style}
+      placeholder=%{placeholder}
+      %{Vdom.Attr.string_property "value" value}
+      on_input=%{fun (_ : _) text -> on_input text} />
+  |}
+;;
+
+let auth_panel
+  ~theme
+  ~auth_mode
+  ~set_auth_mode
+  ~username
+  ~set_username
+  ~passcode
+  ~set_passcode
+  ~status
+  ~submit_auth
+  ~enter_as_guest
+  =
+  let card = Styles.card theme "padding:22px;max-width:420px;width:100%;" in
+  let title_style =
+    Styles.s
+      ("color:" ^ theme.Styles.text ^ ";font-size:17px;font-weight:800;")
+  in
+  let note_style =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.faint
+       ^ ";font-size:12px;line-height:1.55;margin-top:2px;")
+  in
+  let status_node =
+    match status with
+    | None -> []
+    | Some text ->
+      let style =
+        Styles.s
+          ("color:" ^ theme.Styles.red ^ ";font-size:12.5px;line-height:1.5;")
+      in
+      [ {%html|<div %{style}>#{text}</div>|} ]
+  in
+  let stack = Styles.s "display:flex;flex-direction:column;gap:10px;" in
+  match (auth_mode : Auth_mode.t option) with
+  | None ->
+    {%html|
+      <div %{card}>
+        <div %{stack}>
+          <span %{title_style}>Start a session</span>
+          <span %{note_style}>
+            An account keeps a notebook of every run you execute and lets you
+            publish to a leaderboard. Guests can use the whole lab; only
+            publishing needs a name.
+          </span>
+          %{primary_button ~icon:(Icon.arrow_right ~size:15 ()) ~theme
+              ~on_click:(fun _ -> set_auth_mode (Some Auth_mode.Sign_in))
+              "Sign in"}
+          %{secondary_button ~theme
+              ~on_click:(fun _ ->
+                set_auth_mode (Some Auth_mode.Create_account))
+              "Create account"}
+          %{secondary_button ~theme ~on_click:(fun _ -> enter_as_guest)
+              "Continue as guest"}
+        </div>
+      </div>
+    |}
+  | Some mode ->
+    let heading =
+      match mode with
+      | Auth_mode.Sign_in -> "Sign in"
+      | Create_account -> "Create an account"
+    in
+    let switch_label =
+      match mode with
+      | Auth_mode.Sign_in -> "Create an account instead"
+      | Create_account -> "I already have an account"
+    in
+    let other =
+      match mode with
+      | Auth_mode.Sign_in -> Auth_mode.Create_account
+      | Create_account -> Sign_in
+    in
+    let link_style =
+      Styles.s
+        ("background:none;border:none;padding:4px 0;color:"
+         ^ theme.Styles.blue
+         ^ ";font-size:12.5px;font-weight:600;cursor:pointer;text-align:left;"
+        )
+    in
+    {%html|
+      <div %{card}>
+        <div %{stack}>
+          <span %{title_style}>#{heading}</span>
+          <span %{note_style}>
+            A username and a passcode, nothing else — no email, no recovery.
+          </span>
+          %{text_field ~theme ~kind:"text" ~value:username
+              ~placeholder:"username" ~on_input:set_username}
+          %{text_field ~theme ~kind:"password" ~value:passcode
+              ~placeholder:"passcode" ~on_input:set_passcode}
+          *{status_node}
+          %{primary_button ~icon:(Icon.arrow_right ~size:15 ()) ~theme
+              ~on_click:(fun _ -> submit_auth) heading}
+          <button
+            class="btn"
+            %{link_style}
+            on_click=%{fun _ -> set_auth_mode (Some other)}>
+            #{switch_label}
+          </button>
+          <button
+            class="btn"
+            %{link_style}
+            on_click=%{fun _ -> enter_as_guest}>
+            Continue as guest
+          </button>
+        </div>
+      </div>
+    |}
+;;
+
+let landing_view
+  ~theme
+  ~is_dark
+  ~toggle_theme
+  ~enter
+  ~to_dashboard
+  ~session
+  ~auth_mode
+  ~set_auth_mode
+  ~auth_username
+  ~set_auth_username
+  ~auth_passcode
+  ~set_auth_passcode
+  ~auth_status
+  ~submit_auth
+  ~sign_out
+  =
   let page =
     Styles.s
       "display:flex;flex-direction:column;gap:28px;max-width:1240px;margin:0 \
@@ -1771,11 +1931,68 @@ let landing_view ~theme ~is_dark ~toggle_theme ~enter ~to_dashboard =
        ^ theme.Styles.hairline
        ^ ";padding-top:22px;")
   in
+  (* Signed in, the hero is a way back into the lab; signed out, it is the
+     account choice. Either way the page below it is identical. *)
+  let identity =
+    match (session : Session.t option) with
+    | None -> []
+    | Some { Session.username; token = (_ : string) } ->
+      let chip =
+        Styles.s
+          ("display:inline-flex;align-items:center;gap:7px;background:"
+           ^ theme.Styles.blue_soft
+           ^ ";color:"
+           ^ theme.Styles.blue
+           ^ ";border-radius:999px;padding:5px \
+              12px;font-size:12.5px;font-weight:700;")
+      in
+      let link =
+        Styles.s
+          ("background:none;border:none;color:"
+           ^ theme.Styles.secondary
+           ^ ";font-size:12.5px;font-weight:600;cursor:pointer;padding:4px \
+              6px;")
+      in
+      [ {%html|<span %{chip}>#{username}</span>|}
+      ; {%html|
+          <button class="btn" %{link} on_click=%{fun _ -> sign_out}>
+            Sign out
+          </button>
+        |}
+      ]
+  in
+  let entry =
+    match (session : Session.t option) with
+    | Some (_ : Session.t) ->
+      [ primary_button
+          ~icon:(Icon.arrow_right ~size:15 ())
+          ~theme
+          ~on_click:(fun _ -> enter)
+          "Run a simulation"
+      ; secondary_button ~theme ~on_click:(fun _ -> to_dashboard) "My runs"
+      ]
+    | None ->
+      [ auth_panel
+          ~theme
+          ~auth_mode
+          ~set_auth_mode
+          ~username:auth_username
+          ~set_username:set_auth_username
+          ~passcode:auth_passcode
+          ~set_passcode:set_auth_passcode
+          ~status:auth_status
+          ~submit_auth
+          ~enter_as_guest:enter
+      ]
+  in
   {%html|
     <div class="page fade" %{page}>
       <div %{brand_row}>
         <span %{wordmark}>ExecLabs</span>
-        %{theme_button ~theme ~is_dark ~toggle_theme}
+        <span %{Styles.s "display:flex;gap:10px;align-items:center;"}>
+          *{identity}
+          %{theme_button ~theme ~is_dark ~toggle_theme}
+        </span>
       </div>
       <div %{hero}>
         <h1 %{headline}>Backtest your execution, not just your alpha.</h1>
@@ -1786,12 +2003,7 @@ let landing_view ~theme ~is_dark ~toggle_theme ~enter ~to_dashboard =
           reports <span %{accent}>how much of the paper profit survived the
           cost of trading it</span>.
         </div>
-        <div %{cta_row}>
-          %{primary_button ~icon:(Icon.arrow_right ~size:15 ()) ~theme
-              ~on_click:(fun _ -> enter) "Run a simulation"}
-          %{secondary_button ~theme ~on_click:(fun _ -> to_dashboard)
-              "Browse past runs"}
-        </div>
+        <div %{cta_row}>*{entry}</div>
       </div>
       <div %{stat_grid}>*{List.map landing_stats ~f:stat}</div>
       *{List.map landing_sections ~f:section}
@@ -1799,6 +2011,217 @@ let landing_view ~theme ~is_dark ~toggle_theme ~enter ~to_dashboard =
         Bring the orders your model already generated. Find out what they
         actually cost.
       </div>
+    </div>
+  |}
+;;
+
+let pnl_cell_int63 ~theme cents =
+  let dollars = Run_summary.dollars cents in
+  let color =
+    if Float.( > ) dollars 0.
+    then theme.Styles.green
+    else if Float.( < ) dollars 0.
+    then theme.Styles.red
+    else theme.Styles.faint
+  in
+  let style =
+    Styles.s
+      ("color:" ^ color ^ ";font-size:13px;font-weight:600;" ^ Styles.mono)
+  in
+  let text =
+    sprintf
+      "%s$%s"
+      (if Float.( < ) dollars 0. then "-" else "+")
+      (Float.to_string_hum ~delimiter:',' ~decimals:2 (Float.abs dollars))
+  in
+  {%html|<span %{style}>#{text}</span>|}
+;;
+
+(* ---------- my runs: the execution notebook ---------- *)
+
+let my_runs_view
+  ~theme
+  ~is_dark
+  ~toggle_theme
+  ~session
+  ~my_runs
+  ~open_run
+  ~refresh
+  ~new_sim
+  ~back
+  =
+  let columns = "150px 92px 84px 1fr 130px 120px 96px" in
+  let head =
+    Styles.s
+      ("display:grid;grid-template-columns:"
+       ^ columns
+       ^ ";column-gap:12px;white-space:nowrap;padding:10px 16px 8px \
+          16px;border-bottom:1px solid "
+       ^ theme.Styles.hairline
+       ^ ";"
+       ^ Styles.table_label theme)
+  in
+  let dim = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
+  let faint_style =
+    Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:12.5px;")
+  in
+  (* The knobs that actually shaped this run, so a notebook entry is
+     reproducible by reading it. Only the algorithm's own parameter is shown
+     — the fill-model numbers live in the tooltip. *)
+  let params_of (config : Run_config.t) =
+    let engine =
+      match config.engine_name with
+      | "synthetic" -> "synthetic book"
+      | (_ : string) -> "bar model"
+    in
+    match config.algo_name with
+    | "pov" -> sprintf "%s · rate %.4f" engine config.pov_rate
+    | "is" -> sprintf "%s · urgency %.1f" engine config.is_urgency
+    | (_ : string) -> engine
+  in
+  let full_params (config : Run_config.t) =
+    sprintf
+      "half spread $%.2f · participation %.2f · impact $%.2f · pov %.4f · \
+       urgency %.1f"
+      (Float.of_int config.half_spread_cents /. 100.)
+      config.max_participation
+      (Float.of_int config.impact_coefficient_cents /. 100.)
+      config.pov_rate
+      config.is_urgency
+  in
+  let run_row (run : Saved_run.t) =
+    let style =
+      Styles.s
+        ("display:grid;grid-template-columns:"
+         ^ columns
+         ^ ";column-gap:12px;white-space:nowrap;align-items:center;padding:9px \
+            16px;font-size:12.5px;color:"
+         ^ theme.Styles.text
+         ^ ";border-bottom:1px solid "
+         ^ theme.Styles.hairline
+         ^ ";"
+         ^ Styles.mono)
+    in
+    let capture =
+      match run.summary.alpha_capture with
+      | None -> "—"
+      | Some capture -> sprintf "%.1f%%" (capture *. 100.)
+    in
+    let badge =
+      if run.published
+      then (
+        let chip =
+          Styles.s
+            ("background:"
+             ^ theme.Styles.blue_soft
+             ^ ";color:"
+             ^ theme.Styles.blue
+             ^ ";border-radius:999px;padding:2px \
+                8px;font-size:10.5px;font-weight:700;")
+        in
+        {%html|<span %{chip}>published</span>|})
+      else {%html|<span %{faint_style}>private</span>|}
+    in
+    let open_button =
+      let button_style =
+        Styles.s
+          ("background:"
+           ^ theme.Styles.chip_bg
+           ^ ";color:"
+           ^ theme.Styles.text
+           ^ ";border:1px solid "
+           ^ theme.Styles.chip_border
+           ^ ";border-radius:6px;padding:5px \
+              10px;cursor:pointer;font-size:11.5px;font-weight:700;")
+      in
+      {%html|
+        <button
+          class="btn"
+          %{button_style}
+          on_click=%{fun _ -> open_run run}>
+          Open
+        </button>
+      |}
+    in
+    {%html|
+      <div>
+      <div %{style} title=%{full_params run.config}>
+        <span %{dim}>#{String.prefix run.ran_at 16}</span>
+        <span>#{Symbol.to_string run.config.symbol}</span>
+        <span>#{String.uppercase run.config.algo_name}</span>
+        <span %{dim}>
+          #{Date.to_string run.config.date} · #{params_of run.config}
+        </span>
+        <span>%{pnl_cell_int63 ~theme run.summary.value_add_cents}</span>
+        <span>%{pnl_cell_int63 ~theme run.summary.net_cents}</span>
+        <span %{Styles.s "display:flex;gap:8px;align-items:center;"}>
+          #{capture}
+        </span>
+      </div>
+      <div
+        %{Styles.s
+            ("display:flex;gap:10px;align-items:center;padding:0 16px 9px \
+              16px;border-bottom:1px solid "
+             ^ theme.Styles.hairline
+             ^ ";")}>
+        %{badge}
+        %{open_button}
+      </div>
+      </div>
+    |}
+  in
+  let body =
+    match (my_runs : Saved_run.t list option) with
+    | None ->
+      [ {%html|
+          <div %{Styles.s "padding:16px;"}>
+            <span %{faint_style}>Loading your runs…</span>
+          </div>
+        |}
+      ]
+    | Some [] ->
+      [ {%html|
+          <div
+            %{Styles.s
+                "padding:26px 16px;display:flex;flex-direction:column;gap:12px;align-items:flex-start;"}>
+            <span %{faint_style}>
+              No runs yet. Every simulation you execute while signed in is
+              recorded here automatically.
+            </span>
+            %{primary_button ~icon:(Icon.arrow_right ~size:15 ()) ~theme
+                ~on_click:(fun _ -> new_sim) "Run your first simulation"}
+          </div>
+        |}
+      ]
+    | Some runs ->
+      {%html|
+        <div %{head}>
+          <span>ran at</span>
+          <span>symbol</span>
+          <span>algorithm</span>
+          <span>day · settings</span>
+          <span>vs immediate</span>
+          <span>net P&L</span>
+          <span>capture</span>
+        </div>
+      |}
+      :: List.map runs ~f:run_row
+  in
+  let who =
+    match (session : Session.t option) with
+    | None -> "not signed in"
+    | Some { Session.username; token = (_ : string) } ->
+      sprintf "signed in as %s" username
+  in
+  {%html|
+    <div class="page fade" %{Styles.s narrow_page}>
+      %{wizard_header ~theme ~is_dark ~toggle_theme ~title:"My runs"
+          ~subtitle:("your execution notebook — " ^ who)
+          ~back:(Some ("← Dashboard", back)) ()}
+      <div %{Styles.card theme "padding-bottom:4px;"}>*{body}</div>
+      %{nav_footer ~theme
+          ~back:("Refresh", refresh)
+          ~next:("New simulation", new_sim, true) ()}
     </div>
   |}
 ;;
@@ -2889,28 +3312,6 @@ let cost_cell ~theme cents =
 
 (* Board totals arrive as Int63 (32-bit browser ints would overflow on large
    positions), so they format through floats. *)
-let pnl_cell_int63 ~theme cents =
-  let dollars = Run_summary.dollars cents in
-  let color =
-    if Float.( > ) dollars 0.
-    then theme.Styles.green
-    else if Float.( < ) dollars 0.
-    then theme.Styles.red
-    else theme.Styles.faint
-  in
-  let style =
-    Styles.s
-      ("color:" ^ color ^ ";font-size:13px;font-weight:600;" ^ Styles.mono)
-  in
-  let text =
-    sprintf
-      "%s$%s"
-      (if Float.( < ) dollars 0. then "-" else "+")
-      (Float.to_string_hum ~delimiter:',' ~decimals:2 (Float.abs dollars))
-  in
-  {%html|<span %{style}>#{text}</span>|}
-;;
-
 (* P&L convention: positive = money made, so green. *)
 let pnl_cell ~theme cents =
   let color =
@@ -2932,14 +3333,11 @@ let results_view
   ~theme
   ~is_dark
   ~open_help
-  ~runs
   ~to_sim
   ~new_sim
-  ~retest
   ~to_dashboard
   ~toggle_theme
-  ~player
-  ~set_player
+  ~session
   ~board
   ~submit_status
   ~submit
@@ -3075,150 +3473,6 @@ let results_view
               ~color:(money_color value_add)
               (dollars_signed value_add)}
         </div>
-      </div>
-    |}
-  in
-  (* Same-day leaderboard: the best stored run of each algorithm on this
-     symbol+session, ranked by execution bonus. *)
-  let leaderboard =
-    let entries =
-      List.filter runs ~f:(fun (run : History.Run_record.t) ->
-        Symbol.equal run.symbol replay.symbol
-        && Date.equal run.date replay.date)
-      |> List.sort_and_group ~compare:(fun (a : History.Run_record.t) b ->
-        String.compare a.algo_name b.algo_name)
-      |> List.filter_map ~f:(fun group ->
-        List.max_elt group ~compare:(fun (a : History.Run_record.t) b ->
-          Int.compare a.value_add_cents b.value_add_cents))
-      |> List.sort ~compare:(fun (a : History.Run_record.t) b ->
-        Int.compare b.value_add_cents a.value_add_cents)
-    in
-    let max_abs =
-      List.fold entries ~init:1 ~f:(fun acc run ->
-        Int.max acc (Int.abs run.value_add_cents))
-    in
-    let badge_color rank =
-      match rank with
-      | 0 -> "#d4a417"
-      | 1 -> "#8f98a3"
-      | 2 -> "#b0764a"
-      | _ -> theme.Styles.faint
-    in
-    let entry_row rank (run : History.Run_record.t) =
-      let is_current = String.equal run.algo_name replay.algo_name in
-      let row =
-        Styles.s
-          ("display:grid;grid-template-columns:36px 110px 70px 1fr \
-            120px;column-gap:12px;align-items:center;padding:9px \
-            6px;border-bottom:1px solid "
-           ^ theme.Styles.hairline
-           ^ ";border-radius:6px;background:"
-           ^ (if is_current then theme.Styles.blue_soft else "transparent")
-           ^ ";")
-      in
-      let badge =
-        Styles.s
-          ("width:26px;height:26px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:"
-           ^ badge_color rank
-           ^ ";color:#ffffff;font-size:12px;font-weight:800;")
-      in
-      let algo_style =
-        Styles.s
-          ("font-size:13px;font-weight:700;color:"
-           ^ (if is_current then theme.Styles.blue else theme.Styles.text)
-           ^ ";")
-      in
-      let capture_style =
-        Styles.s
-          ("font-size:12px;color:"
-           ^ theme.Styles.secondary
-           ^ ";"
-           ^ Styles.mono)
-      in
-      let capture_text =
-        match run.alpha_capture with
-        | None -> "—"
-        | Some c -> sprintf "%.1f%%" (c *. 100.)
-      in
-      let track =
-        Styles.s
-          ("height:8px;border-radius:999px;background:"
-           ^ theme.Styles.chip_bg
-           ^ ";overflow:hidden;")
-      in
-      let bar_width = 100 * Int.abs run.value_add_cents / max_abs in
-      let bar =
-        Styles.s
-          (sprintf
-             "height:100%%;width:%d%%;border-radius:999px;background:%s;"
-             (Int.max 2 bar_width)
-             (if run.value_add_cents >= 0
-              then theme.Styles.green
-              else theme.Styles.red))
-      in
-      let this_run =
-        if is_current
-        then
-          [ {%html|
-              <span
-                %{Styles.s
-                    ("font-size:10.5px;font-weight:700;color:#ffffff;background:"
-                     ^ theme.Styles.blue
-                     ^ ";border-radius:999px;padding:2px 8px;margin-left:6px;")}>
-                this run
-              </span>
-            |}
-          ]
-        else []
-      in
-      {%html|
-        <div %{row}>
-          <span %{badge}>#{Int.to_string (rank + 1)}</span>
-          <span %{algo_style}>
-            #{String.uppercase run.algo_name}
-            *{this_run}
-          </span>
-          <span %{capture_style}>#{capture_text}</span>
-          <div %{track}><div class="grow-x" %{bar}></div></div>
-          <span %{Styles.s "text-align:right;"}>
-            %{pnl_cell ~theme run.value_add_cents}
-          </span>
-        </div>
-      |}
-    in
-    let body =
-      match entries with
-      | [] | [ _ ] ->
-        [ {%html|
-            <div
-              %{Styles.s
-                  ("font-size:13px;color:" ^ theme.Styles.secondary ^ ";padding:6px 0;")}>
-              Retest this day with a different algorithm and the ranking
-              fills in — same alpha, same market, only the execution
-              changes.
-            </div>
-          |}
-        ]
-      | entries -> List.mapi entries ~f:entry_row
-    in
-    let head =
-      Styles.s
-        "display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"
-    in
-    {%html|
-      <div %{Styles.card theme "padding:20px;"}>
-        <div %{head}>
-          <span
-            %{Styles.s
-                ("color:"
-                 ^ theme.Styles.text
-                 ^ ";font-size:14px;font-weight:600;")}>
-            Leaderboard — this day, algorithm vs algorithm
-          </span>
-          %{secondary_button ~theme ~on_click:(fun _ -> retest)
-              "Try another algorithm"}
-        </div>
-        *{body}
       </div>
     |}
   in
@@ -3379,40 +3633,35 @@ let results_view
     let faint_style =
       Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:12.5px;")
     in
+    (* Who the submission would be attributed to. Guests see the button but
+       are routed through sign-in, keeping this finished run in state. *)
     let name_input =
-      let input_style =
-        Styles.s
-          ("width:140px;background:"
-           ^ theme.Styles.page_bg
-           ^ ";color:"
-           ^ theme.Styles.text
-           ^ ";border:1px solid "
-           ^ theme.Styles.chip_border
-           ^ ";border-radius:4px;padding:6px 8px;font-size:12.5px;"
-           ^ Styles.mono)
-      in
-      {%html|
-        <input
-          type="text"
-          placeholder="your name"
-          %{Vdom.Attr.string_property "value" player}
-          %{input_style}
-          on_input=%{fun (_ : _) name -> set_player name} />
-      |}
+      match (session : Session.t option) with
+      | Some { Session.username; token = (_ : string) } ->
+        let chip =
+          Styles.s
+            ("display:inline-flex;align-items:center;gap:6px;background:"
+             ^ theme.Styles.blue_soft
+             ^ ";color:"
+             ^ theme.Styles.blue
+             ^ ";border-radius:999px;padding:4px \
+                11px;font-size:12px;font-weight:700;")
+        in
+        {%html|<span %{chip}>#{username}</span>|}
+      | None ->
+        {%html|<span %{faint_style}>publishing as a guest is not possible</span>|}
     in
     let submit_button =
-      let style =
-        Styles.s
-          ("background:"
-           ^ theme.Styles.blue
-           ^ ";color:#ffffff;border:none;border-radius:5px;padding:7px \
-              14px;cursor:pointer;font-size:12.5px;font-weight:700;")
+      let label =
+        match (session : Session.t option) with
+        | Some (_ : Session.t) -> "Submit to leaderboard"
+        | None -> "Sign in to submit"
       in
-      {%html|
-        <button class="btn" %{style} on_click=%{fun _ -> submit}>
-          Submit to leaderboard
-        </button>
-      |}
+      primary_button
+        ~icon:(Icon.arrow_right ~size:14 ())
+        ~theme
+        ~on_click:(fun _ -> submit)
+        label
     in
     let refresh_button =
       let style =
@@ -3437,7 +3686,7 @@ let results_view
       | None -> []
       | Some text -> [ {%html|<span %{faint_style}>#{text}</span>|} ]
     in
-    let columns = "44px 160px 90px 130px 130px 80px 1fr" in
+    let columns = "44px 1fr 140px 140px 90px 150px" in
     let head_row =
       Styles.s
         ("display:grid;grid-template-columns:"
@@ -3491,7 +3740,6 @@ let results_view
             <div %{style}>
               <span %{dim}>#{Int.to_string (index + 1)}</span>
               <span>#{row.player}</span>
-              <span %{dim}>#{String.uppercase row.algo_name}</span>
               <span>%{pnl_cell_int63 ~theme row.summary.value_add_cents}</span>
               <span>%{pnl_cell_int63 ~theme row.summary.net_cents}</span>
               <span %{dim}>#{capture}</span>
@@ -3604,7 +3852,6 @@ let results_view
         *{List.mapi rows ~f:results_row}
         %{results_totals}
       </div>
-      %{leaderboard}
       %{leaderboard_card}
       <div %{buttons}>
         %{primary_button ~theme ~on_click:(fun _ -> new_sim)
@@ -3628,9 +3875,24 @@ let results_view
 
 let submit_run_effect = Effect.of_deferred_fun Net.submit_run
 let fetch_board_effect = Effect.of_deferred_fun Net.leaderboard
+let create_account_effect = Effect.of_deferred_fun Net.create_account
+let sign_in_effect = Effect.of_deferred_fun Net.sign_in
+let save_run_effect = Effect.of_deferred_fun Net.save_run
+let my_runs_effect = Effect.of_deferred_fun Net.my_runs
 
-let persist_player =
-  Effect.of_sync_fun (fun name -> Storage.set Storage.player_key name)
+let persist_session =
+  Effect.of_sync_fun (fun (session : Session.t option) ->
+    Storage.set
+      Storage.session_key
+      (Sexp.to_string [%sexp (session : Session.t option)]))
+;;
+
+let load_session () : Session.t option =
+  match Storage.get Storage.session_key with
+  | None -> None
+  | Some text ->
+    (try [%of_sexp: Session.t option] (Sexp.of_string text) with
+     | (_ : exn) -> None)
 ;;
 
 let config_of (replay : Replay.t) ~player =
@@ -3703,10 +3965,19 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     Bonsai.state (None : Error.t option) graph
   in
   let runs, set_runs = Bonsai.state (History.load ()) graph in
-  let player, set_player =
-    Bonsai.state
-      (Option.value (Storage.get Storage.player_key) ~default:"")
-      graph
+  let session, set_session =
+    Bonsai.state (load_session () : Session.t option) graph
+  in
+  let auth_mode, set_auth_mode =
+    Bonsai.state (None : Auth_mode.t option) graph
+  in
+  let auth_username, set_auth_username = Bonsai.state "" graph in
+  let auth_passcode, set_auth_passcode = Bonsai.state "" graph in
+  let auth_status, set_auth_status =
+    Bonsai.state (None : string option) graph
+  in
+  let my_runs, set_my_runs =
+    Bonsai.state (None : Saved_run.t list option) graph
   in
   let board, set_board =
     Bonsai.state (None : Leaderboard_row.t list option) graph
@@ -3758,6 +4029,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     and set_minute
     and set_playing
     and set_board
+    and session
+    and set_my_runs
     and set_submit_status in
     match selection, Replay.parse_params param_text with
     | None, _ -> set_run_error (Some (Error.of_string "choose a day first"))
@@ -3782,6 +4055,22 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
          let%bind.Effect () = set_minute (fun (_ : int) -> 0) in
          let%bind.Effect () = set_playing true in
          let%bind.Effect () = set_runs (History.add (run_record r) runs) in
+         (* Signed-in users get an execution notebook: every completed run is
+            recorded server-side, privately, the moment it finishes. The
+            server regrades it under the run's own parameters, so the
+            notebook never depends on the browser's arithmetic. *)
+         let%bind.Effect () =
+           match session with
+           | None -> Effect.Ignore
+           | Some { Session.token; username } ->
+             let%bind.Effect (_ : Save_run.Response.t Or_error.t) =
+               save_run_effect
+                 { Save_run.Request.token
+                 ; config = config_of r ~player:username
+                 }
+             in
+             set_my_runs None
+         in
          set_screen Screen.Sim)
   in
   let restart =
@@ -3789,19 +4078,139 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     let%bind.Effect () = set_minute (fun (_ : int) -> 0) in
     set_playing true
   in
-  let submit =
-    let%arr replay and player and set_board and set_submit_status in
-    match replay with
+  (* Signing in or creating an account: same form, different endpoint. On
+     success the session is persisted, so a reload stays signed in. *)
+  let submit_auth =
+    let%arr auth_mode
+    and auth_username
+    and auth_passcode
+    and set_session
+    and set_auth_status
+    and set_auth_mode
+    and set_auth_passcode
+    and set_screen in
+    match auth_mode with
     | None -> Effect.Ignore
-    | Some r ->
+    | Some mode ->
+      let credentials =
+        { Credentials.username = String.strip auth_username
+        ; passcode = auth_passcode
+        }
+      in
+      let%bind.Effect () = set_auth_status (Some "working…") in
+      let%bind.Effect response =
+        match (mode : Auth_mode.t) with
+        | Sign_in -> sign_in_effect credentials
+        | Create_account -> create_account_effect credentials
+      in
+      (match response with
+       | Error error -> set_auth_status (Some (Error.to_string_hum error))
+       | Ok (session : Session.t) ->
+         let%bind.Effect () = set_session (Some session) in
+         let%bind.Effect () = persist_session (Some session) in
+         let%bind.Effect () = set_auth_status None in
+         let%bind.Effect () = set_auth_mode None in
+         let%bind.Effect () = set_auth_passcode "" in
+         set_screen Screen.Dashboard)
+  in
+  (* Reopening a notebook entry: the config is complete and the simulator is
+     deterministic, so replaying it locally reproduces the exact run rather
+     than storing a results blob. *)
+  let open_run =
+    let%arr set_replay
+    and set_run_error
+    and set_board
+    and set_submit_status
+    and set_minute
+    and set_screen in
+    fun (saved : Saved_run.t) ->
+      let config = saved.Saved_run.config in
+      let params =
+        { Execlab_session.Params.fill_config =
+            { half_spread = Price.of_int_cents config.half_spread_cents
+            ; max_participation = config.max_participation
+            ; impact_coefficient =
+                Price.of_int_cents config.impact_coefficient_cents
+            }
+        ; pov_rate = config.pov_rate
+        ; is_urgency = config.is_urgency
+        ; engine =
+            (match config.engine_name with
+             | "synthetic" ->
+               Execlab_session.Engine_choice.Synthetic
+                 { seed = config.engine_seed }
+             | (_ : string) -> Execlab_session.Engine_choice.Bar_model)
+        }
+      in
+      let%bind.Effect result =
+        Effect.of_sync_fun
+          (fun () ->
+            Replay.run
+              ~symbol:config.symbol
+              ~date:config.date
+              ~alpha_text:config.alpha_text
+              ~algo_name:config.algo_name
+              ~params)
+          ()
+      in
+      match result with
+      | Error error -> set_run_error (Some error)
+      | Ok r ->
+        let%bind.Effect () = set_board None in
+        let%bind.Effect () = set_submit_status None in
+        let%bind.Effect () = set_replay (Some r) in
+        let%bind.Effect () =
+          set_minute (fun (_ : int) -> Replay.last_minute r)
+        in
+        set_screen Screen.Results
+  in
+  let sign_out =
+    let%arr set_session and set_my_runs and set_screen in
+    let%bind.Effect () = set_session None in
+    let%bind.Effect () = persist_session None in
+    let%bind.Effect () = set_my_runs None in
+    set_screen Screen.Landing
+  in
+  let refresh_my_runs =
+    let%arr session and set_my_runs in
+    match session with
+    | None -> set_my_runs (Some [])
+    | Some { Session.token; username = (_ : string) } ->
+      let%bind.Effect response = my_runs_effect { My_runs.Request.token } in
+      (match response with
+       | Ok resp -> set_my_runs (Some resp.My_runs.Response.runs)
+       | Error (_ : Error.t) -> set_my_runs (Some []))
+  in
+  let submit =
+    let%arr replay
+    and session
+    and set_board
+    and set_submit_status
+    and set_auth_mode
+    and set_screen in
+    match replay, session with
+    | None, (_ : Session.t option) -> Effect.Ignore
+    (* A guest keeps the finished run in state: we only move them to the
+       landing form, and they come back to the same results screen. *)
+    | Some (_ : Replay.t), None ->
+      let%bind.Effect () =
+        set_submit_status
+          (Some "sign in or create an account to publish this run")
+      in
+      let%bind.Effect () = set_auth_mode (Some Auth_mode.Sign_in) in
+      set_screen Screen.Landing
+    | Some r, Some { Session.token; username } ->
       let%bind.Effect () = set_submit_status (Some "submitting…") in
-      let%bind.Effect response = submit_run_effect (config_of r ~player) in
+      let%bind.Effect response =
+        submit_run_effect
+          { Submit_run.Request.token; config = config_of r ~player:username }
+      in
       (match response with
        | Ok resp ->
          let%bind.Effect () =
            set_board (Some resp.Submit_run.Response.leaderboard)
          in
-         set_submit_status (Some "verified by the server ✓")
+         set_submit_status (Some "published — verified by the server")
        | Error error ->
          set_submit_status
            (Some ("submit failed: " ^ Error.to_string_hum error)))
@@ -3861,8 +4270,19 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_screen
   and start
   and restart
-  and player
-  and set_player
+  and session
+  and auth_mode
+  and set_auth_mode
+  and auth_username
+  and set_auth_username
+  and auth_passcode
+  and set_auth_passcode
+  and auth_status
+  and my_runs
+  and submit_auth
+  and sign_out
+  and open_run
+  and refresh_my_runs
   and board
   and submit_status
   and submit
@@ -3909,7 +4329,28 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~is_dark
         ~toggle_theme
         ~enter:(goto Screen.Choose_day)
-        ~to_dashboard:(goto Screen.Dashboard)
+        ~to_dashboard:(goto Screen.My_runs)
+        ~session
+        ~auth_mode
+        ~set_auth_mode
+        ~auth_username
+        ~set_auth_username
+        ~auth_passcode
+        ~set_auth_passcode
+        ~auth_status
+        ~submit_auth
+        ~sign_out
+    | My_runs, _, _ ->
+      my_runs_view
+        ~theme
+        ~is_dark
+        ~toggle_theme
+        ~session
+        ~my_runs
+        ~open_run
+        ~refresh:refresh_my_runs
+        ~new_sim:(goto Screen.Choose_day)
+        ~back:(goto Screen.Dashboard)
     | Dashboard, _, _ -> dashboard ()
     | Choose_day, _, _ -> choose_day ()
     | (Alpha | Setup | Sim | Results), _, None -> choose_day ()
@@ -3967,16 +4408,11 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~theme
         ~is_dark
         ~open_help:(set_show_help true)
-        ~runs
         ~to_sim:(goto Screen.Sim)
         ~new_sim:(goto Screen.Choose_day)
-        ~retest:(goto Screen.Setup)
         ~to_dashboard:(goto Screen.Dashboard)
         ~toggle_theme
-        ~player
-        ~set_player:(fun name ->
-          let%bind.Effect () = set_player name in
-          persist_player name)
+        ~session
         ~board
         ~submit_status
         ~submit

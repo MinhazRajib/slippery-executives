@@ -14,7 +14,11 @@ module Run_config : sig
   (** Everything needed to reproduce a run bit-for-bit. The server
       re-executes this config itself rather than trusting client-side results
       — the simulator is deterministic, so a submitted config {e is} the
-      proof of its own score. *)
+      proof of its own score.
+
+      [player] is advisory: on any authenticated call the server overwrites
+      it with the token's account, so a config cannot claim someone else's
+      name. *)
   type t =
     { player : string
     ; symbol : Symbol.t
@@ -60,24 +64,127 @@ module Run_summary : sig
   val dollars : Int63.t -> float
 end
 
+(** {2 Accounts}
+
+    Deliberately minimal: a username and a passcode, no email, no recovery,
+    no OAuth. The whole point is that a run can carry an owner across devices
+    and sessions; it is not a security boundary, and the [token] is a bearer
+    credential derived from the stored passcode digest — treat it as a
+    passcode equivalent. Guests never obtain one and can still use every part
+    of the app except publishing. *)
+
+module Credentials : sig
+  type t =
+    { username : string
+    ; passcode : string
+    }
+  [@@deriving sexp, equal]
+end
+
+module Session : sig
+  (** What the client persists to stay signed in. *)
+  type t =
+    { username : string
+    ; token : string
+    }
+  [@@deriving sexp, equal]
+end
+
+(** Errors if the username is taken or either field fails validation. *)
+module Create_account : sig
+  val path : string
+
+  module Request = Credentials
+  module Response = Session
+end
+
+(** Errors if the account is unknown or the passcode does not match. *)
+module Sign_in : sig
+  val path : string
+
+  module Request = Credentials
+  module Response = Session
+end
+
+(** {2 Runs} *)
+
 module Leaderboard_row : sig
+  (** A published run as {e other people} see it: who, when, and how it
+      scored — deliberately {b not} which algorithm or parameters produced
+      it. The board is a scoreboard, not a strategy leak; the owner sees the
+      full config on their own {!Saved_run}. *)
   type t =
     { player : string
-    ; algo_name : string
     ; submitted_at : string (** ISO date-time, server clock *)
     ; summary : Run_summary.t
     }
   [@@deriving sexp, equal]
 end
 
+module Saved_run : sig
+  (** One entry in an account's own notebook: the complete config (so the
+      results screen can be reopened by replaying it) plus the server's
+      grading. [published] is true once the run has been submitted to its
+      board. *)
+  type t =
+    { run_id : string
+    ; config : Run_config.t
+    ; summary : Run_summary.t
+    ; ran_at : string (** ISO date-time, server clock *)
+    ; published : bool
+    }
+  [@@deriving sexp, equal]
+end
+
+(** Records a run in the caller's notebook without publishing it. The server
+    grades it under the config's {e own} parameters — this is the user's
+    experiment, so their knobs are the point. *)
+module Save_run : sig
+  val path : string
+
+  module Request : sig
+    type t =
+      { token : string
+      ; config : Run_config.t
+      }
+    [@@deriving sexp, equal]
+  end
+
+  module Response : sig
+    type t = { run : Saved_run.t } [@@deriving sexp, equal]
+  end
+end
+
+(** The caller's own runs, newest first. *)
+module My_runs : sig
+  val path : string
+
+  module Request : sig
+    type t = { token : string } [@@deriving sexp, equal]
+  end
+
+  module Response : sig
+    type t = { runs : Saved_run.t list } [@@deriving sexp, equal]
+  end
+end
+
+(** Publishes a run to its board. Unlike {!Save_run}, the server grades it
+    under canonical house physics, so every row on a board faced the
+    identical market. Requires an account: guests must sign in first. *)
 module Submit_run : sig
   val path : string
 
-  module Request = Run_config
+  module Request : sig
+    type t =
+      { token : string
+      ; config : Run_config.t
+      }
+    [@@deriving sexp, equal]
+  end
 
   module Response : sig
-    (** The server's own grading of the config, plus the refreshed same-day
-        same-alpha leaderboard it now sits in. *)
+    (** The server's own grading of the config, plus the refreshed board it
+        now sits in. *)
     type t =
       { summary : Run_summary.t
       ; leaderboard : Leaderboard_row.t list

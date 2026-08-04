@@ -48,12 +48,44 @@ let call ~path ~sexp_of_req ~resp_of_sexp request =
   | Ok text -> parse_response ~resp_of_sexp text
 ;;
 
-let submit_run config =
+let create_account credentials =
+  call
+    ~path:Create_account.path
+    ~sexp_of_req:[%sexp_of: Create_account.Request.t]
+    ~resp_of_sexp:[%of_sexp: Create_account.Response.t]
+    credentials
+;;
+
+let sign_in credentials =
+  call
+    ~path:Sign_in.path
+    ~sexp_of_req:[%sexp_of: Sign_in.Request.t]
+    ~resp_of_sexp:[%of_sexp: Sign_in.Response.t]
+    credentials
+;;
+
+let save_run request =
+  call
+    ~path:Save_run.path
+    ~sexp_of_req:[%sexp_of: Save_run.Request.t]
+    ~resp_of_sexp:[%of_sexp: Save_run.Response.t]
+    request
+;;
+
+let my_runs request =
+  call
+    ~path:My_runs.path
+    ~sexp_of_req:[%sexp_of: My_runs.Request.t]
+    ~resp_of_sexp:[%of_sexp: My_runs.Response.t]
+    request
+;;
+
+let submit_run request =
   call
     ~path:Submit_run.path
     ~sexp_of_req:[%sexp_of: Submit_run.Request.t]
     ~resp_of_sexp:[%of_sexp: Submit_run.Response.t]
-    config
+    request
 ;;
 
 let leaderboard request =

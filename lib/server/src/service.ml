@@ -7,21 +7,19 @@ let now_string () =
   |> String.tr ~target:' ' ~replacement:'T'
 ;;
 
-(* A leaderboard compares {e executions}, so the physics must be the house's,
-   not the submitter's: the fill model is pinned to its defaults and a
-   synthetic run's seed is derived from the board's own identity, so everyone
-   on a board faces the identical market and nobody wins by turning impact
-   off or shopping for a kind seed. The algorithm's own knobs stay free —
-   those are the strategy. *)
-let canonical_params (config : Run_config.t) =
+let finite name value ~check ~message =
+  if Float.is_finite value && check value
+  then Ok value
+  else
+    Or_error.error_s
+      [%message "bad parameter" ~_:(name : string) (value : float) message]
+;;
+
+(* The algorithm's own knobs and the choice of market: shared by both
+   gradings, because a config that names an impossible participation rate is
+   junk whether or not it is going on a board. *)
+let params_of_config ~fill_config (config : Run_config.t) =
   let open Or_error.Let_syntax in
-  let finite name value ~check ~message =
-    if Float.is_finite value && check value
-    then Ok value
-    else
-      Or_error.error_s
-        [%message "bad parameter" ~_:(name : string) (value : float) message]
-  in
   let%bind pov_rate =
     finite
       "pov_rate"
@@ -36,8 +34,7 @@ let canonical_params (config : Run_config.t) =
       ~check:(fun v -> Float.( >= ) v 0. && Float.( <= ) v 10_000.)
       ~message:"in [0, 10000]"
   in
-  { Execlab_session.Params.fill_config =
-      Execlab_simulation.Fill_model.Config.default
+  { Execlab_session.Params.fill_config
   ; pov_rate
   ; is_urgency
   ; engine =
@@ -54,22 +51,63 @@ let canonical_params (config : Run_config.t) =
   }
 ;;
 
-(* The server never trusts a client's numbers: it re-runs the submitted
-   config itself under canonical physics (the simulator is deterministic, so
-   the config is the proof of its own score) and stores only its own grading. *)
-let submit_run ~data_dir ~runs_dir (config : Run_config.t) =
+(* A leaderboard compares {e executions}, so the physics must be the house's,
+   not the submitter's: the fill model is pinned to its defaults and a
+   synthetic run's seed is derived from the board's own identity, so everyone
+   on a board faces the identical market and nobody wins by turning impact
+   off or shopping for a kind seed. The algorithm's own knobs stay free —
+   those are the strategy. *)
+let canonical_params (config : Run_config.t) =
+  params_of_config
+    ~fill_config:Execlab_simulation.Fill_model.Config.default
+    config
+;;
+
+(* A private run is the opposite case: the user's fill model {e is} the
+   experiment ("what if the spread were 5c?"), so their numbers stand — but
+   they are still human input, so they are still checked. *)
+let own_params (config : Run_config.t) =
   let open Or_error.Let_syntax in
-  let%bind () =
-    if String.is_empty (String.strip config.player)
-    then Or_error.error_string "player name is empty"
-    else Ok ()
+  let cents name value =
+    match value >= 0 with
+    | true -> Ok (Price.of_int_cents value)
+    | false ->
+      Or_error.error_s
+        [%message
+          "bad parameter" ~_:(name : string) (value : int) "must be >= 0"]
   in
-  let%bind params = canonical_params config in
+  let%bind half_spread =
+    cents "half_spread_cents" config.half_spread_cents
+  in
+  let%bind impact_coefficient =
+    cents "impact_coefficient_cents" config.impact_coefficient_cents
+  in
+  let%bind max_participation =
+    finite
+      "max_participation"
+      config.max_participation
+      ~check:(fun v -> Float.( > ) v 0. && Float.( <= ) v 1.)
+      ~message:"a fraction in (0, 1]"
+  in
+  params_of_config
+    ~fill_config:
+      { Execlab_simulation.Fill_model.Config.half_spread
+      ; max_participation
+      ; impact_coefficient
+      }
+    config
+;;
+
+(* The server never trusts a client's numbers: it re-runs the submitted
+   config itself (the simulator is deterministic, so the config is the proof
+   of its own score) and stores only its own grading. *)
+let grade ~data_dir ~(config : Run_config.t) ~params =
+  let open Or_error.Let_syntax in
   let%bind day =
     Catalog.load ~data_dir ~symbol:config.symbol ~date:config.date
   in
   let%bind parsed = Execlab_alpha.Parser.parse config.alpha_text in
-  let%bind outcome =
+  let%map outcome =
     Execlab_session.run
       ~day
       ~forecast_days:
@@ -81,18 +119,65 @@ let submit_run ~data_dir ~runs_dir (config : Run_config.t) =
       ~algo_name:config.algo_name
       ~params
   in
-  let summary =
-    Run_summary.of_cents
-      ~value_add:(Execlab_session.Outcome.value_add_cents outcome)
-      ~net:(Execlab_session.Outcome.net_cents outcome)
-      ~gross:(Execlab_session.Outcome.gross_cents outcome)
-      ~alpha_capture:(Execlab_session.Outcome.alpha_capture outcome)
-      ~shortfall:(Execlab_session.Outcome.shortfall_cents outcome)
-  in
-  let record =
-    { Store.Record.config; summary; submitted_at = now_string () }
-  in
-  Store.save ~runs_dir record;
+  Run_summary.of_cents
+    ~value_add:(Execlab_session.Outcome.value_add_cents outcome)
+    ~net:(Execlab_session.Outcome.net_cents outcome)
+    ~gross:(Execlab_session.Outcome.gross_cents outcome)
+    ~alpha_capture:(Execlab_session.Outcome.alpha_capture outcome)
+    ~shortfall:(Execlab_session.Outcome.shortfall_cents outcome)
+;;
+
+let username_of_token ~runs_dir ~token =
+  Accounts.username_of_token
+    ~accounts_dir:(Store.accounts_dir ~runs_dir)
+    ~token
+;;
+
+(* [config.player] is advisory on the wire and overwritten here: whoever
+   holds the token owns the run, whatever name the client typed into the
+   config. *)
+let owned_config ~username (config : Run_config.t) =
+  { config with player = username }
+;;
+
+let create_account ~runs_dir (request : Create_account.Request.t) =
+  Accounts.create
+    ~accounts_dir:(Store.accounts_dir ~runs_dir)
+    ~username:request.username
+    ~passcode:request.passcode
+;;
+
+let sign_in ~runs_dir (request : Sign_in.Request.t) =
+  Accounts.sign_in
+    ~accounts_dir:(Store.accounts_dir ~runs_dir)
+    ~username:request.username
+    ~passcode:request.passcode
+;;
+
+let submit_run ~data_dir ~runs_dir (request : Submit_run.Request.t) =
+  let open Or_error.Let_syntax in
+  let%bind username = username_of_token ~runs_dir ~token:request.token in
+  let config = owned_config ~username request.config in
+  let%bind params = canonical_params config in
+  let%map summary = grade ~data_dir ~config ~params in
+  let submitted_at = now_string () in
+  Store.save ~runs_dir { Store.Record.config; summary; submitted_at };
+  (* The board is public and the notebook is the owner's copy of the same
+     run, so a published run shows as published in My Runs. *)
+  let run_id = Store.run_id ~config ~ran_at:submitted_at in
+  (match Store.find_user_run ~runs_dir ~username ~run_id with
+   | Some (_ : Saved_run.t) ->
+     Store.mark_published ~runs_dir ~username ~run_id
+   | None ->
+     Store.save_user_run
+       ~runs_dir
+       ~username
+       { Saved_run.run_id
+       ; config
+       ; summary
+       ; ran_at = submitted_at
+       ; published = true
+       });
   let leaderboard =
     Store.load_board
       ~runs_dir
@@ -101,7 +186,32 @@ let submit_run ~data_dir ~runs_dir (config : Run_config.t) =
       ~alpha_hash:(alpha_hash config.alpha_text)
       ~engine_name:config.engine_name
   in
-  Ok { Submit_run.Response.summary; leaderboard }
+  { Submit_run.Response.summary; leaderboard }
+;;
+
+let save_run ~data_dir ~runs_dir (request : Save_run.Request.t) =
+  let open Or_error.Let_syntax in
+  let%bind username = username_of_token ~runs_dir ~token:request.token in
+  let config = owned_config ~username request.config in
+  let%bind params = own_params config in
+  let%map summary = grade ~data_dir ~config ~params in
+  let ran_at = now_string () in
+  let run =
+    { Saved_run.run_id = Store.run_id ~config ~ran_at
+    ; config
+    ; summary
+    ; ran_at
+    ; published = false
+    }
+  in
+  Store.save_user_run ~runs_dir ~username run;
+  { Save_run.Response.run }
+;;
+
+let my_runs ~runs_dir (request : My_runs.Request.t) =
+  let open Or_error.Let_syntax in
+  let%map username = username_of_token ~runs_dir ~token:request.token in
+  { My_runs.Response.runs = Store.load_user_runs ~runs_dir ~username }
 ;;
 
 let leaderboard ~runs_dir (request : Leaderboard.Request.t) =
@@ -143,7 +253,7 @@ let api_response
     (Sexp.to_string_hum payload)
 ;;
 
-let serve_static ~root ~writer path =
+let serve_static ~root ~runs_dir ~writer path =
   let not_found () =
     Http.respond
       writer
@@ -162,12 +272,21 @@ let serve_static ~root ~writer path =
       else relative
     in
     (* The server's root is the repo checkout, which also holds source, git
-       history, and everyone's submitted runs — only the client app and its
-       public inputs are servable. *)
+       history, and everyone's runs — only the client app and its public
+       inputs are servable. [runs_dir] is emphatically not on this list: it
+       holds the account files, whose passcode digests {e are} the tokens.
+       Its name is also barred anywhere in the path, because [_build/] is
+       servable and a future rule that copied the runs tree into it would
+       otherwise publish every account. *)
     let allowed =
       List.exists
         [ "app/"; "_build/"; "data/"; "examples/" ]
         ~f:(fun prefix -> String.is_prefix relative ~prefix)
+      && not
+           (List.mem
+              (String.split relative ~on:'/')
+              (Filename.basename runs_dir)
+              ~equal:String.equal)
     in
     if not allowed
     then not_found ()
@@ -185,6 +304,34 @@ let serve_static ~root ~writer path =
 
 let handle ~data_dir ~runs_dir ~root ~(request : Http.Request.t) ~writer =
   match request.meth, request.path with
+  | "POST", path when String.equal path Create_account.path ->
+    api_response
+      ~writer
+      ~body:request.body
+      ~req_of_sexp:[%of_sexp: Create_account.Request.t]
+      ~sexp_of_resp:[%sexp_of: Create_account.Response.t]
+      ~handle:(create_account ~runs_dir)
+  | "POST", path when String.equal path Sign_in.path ->
+    api_response
+      ~writer
+      ~body:request.body
+      ~req_of_sexp:[%of_sexp: Sign_in.Request.t]
+      ~sexp_of_resp:[%sexp_of: Sign_in.Response.t]
+      ~handle:(sign_in ~runs_dir)
+  | "POST", path when String.equal path Save_run.path ->
+    api_response
+      ~writer
+      ~body:request.body
+      ~req_of_sexp:[%of_sexp: Save_run.Request.t]
+      ~sexp_of_resp:[%sexp_of: Save_run.Response.t]
+      ~handle:(save_run ~data_dir ~runs_dir)
+  | "POST", path when String.equal path My_runs.path ->
+    api_response
+      ~writer
+      ~body:request.body
+      ~req_of_sexp:[%of_sexp: My_runs.Request.t]
+      ~sexp_of_resp:[%sexp_of: My_runs.Response.t]
+      ~handle:(my_runs ~runs_dir)
   | "POST", path when String.equal path Submit_run.path ->
     api_response
       ~writer
@@ -199,7 +346,7 @@ let handle ~data_dir ~runs_dir ~root ~(request : Http.Request.t) ~writer =
       ~req_of_sexp:[%of_sexp: Leaderboard.Request.t]
       ~sexp_of_resp:[%sexp_of: Leaderboard.Response.t]
       ~handle:(leaderboard ~runs_dir)
-  | "GET", path -> serve_static ~root ~writer path
+  | "GET", path -> serve_static ~root ~runs_dir ~writer path
   | (_ : string), (_ : string) ->
     Http.respond
       writer

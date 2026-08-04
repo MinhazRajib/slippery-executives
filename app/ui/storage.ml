@@ -25,3 +25,4 @@ let set key value =
 let theme_key = "execlab-theme"
 let player_key = "execlab-player"
 let runs_key = "execlab-runs"
+let session_key = "execlab-session"
