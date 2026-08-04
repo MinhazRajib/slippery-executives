@@ -2,6 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>execlab</title>
     <style>
       html,
@@ -10,6 +11,94 @@
         background: #f6ede2;
         color-scheme: light;
         scrollbar-width: thin;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      button,
+      select,
+      input,
+      textarea {
+        font-family: inherit;
+      }
+      /* Interactive behavior lives in classes (inline styles can't carry
+         :hover/:focus); colors stay theme-agnostic via currentColor and
+         filter so the same classes work in both palettes. */
+      .btn {
+        transition:
+          filter 0.15s ease,
+          transform 0.1s ease,
+          box-shadow 0.15s ease,
+          opacity 0.15s ease;
+      }
+      .btn:hover:not(:disabled) {
+        filter: brightness(1.07);
+      }
+      .btn:active:not(:disabled) {
+        transform: translateY(1px);
+      }
+      .btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .hoverable {
+        transition: background 0.12s ease;
+      }
+      .hoverable:hover {
+        background: color-mix(in srgb, currentColor 7%, transparent);
+      }
+      .raise {
+        transition:
+          box-shadow 0.15s ease,
+          transform 0.15s ease;
+      }
+      .raise:hover {
+        transform: translateY(-1px);
+        box-shadow:
+          0 2px 4px color-mix(in srgb, currentColor 10%, transparent),
+          0 6px 16px color-mix(in srgb, currentColor 8%, transparent);
+      }
+      :focus-visible {
+        outline: 2px solid #3b82f6;
+        outline-offset: 2px;
+        border-radius: 4px;
+      }
+      .fade {
+        animation: fade-up 0.24s ease;
+      }
+      @keyframes fade-up {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      /* Faint vignette so the page doesn't read as one flat fill; tints
+         with the text color, so it follows the theme. */
+      .shell-decor {
+        background-image: radial-gradient(
+          900px 340px at 18% -6%,
+          color-mix(in srgb, currentColor 4%, transparent),
+          transparent 70%
+        );
+      }
+      @media (max-width: 760px) {
+        .page {
+          margin: 8px auto !important;
+          padding: 12px !important;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .fade,
+        .btn,
+        .raise,
+        .hoverable {
+          animation: none;
+          transition: none;
+        }
       }
     </style>
   </head>

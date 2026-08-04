@@ -44,7 +44,9 @@ let paper =
   ; brown = "#8e3b2a"
   ; order_colors = [| "#6d28d9"; "#0e7490"; "#be185d"; "#0f766e" |]
   ; chip_border = "#e2d4bf"
-  ; shadow = "box-shadow:0 1px 2px rgba(67,53,34,0.05);"
+  ; shadow =
+      "box-shadow:0 1px 2px rgba(67,53,34,0.05),0 2px 6px \
+       rgba(67,53,34,0.04),0 8px 24px rgba(67,53,34,0.05);"
   }
 ;;
 
@@ -65,7 +67,9 @@ let dark =
   ; brown = "#c4664a"
   ; order_colors = [| "#a78bfa"; "#22d3ee"; "#f472b6"; "#2dd4bf" |]
   ; chip_border = "#26314a"
-  ; shadow = "box-shadow:0 1px 3px rgba(0,0,0,0.4);"
+  ; shadow =
+      "box-shadow:0 1px 3px rgba(0,0,0,0.35),0 3px 8px rgba(0,0,0,0.25),0 \
+       10px 28px rgba(0,0,0,0.2);"
   }
 ;;
 
@@ -86,7 +90,7 @@ let card t extra =
      ^ t.card_bg
      ^ ";border:"
      ^ t.border
-     ^ ";border-radius:6px;"
+     ^ ";border-radius:10px;"
      ^ t.shadow
      ^ extra)
 ;;

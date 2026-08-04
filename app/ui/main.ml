@@ -1101,7 +1101,7 @@ let sim_view
       replay.algo_name
   in
   {%html|
-    <div %{page}>
+    <div class="page fade" %{page}>
       <div>
         <div %{head_row}>
           <span %{Styles.brand theme}>execlab</span>
@@ -1133,19 +1133,84 @@ let sim_view
   |}
 ;;
 
+(* Small inline SVG glyphs (Lucide outlines), stroke = currentColor so they
+   inherit the surrounding text color in either theme. *)
+module Icon = struct
+  let make ?(size = 15) path_d =
+    let attr = Vdom.Attr.create in
+    Vdom.Node.create_svg
+      "svg"
+      ~attrs:
+        [ attr "width" (Int.to_string size)
+        ; attr "height" (Int.to_string size)
+        ; attr "viewBox" "0 0 24 24"
+        ; attr "fill" "none"
+        ; attr "stroke" "currentColor"
+        ; attr "stroke-width" "2.2"
+        ; attr "stroke-linecap" "round"
+        ; attr "stroke-linejoin" "round"
+        ; Styles.s "flex-shrink:0;vertical-align:-2px;"
+        ]
+      [ Vdom.Node.create_svg "path" ~attrs:[ attr "d" path_d ] [] ]
+  ;;
+
+  let check = make "M20 6L9 17l-5-5"
+
+  let calendar ?size () =
+    make
+      ?size
+      "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 \
+       0 1-2-2V6a2 2 0 0 1 2-2z"
+  ;;
+
+  let file ?size () =
+    make
+      ?size
+      "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6"
+  ;;
+
+  let sliders ?size () =
+    make ?size "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"
+  ;;
+
+  let play ?size () = make ?size "M6 3l14 9-14 9V3z"
+  let flag ?size () = make ?size "M4 22V4c5-3 9 3 16 0v12c-7 3-11-3-16 0"
+
+  let upload ?size () =
+    make
+      ?size
+      "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"
+  ;;
+
+  let arrow_right ?size () = make ?size "M5 12h14M12 5l7 7-7 7"
+  let arrow_left ?size () = make ?size "M19 12H5M12 19l-7-7 7-7"
+end
+
 let algo_pill ~theme ~selected ~on_click label =
   let bg = if selected then theme.Styles.blue else theme.Styles.chip_bg in
   let color = if selected then "#ffffff" else theme.Styles.secondary in
+  let ring =
+    if selected
+    then "box-shadow:0 2px 8px " ^ theme.Styles.blue ^ "55;"
+    else ""
+  in
   let style =
     Styles.s
-      ("background:"
+      ("display:inline-flex;align-items:center;gap:7px;background:"
        ^ bg
        ^ ";color:"
        ^ color
-       ^ ";border:none;border-radius:5px;padding:8px \
-          18px;cursor:pointer;font-size:13px;font-weight:700;")
+       ^ ";border:none;border-radius:8px;padding:10px \
+          20px;cursor:pointer;font-size:14px;font-weight:700;"
+       ^ ring)
   in
-  {%html|<button %{style} on_click=%{on_click}>#{label}</button>|}
+  let mark = if selected then [ Icon.check ] else [] in
+  {%html|
+    <button class="btn" %{style} on_click=%{on_click}>
+      *{mark}
+      #{label}
+    </button>
+  |}
 ;;
 
 let instruction_row ~theme (instruction : Alpha_instruction.t) =
@@ -1181,14 +1246,84 @@ let instruction_row ~theme (instruction : Alpha_instruction.t) =
   |}
 ;;
 
+(* The wizard's five stations, in order; [step_progress] renders where the
+   user is, with completed stations checked off. *)
+let wizard_steps =
+  [ "Day", Icon.calendar ~size:13 ()
+  ; "Alpha", Icon.file ~size:13 ()
+  ; "Setup", Icon.sliders ~size:13 ()
+  ; "Simulate", Icon.play ~size:13 ()
+  ; "Results", Icon.flag ~size:13 ()
+  ]
+;;
+
+let step_progress ~theme ~current =
+  let station index (name, icon) =
+    let state =
+      if index < current
+      then `Done
+      else if index = current
+      then `Active
+      else `Upcoming
+    in
+    let bg, color, weight =
+      match state with
+      | `Done -> theme.Styles.blue_soft, theme.Styles.blue, "600"
+      | `Active -> theme.Styles.blue, "#ffffff", "700"
+      | `Upcoming -> "transparent", theme.Styles.faint, "600"
+    in
+    let chip =
+      Styles.s
+        ("display:inline-flex;align-items:center;gap:6px;background:"
+         ^ bg
+         ^ ";color:"
+         ^ color
+         ^ ";border-radius:999px;padding:5px \
+            12px;font-size:12px;font-weight:"
+         ^ weight
+         ^ ";white-space:nowrap;")
+    in
+    let glyph =
+      match state with `Done -> Icon.check | `Active | `Upcoming -> icon
+    in
+    {%html|<span %{chip}>%{glyph} #{name}</span>|}
+  in
+  let sep =
+    Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:11px;margin:0 2px;")
+  in
+  let stations =
+    List.concat_mapi wizard_steps ~f:(fun index step ->
+      let chip = station index step in
+      if index = 0
+      then [ chip ]
+      else [ {%html|<span %{sep}>—</span>|}; chip ])
+  in
+  {%html|
+    <div
+      %{Styles.s
+          "display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-top:10px;"}>
+      *{stations}
+    </div>
+  |}
+;;
+
 (* Shared page chrome for the wizard screens: brand, title, optional back
-   link, theme toggle. *)
-let wizard_header ~theme ~is_dark ~toggle_theme ~title ~subtitle ~back =
+   link, theme toggle, and (when [step] is given) the progress rail. *)
+let wizard_header
+  ?step
+  ~theme
+  ~is_dark
+  ~toggle_theme
+  ~title
+  ~subtitle
+  ~back
+  ()
+  =
   let title_style =
     Styles.s
       ("color:"
        ^ theme.Styles.text
-       ^ ";font-size:20px;font-weight:700;margin:4px 0;")
+       ^ ";font-size:26px;font-weight:800;margin:4px 0;letter-spacing:0;")
   in
   let sub_style =
     Styles.s ("color:" ^ theme.Styles.secondary ^ ";font-size:14px;")
@@ -1197,23 +1332,29 @@ let wizard_header ~theme ~is_dark ~toggle_theme ~title ~subtitle ~back =
     Styles.s
       ("background:none;border:none;color:"
        ^ theme.Styles.blue
-       ^ ";cursor:pointer;font-size:13px;font-weight:600;padding:0;")
+       ^ ";cursor:pointer;font-size:13px;font-weight:600;padding:6px 8px;")
   in
   let back_button =
     match back with
     | None -> []
     | Some (label, effect) ->
-      [ {%html|<button %{back_style} on_click=%{fun _ -> effect}>#{label}</button>|}
+      [ {%html|<button class="btn" %{back_style} on_click=%{fun _ -> effect}>#{label}</button>|}
       ]
+  in
+  let progress =
+    match step with
+    | None -> []
+    | Some current -> [ step_progress ~theme ~current ]
   in
   {%html|
     <div
       %{Styles.s
-          "display:flex;justify-content:space-between;align-items:flex-start;"}>
+          "display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;"}>
       <div>
         <span %{Styles.brand theme}>execlab</span>
         <div %{title_style}>#{title}</div>
         <div %{sub_style}>#{subtitle}</div>
+        *{progress}
       </div>
       <span %{Styles.s "display:flex;gap:10px;align-items:center;"}>
         *{back_button}
@@ -1223,16 +1364,88 @@ let wizard_header ~theme ~is_dark ~toggle_theme ~title ~subtitle ~back =
   |}
 ;;
 
-let primary_button ~theme ~on_click label =
+let primary_button ?(enabled = true) ?icon ~theme ~on_click label =
   let style =
     Styles.s
-      ("background:"
+      ("display:inline-flex;align-items:center;gap:8px;background:"
        ^ theme.Styles.blue
-       ^ ";color:#ffffff;border:none;border-radius:5px;padding:10px \
-          20px;cursor:pointer;font-size:14px;font-weight:700;align-self:flex-start;"
-      )
+       ^ ";color:#ffffff;border:none;border-radius:8px;padding:13px \
+          26px;cursor:pointer;font-size:15px;font-weight:700;align-self:flex-start;box-shadow:0 \
+          2px 10px "
+       ^ theme.Styles.blue
+       ^ "44;")
   in
-  {%html|<button %{style} on_click=%{on_click}>#{label}</button>|}
+  let disabled = if enabled then Vdom.Attr.empty else Vdom.Attr.disabled in
+  let glyph = match icon with None -> [] | Some icon -> [ icon ] in
+  {%html|
+    <button class="btn" %{style} %{disabled} on_click=%{on_click}>
+      *{glyph}
+      #{label}
+    </button>
+  |}
+;;
+
+let secondary_button ?icon ~theme ~on_click label =
+  let style =
+    Styles.s
+      ("display:inline-flex;align-items:center;gap:8px;background:"
+       ^ theme.Styles.chip_bg
+       ^ ";color:"
+       ^ theme.Styles.text
+       ^ ";border:1px solid "
+       ^ theme.Styles.chip_border
+       ^ ";border-radius:8px;padding:12px \
+          22px;cursor:pointer;font-size:14px;font-weight:600;")
+  in
+  let glyph = match icon with None -> [] | Some icon -> [ icon ] in
+  {%html|
+    <button class="btn" %{style} on_click=%{on_click}>
+      *{glyph}
+      #{label}
+    </button>
+  |}
+;;
+
+(* The wizard's fixed navigation bar: Back bottom-left, Continue
+   bottom-right, in the same place on every step. Sticky so the actions stay
+   reachable on long screens. *)
+let nav_footer ?back ?next ~theme () =
+  let bar =
+    Styles.s
+      ("position:sticky;bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;background:"
+       ^ theme.Styles.card_bg
+       ^ ";border:"
+       ^ theme.Styles.border
+       ^ ";border-radius:10px;padding:12px 16px;"
+       ^ theme.Styles.shadow)
+  in
+  let back_node =
+    match back with
+    | Some (label, effect) ->
+      secondary_button
+        ~icon:(Icon.arrow_left ~size:14 ())
+        ~theme
+        ~on_click:(fun _ -> effect)
+        label
+    | None -> {%html|<span></span>|}
+  in
+  let next_node =
+    match next with
+    | Some (label, effect, enabled) ->
+      primary_button
+        ~enabled
+        ~icon:(Icon.arrow_right ~size:14 ())
+        ~theme
+        ~on_click:(fun _ -> effect)
+        label
+    | None -> {%html|<span></span>|}
+  in
+  {%html|
+    <div %{bar}>
+      %{back_node}
+      %{next_node}
+    </div>
+  |}
 ;;
 
 let narrow_page =
@@ -1318,19 +1531,19 @@ let dashboard_view ~theme ~is_dark ~runs ~new_sim ~toggle_theme =
     |> fun sorted -> List.take sorted 5
   in
   {%html|
-    <div %{Styles.s narrow_page}>
+    <div class="page fade" %{Styles.s narrow_page}>
       %{wizard_header ~theme ~is_dark ~toggle_theme
           ~title:"Historical execution laboratory"
           ~subtitle:"upload an alpha, pick a day, and see how much survives \
-                     execution" ~back:None}
-      %{primary_button ~theme ~on_click:(fun _ -> new_sim)
-          "New simulation →"}
+                     execution" ~back:None ()}
+      %{primary_button ~icon:(Icon.arrow_right ~size:14 ()) ~theme
+          ~on_click:(fun _ -> new_sim) "New simulation"}
       <div %{Styles.s two_col}>
-        <div %{Styles.card theme "padding:16px;"}>
+        <div %{Styles.card theme "padding:20px;"}>
           <div %{section_label}>Recent runs</div>
           *{table runs}
         </div>
-        <div %{Styles.card theme "padding:16px;"}>
+        <div %{Styles.card theme "padding:20px;"}>
           <div %{section_label}>Best runs — by value added vs immediate</div>
           *{table best}
         </div>
@@ -1389,7 +1602,8 @@ let choose_day_view
   ~browse_symbol
   ~set_symbol
   ~selection
-  ~choose
+  ~select
+  ~continue_
   ~toggle_theme
   ~back
   =
@@ -1448,6 +1662,11 @@ let choose_day_view
         let border =
           if selected then theme.Styles.blue else theme.Styles.chip_border
         in
+        let ring =
+          if selected
+          then "box-shadow:0 2px 8px " ^ theme.Styles.blue ^ "66;"
+          else ""
+        in
         let style =
           Styles.s
             (cell_base
@@ -1457,13 +1676,15 @@ let choose_day_view
              ^ color
              ^ ";border:1px solid "
              ^ border
-             ^ ";cursor:pointer;font-weight:600;")
+             ^ ";cursor:pointer;font-weight:600;"
+             ^ ring)
         in
         {%html|
           <button
+            class="btn"
             %{style}
             title=%{Date.to_string date}
-            on_click=%{fun _ -> choose browse_symbol date}>
+            on_click=%{fun _ -> select browse_symbol date}>
             #{day}
           </button>
         |})
@@ -1541,9 +1762,15 @@ let choose_day_view
            ^ ";"
            ^ Styles.mono)
       in
+      let hover_class =
+        if selected then Vdom.Attr.empty else Vdom.Attr.class_ "hoverable"
+      in
       let cell = Styles.s num in
       {%html|
-        <div %{style} on_click=%{fun _ -> choose browse_symbol s.date}>
+        <div
+          %{style}
+          %{hover_class}
+          on_click=%{fun _ -> select browse_symbol s.date}>
           <span>#{Date.to_string s.date}</span>
           <span %{cell}>#{sprintf "%.2f" s.open_}</span>
           <span %{cell}>#{sprintf "%.2f" s.close}</span>
@@ -1564,17 +1791,24 @@ let choose_day_view
     |}
     :: List.map (Dataset.summaries_for browse_symbol) ~f:summary_row
   in
+  let selection_hint =
+    match selection with
+    | Some (symbol, date) ->
+      sprintf "%s · %s" (Symbol.to_string symbol) (Date.to_string date)
+    | None -> "select a session to continue"
+  in
   {%html|
-    <div %{Styles.s narrow_page}>
-      %{wizard_header ~theme ~is_dark ~toggle_theme
+    <div class="page fade" %{Styles.s narrow_page}>
+      %{wizard_header ~step:0 ~theme ~is_dark ~toggle_theme
           ~title:"Choose a market day"
           ~subtitle:"pick a symbol, then a session from its calendar"
-          ~back:(Some ("← Dashboard", back))}
+          ~back:None ()}
       <div %{Styles.s two_col}>
-        <div %{Styles.card theme "padding:16px;"}>
+        <div %{Styles.card theme "padding:20px;"}>
           <div %{picker_row}>
             <span %{label}>Symbol</span>
             <select
+              class="btn"
               %{select_style}
               on_change=%{fun (_ : _) value -> set_symbol (Symbol.of_string value)}>
               *{List.map Dataset.symbols ~f:symbol_option}
@@ -1583,11 +1817,17 @@ let choose_day_view
           </div>
           *{List.map months ~f:month_grid}
         </div>
-        <div %{Styles.card theme "padding:16px;"}>
+        <div %{Styles.card theme "padding:20px;"}>
           <div %{section_label}>Sessions — click to select</div>
           *{summary_rows}
         </div>
       </div>
+      <div %{Styles.s ("display:flex;justify-content:flex-end;" ^ Styles.label theme)}>
+        #{selection_hint}
+      </div>
+      %{nav_footer ~theme
+          ~back:("Dashboard", back)
+          ~next:("Continue", continue_, Option.is_some selection) ()}
     </div>
   |}
 ;;
@@ -1698,20 +1938,20 @@ let alpha_view
     Styles.s
       ("color:" ^ theme.Styles.red ^ ";font-size:12.5px;" ^ Styles.mono)
   in
+  let parsed = Replay.parse_alpha alpha_text in
   let preview =
-    match Replay.parse_alpha alpha_text with
+    match parsed with
     | Ok instructions ->
       [ {%html|
-          <div %{Styles.card theme "padding:16px;"}>
+          <div %{Styles.card theme "padding:20px;"}>
             <div %{section_label}>Parsed instructions</div>
             *{List.map instructions ~f:(instruction_row ~theme)}
           </div>
         |}
-      ; primary_button ~theme ~on_click:(fun _ -> continue_) "Continue →"
       ]
     | Error error ->
       [ {%html|
-          <div %{Styles.card theme "padding:16px;"}>
+          <div %{Styles.card theme "padding:20px;"}>
             <div %{section_label}>Parse errors</div>
             <div %{error_style}>#{Error.to_string_hum error}</div>
           </div>
@@ -1741,7 +1981,7 @@ let alpha_view
   in
   let upload_label =
     Styles.s
-      ("display:inline-block;background:"
+      ("display:inline-flex;align-items:center;gap:8px;background:"
        ^ theme.Styles.chip_bg
        ^ ";color:"
        ^ theme.Styles.text
@@ -1758,12 +1998,12 @@ let alpha_view
       (Date.to_string date)
   in
   {%html|
-    <div %{Styles.s narrow_page}>
-      %{wizard_header ~theme ~is_dark ~toggle_theme
+    <div class="page fade" %{Styles.s narrow_page}>
+      %{wizard_header ~step:1 ~theme ~is_dark ~toggle_theme
           ~title:"Alpha instructions" ~subtitle
-          ~back:(Some ("← Choose day", back))}
+          ~back:None ()}
       <div %{Styles.s two_col}>
-        <div %{Styles.card theme "padding:16px;"}>
+        <div %{Styles.card theme "padding:20px;"}>
           <div %{section_label}>Samples</div>
           <div %{samples_row}>
             *{List.map (sample_alphas symbol) ~f:sample_pill}
@@ -1776,7 +2016,8 @@ let alpha_view
             %{textarea_style}
             on_input=%{fun (_ : _) text -> set_alpha_text text}></textarea>
           <div %{hint}>arrival_time,symbol,side,quantity,deadline</div>
-          <label %{upload_label}>
+          <label class="btn" %{upload_label}>
+            %{Icon.upload ~size:14 ()}
             Upload CSV file…
             <input
               type="file"
@@ -1790,6 +2031,9 @@ let alpha_view
           *{preview}
         </div>
       </div>
+      %{nav_footer ~theme
+          ~back:("Choose day", back)
+          ~next:("Continue", continue_, Or_error.is_ok parsed) ()}
     </div>
   |}
 ;;
@@ -1840,12 +2084,12 @@ let setup_view
       (Date.to_string date)
   in
   {%html|
-    <div %{Styles.s narrow_page}>
-      %{wizard_header ~theme ~is_dark ~toggle_theme
+    <div class="page fade" %{Styles.s narrow_page}>
+      %{wizard_header ~step:2 ~theme ~is_dark ~toggle_theme
           ~title:"New simulation" ~subtitle
-          ~back:(Some ("← Alpha", back))}
+          ~back:None ()}
       <div %{Styles.s two_col}>
-        <div %{Styles.card theme "padding:16px;"}>
+        <div %{Styles.card theme "padding:20px;"}>
           <div %{section_label}>Execution algorithm</div>
           <div %{pills}>
             %{algo_pill ~theme ~selected:(String.equal algo "twap")
@@ -1858,13 +2102,15 @@ let setup_view
                 ~on_click:(fun _ -> set_algo "immediate") "Immediate"}
           </div>
         </div>
-        <div %{Styles.card theme "padding:16px;"}>
+        <div %{Styles.card theme "padding:20px;"}>
           <div %{section_label}>Alpha instructions</div>
           *{instructions}
         </div>
       </div>
       *{error_card}
-      %{primary_button ~theme ~on_click:(fun _ -> start) "Run simulation"}
+      %{nav_footer ~theme
+          ~back:("Alpha", back)
+          ~next:("Run simulation", start, true) ()}
     </div>
   |}
 ;;
@@ -2138,10 +2384,10 @@ let results_view
   in
   {%html|
     <div %{page}>
-      %{wizard_header ~theme ~is_dark ~toggle_theme ~title
+      %{wizard_header ~step:4 ~theme ~is_dark ~toggle_theme ~title
           ~subtitle:"shortfall split into the metric tree: timing + spread \
                      + impact, plus opportunity on unfilled shares"
-          ~back:(Some ("← Replay", to_sim))}
+          ~back:(Some ("← Replay", to_sim)) ()}
       %{summary}
       <div %{Styles.card theme "padding-bottom:4px;"}>
         <div %{Styles.s "padding:14px 16px 0 16px;"}>
@@ -2335,10 +2581,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     set_page_background next.Styles.page_bg
   in
   let goto s = set_screen s in
-  let choose symbol date =
-    let%bind.Effect () = set_selection (Some (symbol, date)) in
-    set_screen Screen.Alpha
-  in
+  let select symbol date = set_selection (Some (symbol, date)) in
   let dashboard () =
     dashboard_view
       ~theme
@@ -2360,7 +2603,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
       ~browse_symbol
       ~set_symbol:(fun symbol -> set_cal_symbol (Some symbol))
       ~selection
-      ~choose
+      ~select
+      ~continue_:(goto Screen.Alpha)
       ~toggle_theme
       ~back:(goto Screen.Dashboard)
   in
