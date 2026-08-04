@@ -2877,7 +2877,9 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     and set_replay
     and set_screen
     and set_minute
-    and set_playing in
+    and set_playing
+    and set_board
+    and set_submit_status in
     match selection, Replay.parse_params param_text with
     | None, _ -> set_run_error (Some (Error.of_string "choose a day first"))
     | Some (_ : Symbol.t * Date.t), Error error -> set_run_error (Some error)
@@ -2891,6 +2893,11 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
       (match result with
        | Error error -> set_run_error (Some error)
        | Ok r ->
+         (* A board belongs to one (day, alpha, engine): carrying the
+            previous run's rows or its "submitted" banner onto a new run's
+            results would be a lie. *)
+         let%bind.Effect () = set_board None in
+         let%bind.Effect () = set_submit_status None in
          let%bind.Effect () = set_run_error None in
          let%bind.Effect () = set_replay (Some r) in
          let%bind.Effect () = set_minute (fun (_ : int) -> 0) in
