@@ -1134,65 +1134,189 @@ let dashboard_view ~theme ~is_dark ~runs ~new_sim ~toggle_theme =
 
 (* ---------- choose a market day ---------- *)
 
-let choose_day_view ~theme ~is_dark ~selection ~choose ~toggle_theme ~back =
-  let symbol_label =
+let month_title month year =
+  let name =
+    match (month : Month.t) with
+    | Jan -> "January"
+    | Feb -> "February"
+    | Mar -> "March"
+    | Apr -> "April"
+    | May -> "May"
+    | Jun -> "June"
+    | Jul -> "July"
+    | Aug -> "August"
+    | Sep -> "September"
+    | Oct -> "October"
+    | Nov -> "November"
+    | Dec -> "December"
+  in
+  sprintf "%s %d" name year
+;;
+
+(* The weekday (Mon-Fri) cells of one month, chunked into calendar rows;
+   [None] pads the first row so day-of-week columns line up. Weekends are
+   dropped entirely -- there are no weekend sessions to offer. *)
+let month_weeks ~year ~month =
+  let cells =
+    List.filter_map
+      (List.range 1 (Date.days_in_month ~year ~month + 1))
+      ~f:(fun d ->
+        let date = Date.create_exn ~y:year ~m:month ~d in
+        let col =
+          Day_of_week.iso_8601_weekday_number (Date.day_of_week date) - 1
+        in
+        if col > 4 then None else Some (col, date))
+  in
+  match cells with
+  | [] -> []
+  | (first_col, (_ : Date.t)) :: (_ : (int * Date.t) list) ->
+    List.chunks_of
+      ~length:5
+      (List.init first_col ~f:(fun (_ : int) -> None)
+       @ List.map cells ~f:(fun ((_ : int), date) -> Some date))
+;;
+
+let choose_day_view
+  ~theme
+  ~is_dark
+  ~browse_symbol
+  ~set_symbol
+  ~selection
+  ~choose
+  ~toggle_theme
+  ~back
+  =
+  let sessions = Dataset.dates_for browse_symbol in
+  let session_set = Date.Set.of_list sessions in
+  let select_style =
     Styles.s
-      ("color:"
+      ("background:"
+       ^ theme.Styles.chip_bg
+       ^ ";color:"
        ^ theme.Styles.text
-       ^ ";font-size:14px;font-weight:700;width:70px;"
+       ^ ";border:1px solid "
+       ^ theme.Styles.chip_border
+       ^ ";border-radius:5px;padding:6px \
+          10px;font-size:13px;font-weight:600;cursor:pointer;"
        ^ Styles.mono)
   in
-  let chips = Styles.s "display:flex;gap:6px;flex-wrap:wrap;flex:1;" in
-  let symbol_row symbol =
-    let chip date =
-      let selected =
-        match selection with
-        | Some (s, d) -> Symbol.equal s symbol && Date.equal d date
-        | None -> false
-      in
-      let bg =
-        if selected then theme.Styles.blue else theme.Styles.chip_bg
-      in
-      let color = if selected then "#ffffff" else theme.Styles.secondary in
-      let style =
-        Styles.s
-          ("background:"
-           ^ bg
-           ^ ";color:"
-           ^ color
-           ^ ";border:none;border-radius:4px;padding:4px \
-              8px;cursor:pointer;font-size:12px;"
-           ^ Styles.mono)
-      in
-      let label = String.drop_prefix (Date.to_string date) 5 in
-      {%html|
-        <button %{style} on_click=%{fun _ -> choose symbol date}>
-          #{label}
-        </button>
-      |}
+  let symbol_option symbol =
+    let name = Symbol.to_string symbol in
+    let selected_prop =
+      if Symbol.equal symbol browse_symbol
+      then Vdom.Attr.bool_property "selected" true
+      else Vdom.Attr.empty
     in
-    let row =
+    {%html|<option value=%{name} %{selected_prop}>#{name}</option>|}
+  in
+  let hint =
+    Styles.s
+      ("color:" ^ theme.Styles.faint ^ ";font-size:12px;" ^ Styles.mono)
+  in
+  let cell_base =
+    "width:46px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:5px;font-size:12.5px;"
+    ^ Styles.mono
+  in
+  let cell date_opt =
+    match date_opt with
+    | None -> {%html|<span></span>|}
+    | Some date ->
+      let day = Int.to_string (Date.day date) in
+      if not (Set.mem session_set date)
+      then (
+        let dim =
+          Styles.s (cell_base ^ "color:" ^ theme.Styles.faint ^ ";")
+        in
+        {%html|<span %{dim}>#{day}</span>|})
+      else (
+        let selected =
+          match selection with
+          | Some (s, d) -> Symbol.equal s browse_symbol && Date.equal d date
+          | None -> false
+        in
+        let bg =
+          if selected then theme.Styles.blue else theme.Styles.chip_bg
+        in
+        let color = if selected then "#ffffff" else theme.Styles.text in
+        let border =
+          if selected then theme.Styles.blue else theme.Styles.chip_border
+        in
+        let style =
+          Styles.s
+            (cell_base
+             ^ "background:"
+             ^ bg
+             ^ ";color:"
+             ^ color
+             ^ ";border:1px solid "
+             ^ border
+             ^ ";cursor:pointer;font-weight:600;")
+        in
+        {%html|
+          <button
+            %{style}
+            title=%{Date.to_string date}
+            on_click=%{fun _ -> choose browse_symbol date}>
+            #{day}
+          </button>
+        |})
+  in
+  let weekday_header =
+    let head =
       Styles.s
-        ("display:flex;gap:12px;align-items:baseline;padding:8px \
-          0;border-bottom:1px solid "
-         ^ theme.Styles.hairline
-         ^ ";")
+        (cell_base
+         ^ "height:auto;color:"
+         ^ theme.Styles.faint
+         ^ ";font-size:11px;")
     in
+    List.map [ "Mon"; "Tue"; "Wed"; "Thu"; "Fri" ] ~f:(fun name ->
+      {%html|<span %{head}>#{name}</span>|})
+  in
+  let month_grid (year, month) =
+    let title =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.text
+         ^ ";font-size:13px;font-weight:700;margin:14px 0 8px;")
+    in
+    let grid =
+      Styles.s "display:grid;grid-template-columns:repeat(5,46px);gap:4px;"
+    in
+    let rows = List.concat_map (month_weeks ~year ~month) ~f:Fn.id in
     {%html|
-      <div %{row}>
-        <span %{symbol_label}>#{Symbol.to_string symbol}</span>
-        <div %{chips}>*{List.map (Dataset.dates_for symbol) ~f:chip}</div>
+      <div>
+        <div %{title}>#{month_title month year}</div>
+        <div %{grid}>
+          *{weekday_header}
+          *{List.map rows ~f:cell}
+        </div>
       </div>
     |}
   in
+  let months =
+    sessions
+    |> List.map ~f:(fun date -> Date.year date, Date.month date)
+    |> List.dedup_and_sort ~compare:[%compare: int * Month.t]
+  in
+  let picker_row = Styles.s "display:flex;gap:12px;align-items:center;" in
+  let label = Styles.s (Styles.label theme) in
   {%html|
     <div %{Styles.s narrow_page}>
       %{wizard_header ~theme ~is_dark ~toggle_theme
           ~title:"Choose a market day"
-          ~subtitle:"every bundled (symbol, session) pair; all dates 2026"
+          ~subtitle:"pick a symbol, then a session from its calendar"
           ~back:(Some ("← Dashboard", back))}
       <div %{Styles.card theme "padding:16px;"}>
-        *{List.map Dataset.symbols ~f:symbol_row}
+        <div %{picker_row}>
+          <span %{label}>Symbol</span>
+          <select
+            %{select_style}
+            on_change=%{fun (_ : _) value -> set_symbol (Symbol.of_string value)}>
+            *{List.map Dataset.symbols ~f:symbol_option}
+          </select>
+          <span %{hint}>#{sprintf "%d sessions available" (List.length sessions)}</span>
+        </div>
+        *{List.map months ~f:month_grid}
       </div>
     </div>
   |}
@@ -1634,6 +1758,11 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let speed, set_speed = Bonsai.state 4 graph in
   let show_fills, set_show_fills = Bonsai.state false graph in
   let is_dark, set_is_dark = Bonsai.state false graph in
+  (* The symbol whose calendar the choose-day screen is browsing; distinct
+     from [selection], which is only set once a session is clicked. *)
+  let cal_symbol, set_cal_symbol =
+    Bonsai.state (None : Symbol.t option) graph
+  in
   let advance =
     let%arr playing and speed and replay and set_minute in
     match replay with
@@ -1700,6 +1829,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_show_fills
   and is_dark
   and set_is_dark
+  and cal_symbol
+  and set_cal_symbol
   and set_minute
   and set_screen
   and start
@@ -1724,9 +1855,17 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
       ~toggle_theme
   in
   let choose_day () =
+    let browse_symbol =
+      match cal_symbol, selection with
+      | Some symbol, _ -> symbol
+      | None, Some (symbol, (_ : Date.t)) -> symbol
+      | None, None -> List.hd_exn Dataset.symbols
+    in
     choose_day_view
       ~theme
       ~is_dark
+      ~browse_symbol
+      ~set_symbol:(fun symbol -> set_cal_symbol (Some symbol))
       ~selection
       ~choose
       ~toggle_theme
