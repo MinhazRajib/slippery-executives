@@ -118,10 +118,16 @@ let grade ~day ~attribution_half_spread (result : Driver.t) =
       List.filter result.fills ~f:(fun fill ->
         Set.mem ids fill.Fill.order_id)
     in
+    (* The benchmark is the price the parent actually activated at, not a
+       second lookup that could disagree with it; {!Benchmarks} answers only
+       for a parent that never activated at all. *)
     let%bind arrival_price =
-      Benchmarks.arrival_price
-        day
-        ~arrival_time:instruction.Alpha_instruction.arrival_time
+      match parent.Parent_order.arrival_price with
+      | Some price -> Ok price
+      | None ->
+        Benchmarks.arrival_price
+          day
+          ~arrival_time:instruction.Alpha_instruction.arrival_time
     in
     Transaction_cost.create
       ~instruction

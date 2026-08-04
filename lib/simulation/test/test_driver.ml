@@ -154,3 +154,65 @@ let%expect_test "the immediate baseline pays for its impatience" =
     fills=1 shares=1000 distinct_prices=(15004)
     |}]
 ;;
+
+let%expect_test "an instruction arriving in the first minute benchmarks \
+                 against the minute it can actually trade in"
+  =
+  (* The session opens at 150.00 and the second minute opens a dollar higher.
+     Minute zero can hold no algorithm turn, so a parent arriving at 09:30
+     activates at 09:31 and takes that minute's open — 151.00 — as its
+     benchmark. Grading it against 150.00 instead would charge execution a
+     dollar of drift that no algorithm could have traded through, and could
+     even show a buy filling below its own arrival price when the first
+     minute falls. *)
+  let day =
+    let bar ~minute ~cents =
+      let price = Price.of_int_cents cents in
+      Or_error.ok_exn
+        (Market_bar.create
+           ~time:(time_at_minute minute)
+           ~open_:price
+           ~high:price
+           ~low:price
+           ~close:price
+           ~volume:(Size.of_int 42000))
+    in
+    Or_error.ok_exn
+      (Trading_day.create
+         ~symbol:(Symbol.of_string "NVDA")
+         ~date:(Date.of_string "2026-07-09")
+         ~bars:
+           (List.init 390 ~f:(fun i ->
+              bar ~minute:i ~cents:(if i = 0 then 15000 else 15100))))
+  in
+  let instruction =
+    Or_error.ok_exn
+      (Alpha_instruction.create
+         ~arrival_time:(Time_ns.Ofday.of_string "09:30:00")
+         ~symbol:(Symbol.of_string "NVDA")
+         ~side:Side.Buy
+         ~quantity:(Size.of_int 1000)
+         ~deadline:(Time_ns.Ofday.of_string "09:45:00"))
+  in
+  let result =
+    Driver.run
+      ~day
+      ~instructions:[ instruction ]
+      ~algorithm:(module Immediate)
+      ~fill_config
+      ()
+  in
+  let parent = List.hd_exn (Order_manager.parents result.manager) in
+  printf
+    "arrival price: %s\n"
+    (Sexp.to_string [%sexp (parent.arrival_price : Price.t option)]);
+  List.iter result.fills ~f:(fun fill ->
+    printf
+      "filled %d @ %s\n"
+      (Size.to_int fill.Fill.size)
+      (Price.to_string_dollar fill.price));
+  [%expect {|
+    arrival price: (15100)
+    filled 1000 @ $151.04
+    |}]
+;;

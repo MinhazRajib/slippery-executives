@@ -53,14 +53,12 @@ let run
     List.map (Order_manager.parents manager) ~f:(fun parent ->
       A.init ~parent)
   in
-  (* Minute zero has no previous bar, so no algorithm turn: just activate and
-     show the fill model its first bar. *)
-  let manager =
-    Order_manager.activate_due
-      manager
-      ~now:first_bar.Market_bar.time
-      ~price_for:(fun (_ : Symbol.t) -> first_bar.Market_bar.open_)
-  in
+  (* Minute zero has no previous bar, so no algorithm turn — and so no
+     activation either: a parent activated here would sample its arrival
+     price from a minute in which nothing it does could possibly trade, and
+     every later grade would carry that unreachable price as though execution
+     had missed it. Instructions arriving in the first minute activate at the
+     second, where a decision is finally possible. *)
   let engine, (_ : Fill.t list) =
     Engine_intf.advance engine ~bar:first_bar ~resting_orders:[]
   in
