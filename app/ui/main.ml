@@ -1711,7 +1711,32 @@ let results_view
     Styles.s
       ("color:" ^ theme.Styles.text ^ ";font-size:14px;font-weight:600;")
   in
-  let buttons = Styles.s "display:flex;gap:10px;" in
+  let buttons = Styles.s "display:flex;gap:10px;align-items:center;" in
+  let export_name suffix =
+    sprintf
+      "execlab_%s_%s_%s_%s.csv"
+      (Symbol.to_string replay.symbol)
+      (Date.to_string replay.date)
+      replay.algo_name
+      suffix
+  in
+  let download filename text =
+    Effect.of_sync_fun (fun () -> Download.csv ~filename ~text) ()
+  in
+  let ghost_button ~on_click label =
+    let style =
+      Styles.s
+        ("background:"
+         ^ theme.Styles.chip_bg
+         ^ ";color:"
+         ^ theme.Styles.secondary
+         ^ ";border:1px solid "
+         ^ theme.Styles.chip_border
+         ^ ";border-radius:5px;padding:9px \
+            16px;cursor:pointer;font-size:13px;font-weight:600;")
+    in
+    {%html|<button %{style} on_click=%{on_click}>#{label}</button>|}
+  in
   let page =
     Styles.s
       "display:flex;flex-direction:column;gap:16px;max-width:1240px;margin:0 \
@@ -1749,6 +1774,14 @@ let results_view
             "New simulation"}
         %{primary_button ~theme ~on_click:(fun _ -> to_dashboard)
             "Dashboard"}
+        %{ghost_button
+            ~on_click:(fun _ ->
+              download (export_name "results") (Replay.results_csv replay))
+            "⤓ Results CSV"}
+        %{ghost_button
+            ~on_click:(fun _ ->
+              download (export_name "fills") (Replay.fills_csv replay))
+            "⤓ Fills CSV"}
       </div>
     </div>
   |}
