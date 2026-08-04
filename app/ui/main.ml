@@ -741,7 +741,7 @@ let orders_table (replay : Replay.t) ~theme ~fills ~minute =
        ^ "padding:10px 16px 6px 16px;border-bottom:1px solid "
        ^ theme.Styles.hairline
        ^ ";"
-       ^ Styles.label theme)
+       ^ Styles.table_label theme)
   in
   let day_vwap = replay.vwap_by_minute.(Array.length replay.bars - 1) in
   let now = Replay.time_at replay ~minute in
@@ -1242,7 +1242,7 @@ let dashboard_view ~theme ~is_dark ~runs ~new_sim ~toggle_theme =
        ^ "padding:8px 0 6px 0;border-bottom:1px solid "
        ^ theme.Styles.hairline
        ^ ";"
-       ^ Styles.label theme)
+       ^ Styles.table_label theme)
   in
   let run_row (run : History.Run_record.t) =
     let style =
@@ -1612,86 +1612,88 @@ let results_view
       </div>
     |}
   in
-  let columns = "64px 96px 60px 88px 92px 90px 78px 78px 100px 96px 1fr" in
-  let row_base =
+  (* Shared table machinery: css grids with sharp uppercase headers and
+     monospace cells sized to survive large dollar figures (12.5px, nowrap,
+     roomy columns). *)
+  let grid_base columns =
     "display:grid;grid-template-columns:"
     ^ columns
-    ^ ";column-gap:10px;align-items:baseline;"
+    ^ ";column-gap:10px;align-items:baseline;white-space:nowrap;"
   in
-  let head_row =
+  let head_row columns =
     Styles.s
-      (row_base
+      (grid_base columns
        ^ "padding:10px 16px 6px 16px;border-bottom:1px solid "
        ^ theme.Styles.hairline
        ^ ";"
-       ^ Styles.label theme)
+       ^ Styles.table_label theme)
   in
-  let order_row index (row : Replay.result_row) =
-    let grading = row.Replay.grading in
+  let body_row columns =
+    Styles.s
+      (grid_base columns
+       ^ "padding:8px 16px;font-size:12.5px;color:"
+       ^ theme.Styles.text
+       ^ ";border-bottom:1px solid "
+       ^ theme.Styles.hairline
+       ^ ";"
+       ^ Styles.mono)
+  in
+  let total_style columns =
+    Styles.s
+      (grid_base columns
+       ^ "padding:9px 16px;font-size:12.5px;font-weight:700;color:"
+       ^ theme.Styles.text
+       ^ ";"
+       ^ Styles.mono)
+  in
+  let bold = Styles.s "font-weight:600;" in
+  let dim = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
+  let dash = {%html|<span %{dim}>-</span>|} in
+  let blank = {%html|<span></span>|} in
+  let order_cell index =
     let chip =
       Styles.s
         ("display:inline-block;width:12px;height:3px;border-radius:2px;vertical-align:middle;background:"
          ^ Styles.order_color theme index
          ^ ";margin-right:8px;")
     in
-    let style =
-      Styles.s
-        (row_base
-         ^ "padding:8px 16px;font-size:13px;color:"
-         ^ theme.Styles.text
-         ^ ";border-bottom:1px solid "
-         ^ theme.Styles.hairline
-         ^ ";"
-         ^ Styles.mono)
-    in
-    let bold = Styles.s "font-weight:600;" in
-    let dim = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
-    let avg_fill, shortfall =
+    {%html|<span %{bold}><span %{chip}></span>O%{index + 1#Int}</span>|}
+  in
+  let side_qty (grading : Transaction_cost.t) =
+    sprintf
+      "%s %s"
+      (side_str grading.side)
+      (Int.to_string_hum ~delimiter:',' (Size.to_int grading.quantity))
+  in
+  (* Cost table: components in reading order, summing left-to-right into the
+     shortfall column. *)
+  let cost_columns = "56px 112px 104px 116px 104px 104px 128px 1fr" in
+  let cost_row index (row : Replay.result_row) =
+    let grading = row.Replay.grading in
+    let avg_fill, shortfall_bps =
       match grading.Transaction_cost.fill_metrics with
-      | None ->
-        let dash = {%html|<span %{dim}>-</span>|} in
-        dash, dash
+      | None -> dash, dash
       | Some metrics ->
-        let avg = sprintf "$%.4f" metrics.average_fill_price in
-        {%html|<span>#{avg}</span>|}, bps_view ~theme metrics.shortfall_bps
+        ( {%html|<span>#{sprintf "$%.4f" metrics.average_fill_price}</span>|}
+        , bps_view ~theme metrics.shortfall_bps )
     in
     {%html|
-      <div %{style}>
-        <span %{bold}><span %{chip}></span>O%{index + 1#Int}</span>
-        <span %{bold}>
-          #{side_str grading.side}
-          #{Int.to_string_hum ~delimiter:','
-              (Size.to_int grading.quantity)}
-        </span>
-        <span %{dim}>
-          #{sprintf "%.0f%%" (grading.completion_rate *. 100.)}
-        </span>
+      <div %{body_row cost_columns}>
+        %{order_cell index}
+        <span %{bold}>#{side_qty grading}</span>
         <span>%{avg_fill}</span>
-        <span>%{shortfall}</span>
         <span>%{cost_cell ~theme grading.timing_cost_cents}</span>
         <span>%{cost_cell ~theme grading.spread_cost_cents}</span>
         <span>%{cost_cell ~theme grading.impact_cost_cents}</span>
-        <span>%{cost_cell ~theme grading.opportunity_cost_cents}</span>
-        <span>%{pnl_cell ~theme grading.net_pnl_cents}</span>
-        <span>%{pnl_cell ~theme row.value_add_cents}</span>
+        <span>%{cost_cell ~theme grading.friction_cost_cents}</span>
+        <span>%{shortfall_bps}</span>
       </div>
     |}
   in
-  let totals_row =
-    let style =
-      Styles.s
-        (row_base
-         ^ "padding:9px 16px;font-size:13px;font-weight:700;color:"
-         ^ theme.Styles.text
-         ^ ";"
-         ^ Styles.mono)
-    in
-    let blank = {%html|<span></span>|} in
+  let cost_totals =
     {%html|
-      <div %{style}>
+      <div %{total_style cost_columns}>
         <span>total</span>
-        %{blank}
-        %{blank}
         %{blank}
         %{blank}
         <span>%{cost_cell ~theme
@@ -1701,9 +1703,54 @@ let results_view
         <span>%{cost_cell ~theme
             (sum (fun row -> row.Replay.grading.impact_cost_cents))}</span>
         <span>%{cost_cell ~theme
+            (sum (fun row -> row.Replay.grading.friction_cost_cents))}</span>
+        %{blank}
+      </div>
+    |}
+  in
+  (* Results table: the P&L identity, net = gross - shortfall - opportunity,
+     plus the baseline comparison. *)
+  let results_columns =
+    "56px 112px 64px 122px 118px 118px 130px 130px 1fr"
+  in
+  let results_row index (row : Replay.result_row) =
+    let grading = row.Replay.grading in
+    let capture =
+      match grading.Transaction_cost.alpha_capture with
+      | None -> dash
+      | Some capture ->
+        {%html|<span %{dim}>#{sprintf "%.1f%%" (capture *. 100.)}</span>|}
+    in
+    {%html|
+      <div %{body_row results_columns}>
+        %{order_cell index}
+        <span %{bold}>#{side_qty grading}</span>
+        <span %{dim}>
+          #{sprintf "%.0f%%" (grading.completion_rate *. 100.)}
+        </span>
+        <span>%{pnl_cell ~theme grading.gross_theoretical_pnl_cents}</span>
+        <span>%{cost_cell ~theme grading.friction_cost_cents}</span>
+        <span>%{cost_cell ~theme grading.opportunity_cost_cents}</span>
+        <span>%{pnl_cell ~theme grading.net_pnl_cents}</span>
+        <span>%{pnl_cell ~theme row.value_add_cents}</span>
+        <span>%{capture}</span>
+      </div>
+    |}
+  in
+  let results_totals =
+    {%html|
+      <div %{total_style results_columns}>
+        <span>total</span>
+        %{blank}
+        %{blank}
+        <span>%{pnl_cell ~theme total_gross}</span>
+        <span>%{cost_cell ~theme
+            (sum (fun row -> row.Replay.grading.friction_cost_cents))}</span>
+        <span>%{cost_cell ~theme
             (sum (fun row -> row.Replay.grading.opportunity_cost_cents))}</span>
         <span>%{pnl_cell ~theme total_net}</span>
         <span>%{pnl_cell ~theme replay.results.total_value_add_cents}</span>
+        <span>#{capture}</span>
       </div>
     |}
   in
@@ -1753,21 +1800,36 @@ let results_view
         <div %{Styles.s "padding:14px 16px 0 16px;"}>
           <span %{title_style}>Execution cost breakdown</span>
         </div>
-        <div %{head_row}>
+        <div %{head_row cost_columns}>
+          <span>order</span>
+          <span>side · qty</span>
+          <span>avg fill</span>
+          <span>timing</span>
+          <span>+ spread</span>
+          <span>+ impact</span>
+          <span>= shortfall</span>
+          <span>in bps</span>
+        </div>
+        *{List.mapi rows ~f:cost_row}
+        %{cost_totals}
+      </div>
+      <div %{Styles.card theme "padding-bottom:4px;"}>
+        <div %{Styles.s "padding:14px 16px 0 16px;"}>
+          <span %{title_style}>Results</span>
+        </div>
+        <div %{head_row results_columns}>
           <span>order</span>
           <span>side · qty</span>
           <span>filled</span>
-          <span>avg fill</span>
+          <span>gross alpha</span>
           <span>shortfall</span>
-          <span>timing</span>
-          <span>spread</span>
-          <span>impact</span>
           <span>opportunity</span>
           <span>net P&L</span>
           <span>vs immediate</span>
+          <span>capture</span>
         </div>
-        *{List.mapi rows ~f:order_row}
-        %{totals_row}
+        *{List.mapi rows ~f:results_row}
+        %{results_totals}
       </div>
       <div %{buttons}>
         %{primary_button ~theme ~on_click:(fun _ -> new_sim)

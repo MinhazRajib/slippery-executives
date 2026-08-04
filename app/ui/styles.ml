@@ -97,6 +97,14 @@ let label t =
   ^ ";font-size:12px;font-weight:600;letter-spacing:0.02em;"
 ;;
 
+(* Table column headers: the warm accent — rust on paper, tan on dark —
+   instead of washed-out grey. *)
+let table_label t =
+  "color:"
+  ^ t.brown
+  ^ ";font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;"
+;;
+
 let brand t =
   s ("color:" ^ t.secondary ^ ";font-size:12px;font-weight:600;" ^ mono)
 ;;
