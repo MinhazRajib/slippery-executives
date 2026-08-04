@@ -2204,6 +2204,8 @@ let setup_view
                 ~on_click:(fun _ -> set_algo "vwap") "VWAP"}
             %{algo_pill ~theme ~selected:(String.equal algo "pov")
                 ~on_click:(fun _ -> set_algo "pov") "POV"}
+            %{algo_pill ~theme ~selected:(String.equal algo "is")
+                ~on_click:(fun _ -> set_algo "is") "IS"}
             %{algo_pill ~theme ~selected:(String.equal algo "immediate")
                 ~on_click:(fun _ -> set_algo "immediate") "Immediate"}
           </div>

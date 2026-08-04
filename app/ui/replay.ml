@@ -86,6 +86,9 @@ let algorithm_named ~symbol ~date ~(day : Trading_day.t) = function
      tape-chasing is visible; a street-realistic 5-20% would demand the whole
      parent off the first observed bar. *)
   | "pov" -> Pov.create ~participation_rate:0.0015 ()
+  (* Front-loads noticeably without slamming the tape; matches the CLI
+     default. *)
+  | "is" -> Implementation_shortfall.create ~urgency:2.0 ()
   | _ -> (module Twap : Algorithm_intf.S)
 ;;
 
