@@ -511,9 +511,34 @@ let chart
                   (side_str parent.instruction.Alpha_instruction.side) )
           else None)
       in
-      let box_w = 210. in
+      let headline = sprintf "$%.2f · %s" close (hhmm bar.Market_bar.time) in
+      let detail =
+        sprintf
+          "O %.2f  H %.2f  L %.2f  ·  vol %s"
+          (Price.to_float bar.Market_bar.open_)
+          (Price.to_float bar.Market_bar.high)
+          (Price.to_float bar.Market_bar.low)
+          (Int.to_string_hum
+             ~delimiter:','
+             (Size.to_int bar.Market_bar.volume))
+      in
+      (* Size the panel to its text (approximate char widths at 13px bold /
+         11px regular) instead of a fixed box. *)
+      let box_w =
+        let width ~per_char text =
+          Float.of_int (String.length text) *. per_char
+        in
+        List.fold
+          (width ~per_char:7.4 headline
+           :: width ~per_char:5.9 detail
+           :: List.map covering ~f:(fun ((_ : string), text) ->
+             width ~per_char:6.3 text))
+          ~init:0.
+          ~f:Float.max
+        +. 20.
+      in
       let line_h = 15. in
-      let box_h = 46. +. (Float.of_int (List.length covering) *. line_h) in
+      let box_h = 40. +. (Float.of_int (List.length covering) *. line_h) in
       let box_x =
         if Float.( > ) (cx +. 12. +. box_w) (left +. plot_w)
         then cx -. 12. -. box_w
@@ -576,26 +601,16 @@ let chart
           ~size:"13"
           ~weight:"700"
           ~tx:(box_x +. 10.)
-          ~ty:(box_y +. 19.)
-          (sprintf "$%.2f · %s" close (hhmm bar.Market_bar.time))
-      ; label
-          ~tx:(box_x +. 10.)
-          ~ty:(box_y +. 36.)
-          (sprintf
-             "O %.2f  H %.2f  L %.2f  ·  vol %s"
-             (Price.to_float bar.Market_bar.open_)
-             (Price.to_float bar.Market_bar.high)
-             (Price.to_float bar.Market_bar.low)
-             (Int.to_string_hum
-                ~delimiter:','
-                (Size.to_int bar.Market_bar.volume)))
+          ~ty:(box_y +. 17.)
+          headline
+      ; label ~tx:(box_x +. 10.) ~ty:(box_y +. 32.) detail
       ]
       @ List.mapi covering ~f:(fun i (color, text) ->
         label
           ~fill:color
           ~weight:"600"
           ~tx:(box_x +. 10.)
-          ~ty:(box_y +. 36. +. (Float.of_int (i + 1) *. line_h))
+          ~ty:(box_y +. 32. +. (Float.of_int (i + 1) *. line_h))
           text)
   in
   svg
