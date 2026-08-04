@@ -9,6 +9,7 @@ open! Core
 type t
 
 val create : seed:int -> t
-val float : t -> t * float (** uniform in [0, 1) *)
+(** Uniform in the half-open unit interval. *)
+val float : t -> t * float
 val jitter : t -> around:float -> spread:float -> t * float
 val bernoulli : t -> p:float -> t * bool
