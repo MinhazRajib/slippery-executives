@@ -209,15 +209,58 @@ let controls
   |}
 ;;
 
-(* ---------- the chart: price line, order windows, fill tick rows ---------- *)
+(* ---------- the chart: price line, order windows, crosshair ---------- *)
 
-let chart (replay : Replay.t) ~theme ~minute ~fills ~show_fills =
+(* Geometry shared by the renderer and the mouse-position inverse. *)
+let chart_w = 1140.
+let chart_left = 52.
+let chart_right = 20.
+let chart_plot_w = chart_w -. chart_left -. chart_right
+
+(* The hovered minute, from a mouse event over the chart svg: CSS pixels ->
+   viewBox units -> bar index, clamped to the replayed range. *)
+let minute_of_mouse
+  ~n
+  ~shown
+  (evt : Js_of_ocaml.Dom_html.mouseEvent Js_of_ocaml.Js.t)
+  =
+  let open Js_of_ocaml in
+  match Js.Opt.to_option evt##.currentTarget with
+  | None -> None
+  | Some target ->
+    let rect = target##getBoundingClientRect in
+    let x_px = Js.to_float evt##.clientX -. Js.to_float rect##.left in
+    let width = Float.of_int target##.clientWidth in
+    if Float.( <= ) width 0.
+    then None
+    else (
+      let svg_x = x_px *. (chart_w /. width) in
+      let ratio = (svg_x -. chart_left) /. chart_plot_w in
+      if Float.( < ) ratio 0. || Float.( > ) ratio 1.
+      then None
+      else
+        Some
+          (Int.max
+             0
+             (Int.min
+                shown
+                (Float.iround_nearest_exn (ratio *. Float.of_int (n - 1))))))
+;;
+
+let chart
+  (replay : Replay.t)
+  ~theme
+  ~minute
+  ~fills
+  ~show_fills
+  ~hover
+  ~set_hover
+  =
   let bars = replay.bars in
   let n = Array.length bars in
-  let w = 1140. in
-  let left = 52. in
-  let right = 20. in
-  let plot_w = w -. left -. right in
+  let w = chart_w in
+  let left = chart_left in
+  let plot_w = chart_plot_w in
   let top = 10. in
   let price_h = 340. in
   let axis_y = top +. price_h +. 18. in
@@ -236,6 +279,12 @@ let chart (replay : Replay.t) ~theme ~minute ~fills ~show_fills =
   let svg name attrs children = Vdom.Node.create_svg name ~attrs children in
   let attr = Vdom.Attr.create in
   let tooltip text = svg "title" [] [ Vdom.Node.text text ] in
+  let hover = Option.map hover ~f:(fun m -> Int.max 0 (Int.min m minute)) in
+  let hovered_in (parent : Replay.parent_replay) =
+    match hover with
+    | None -> false
+    | Some m -> m >= parent.arrival_minute && m <= parent.deadline_minute
+  in
   (* horizontal gridlines at round dollar levels *)
   let grid =
     let step = Float.max 1. (Float.round_up (span /. 5.)) in
@@ -299,10 +348,10 @@ let chart (replay : Replay.t) ~theme ~minute ~fills ~show_fills =
           [ attr "x" (fs x0)
           ; attr "y" (fs (top +. 4. +. (Float.of_int index *. 8.)))
           ; attr "width" (fs (Float.max 3. (x1 -. x0)))
-          ; attr "height" "4"
+          ; attr "height" (if hovered_in parent then "6" else "4")
           ; attr "rx" "2"
           ; attr "fill" (Styles.order_color theme index)
-          ; attr "fill-opacity" "0.9"
+          ; attr "fill-opacity" (if hovered_in parent then "1" else "0.9")
           ]
           [ window_tooltip index parent ])
     else
@@ -318,7 +367,9 @@ let chart (replay : Replay.t) ~theme ~minute ~fills ~show_fills =
             ; attr "width" (fs (Float.max 2. (x1 -. x0)))
             ; attr "height" (fs price_h)
             ; attr "fill" color
-            ; attr "fill-opacity" "0.07"
+            ; attr
+                "fill-opacity"
+                (if hovered_in parent then "0.14" else "0.07")
             ]
             [ window_tooltip index parent ]
         ; svg
@@ -438,12 +489,145 @@ let chart (replay : Replay.t) ~theme ~minute ~fills ~show_fills =
                  (Price.to_string_dollar fill.price))
           ])
   in
+  (* The Google-Finance-style crosshair: a dashed vertical at the hovered
+     minute, a dot on the close, and a small panel of that bar's numbers
+     (plus which order windows cover the moment). *)
+  let crosshair =
+    match hover with
+    | None -> []
+    | Some m ->
+      let bar = bars.(m) in
+      let cx = x m in
+      let close = Price.to_float bar.Market_bar.close in
+      let covering =
+        List.filter_mapi replay.parents ~f:(fun index parent ->
+          if m >= parent.arrival_minute && m <= parent.deadline_minute
+          then
+            Some
+              ( Styles.order_color theme index
+              , sprintf
+                  "O%d %s window"
+                  (index + 1)
+                  (side_str parent.instruction.Alpha_instruction.side) )
+          else None)
+      in
+      let headline = sprintf "$%.2f · %s" close (hhmm bar.Market_bar.time) in
+      let detail =
+        sprintf
+          "O %.2f  H %.2f  L %.2f  ·  vol %s"
+          (Price.to_float bar.Market_bar.open_)
+          (Price.to_float bar.Market_bar.high)
+          (Price.to_float bar.Market_bar.low)
+          (Int.to_string_hum
+             ~delimiter:','
+             (Size.to_int bar.Market_bar.volume))
+      in
+      (* Size the panel to its text (approximate char widths at 13px bold /
+         11px regular) instead of a fixed box. *)
+      let box_w =
+        let width ~per_char text =
+          Float.of_int (String.length text) *. per_char
+        in
+        List.fold
+          (width ~per_char:7.4 headline
+           :: width ~per_char:5.9 detail
+           :: List.map covering ~f:(fun ((_ : string), text) ->
+             width ~per_char:6.3 text))
+          ~init:0.
+          ~f:Float.max
+        +. 20.
+      in
+      let line_h = 15. in
+      let box_h = 40. +. (Float.of_int (List.length covering) *. line_h) in
+      let box_x =
+        if Float.( > ) (cx +. 12. +. box_w) (left +. plot_w)
+        then cx -. 12. -. box_w
+        else cx +. 12.
+      in
+      let box_y = top +. 6. in
+      let label
+        ?(fill = theme.Styles.secondary)
+        ?(size = "11")
+        ?(weight = "400")
+        ~tx
+        ~ty
+        content
+        =
+        svg
+          "text"
+          [ attr "x" (fs tx)
+          ; attr "y" (fs ty)
+          ; attr "fill" fill
+          ; attr "font-size" size
+          ; attr "font-weight" weight
+          ]
+          [ Vdom.Node.text content ]
+      in
+      [ svg
+          "line"
+          [ attr "x1" (fs cx)
+          ; attr "x2" (fs cx)
+          ; attr "y1" (fs top)
+          ; attr "y2" (fs (top +. price_h))
+          ; attr "stroke" theme.Styles.faint
+          ; attr "stroke-width" "1"
+          ; attr "stroke-dasharray" "3 3"
+          ]
+          []
+      ; svg
+          "circle"
+          [ attr "cx" (fs cx)
+          ; attr "cy" (fs (y close))
+          ; attr "r" "3.5"
+          ; attr "fill" theme.Styles.blue
+          ; attr "stroke" theme.Styles.card_bg
+          ; attr "stroke-width" "1.5"
+          ]
+          []
+      ; svg
+          "rect"
+          [ attr "x" (fs box_x)
+          ; attr "y" (fs box_y)
+          ; attr "width" (fs box_w)
+          ; attr "height" (fs box_h)
+          ; attr "rx" "5"
+          ; attr "fill" theme.Styles.card_bg
+          ; attr "stroke" theme.Styles.chip_border
+          ; attr "fill-opacity" "0.96"
+          ]
+          []
+      ; label
+          ~fill:theme.Styles.text
+          ~size:"13"
+          ~weight:"700"
+          ~tx:(box_x +. 10.)
+          ~ty:(box_y +. 17.)
+          headline
+      ; label ~tx:(box_x +. 10.) ~ty:(box_y +. 32.) detail
+      ]
+      @ List.mapi covering ~f:(fun i (color, text) ->
+        label
+          ~fill:color
+          ~weight:"600"
+          ~tx:(box_x +. 10.)
+          ~ty:(box_y +. 32. +. (Float.of_int (i + 1) *. line_h))
+          text)
+  in
   svg
     "svg"
     [ attr "viewBox" (sprintf "0 0 %s %s" (fs w) (fs h))
-    ; Styles.s "width:100%;display:block;"
+    ; Styles.s "width:100%;display:block;cursor:crosshair;"
+    ; Vdom.Attr.on_mousemove (fun evt ->
+        set_hover (minute_of_mouse ~n ~shown:minute evt))
+    ; Vdom.Attr.on_mouseleave (fun (_ : _) -> set_hover None)
     ]
-    (grid @ windows @ vwap_line @ time_axis @ price_line @ fill_dots)
+    (grid
+     @ windows
+     @ vwap_line
+     @ time_axis
+     @ price_line
+     @ fill_dots
+     @ crosshair)
 ;;
 
 let legend
@@ -572,7 +756,7 @@ let orders_table (replay : Replay.t) ~theme ~fills ~minute =
        ^ "padding:10px 16px 6px 16px;border-bottom:1px solid "
        ^ theme.Styles.hairline
        ^ ";"
-       ^ Styles.label theme)
+       ^ Styles.table_label theme)
   in
   let day_vwap = replay.vwap_by_minute.(Array.length replay.bars - 1) in
   let now = Replay.time_at replay ~minute in
@@ -873,6 +1057,8 @@ let sim_view
   ~toggle_theme
   ~to_results
   ~back
+  ~hover
+  ~set_hover
   =
   let fills = Replay.fills_upto replay ~minute in
   let page =
@@ -938,7 +1124,8 @@ let sim_view
           ~set_speed ~set_minute ~restart}
       <div %{Styles.card theme "padding-bottom:8px;"}>
         %{legend replay ~theme ~minute ~fills ~show_fills ~toggle_fills}
-        %{chart replay ~theme ~minute ~fills ~show_fills}
+        %{chart replay ~theme ~minute ~fills ~show_fills ~hover
+            ~set_hover}
       </div>
       %{orders_table replay ~theme ~fills ~minute}
       %{event_log replay ~theme ~fills ~minute}
@@ -1075,7 +1262,7 @@ let dashboard_view ~theme ~is_dark ~runs ~new_sim ~toggle_theme =
        ^ "padding:8px 0 6px 0;border-bottom:1px solid "
        ^ theme.Styles.hairline
        ^ ";"
-       ^ Styles.label theme)
+       ^ Styles.table_label theme)
   in
   let run_row (run : History.Run_record.t) =
     let style =
@@ -1772,86 +1959,88 @@ let results_view
       </div>
     |}
   in
-  let columns = "64px 96px 60px 88px 92px 90px 78px 78px 100px 96px 1fr" in
-  let row_base =
+  (* Shared table machinery: css grids with sharp uppercase headers and
+     monospace cells sized to survive large dollar figures (12.5px, nowrap,
+     roomy columns). *)
+  let grid_base columns =
     "display:grid;grid-template-columns:"
     ^ columns
-    ^ ";column-gap:10px;align-items:baseline;"
+    ^ ";column-gap:10px;align-items:baseline;white-space:nowrap;"
   in
-  let head_row =
+  let head_row columns =
     Styles.s
-      (row_base
+      (grid_base columns
        ^ "padding:10px 16px 6px 16px;border-bottom:1px solid "
        ^ theme.Styles.hairline
        ^ ";"
-       ^ Styles.label theme)
+       ^ Styles.table_label theme)
   in
-  let order_row index (row : Replay.result_row) =
-    let grading = row.Replay.grading in
+  let body_row columns =
+    Styles.s
+      (grid_base columns
+       ^ "padding:8px 16px;font-size:12.5px;color:"
+       ^ theme.Styles.text
+       ^ ";border-bottom:1px solid "
+       ^ theme.Styles.hairline
+       ^ ";"
+       ^ Styles.mono)
+  in
+  let total_style columns =
+    Styles.s
+      (grid_base columns
+       ^ "padding:9px 16px;font-size:12.5px;font-weight:700;color:"
+       ^ theme.Styles.text
+       ^ ";"
+       ^ Styles.mono)
+  in
+  let bold = Styles.s "font-weight:600;" in
+  let dim = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
+  let dash = {%html|<span %{dim}>-</span>|} in
+  let blank = {%html|<span></span>|} in
+  let order_cell index =
     let chip =
       Styles.s
         ("display:inline-block;width:12px;height:3px;border-radius:2px;vertical-align:middle;background:"
          ^ Styles.order_color theme index
          ^ ";margin-right:8px;")
     in
-    let style =
-      Styles.s
-        (row_base
-         ^ "padding:8px 16px;font-size:13px;color:"
-         ^ theme.Styles.text
-         ^ ";border-bottom:1px solid "
-         ^ theme.Styles.hairline
-         ^ ";"
-         ^ Styles.mono)
-    in
-    let bold = Styles.s "font-weight:600;" in
-    let dim = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
-    let avg_fill, shortfall =
+    {%html|<span %{bold}><span %{chip}></span>O%{index + 1#Int}</span>|}
+  in
+  let side_qty (grading : Transaction_cost.t) =
+    sprintf
+      "%s %s"
+      (side_str grading.side)
+      (Int.to_string_hum ~delimiter:',' (Size.to_int grading.quantity))
+  in
+  (* Cost table: components in reading order, summing left-to-right into the
+     shortfall column. *)
+  let cost_columns = "56px 112px 104px 116px 104px 104px 128px 1fr" in
+  let cost_row index (row : Replay.result_row) =
+    let grading = row.Replay.grading in
+    let avg_fill, shortfall_bps =
       match grading.Transaction_cost.fill_metrics with
-      | None ->
-        let dash = {%html|<span %{dim}>-</span>|} in
-        dash, dash
+      | None -> dash, dash
       | Some metrics ->
-        let avg = sprintf "$%.4f" metrics.average_fill_price in
-        {%html|<span>#{avg}</span>|}, bps_view ~theme metrics.shortfall_bps
+        ( {%html|<span>#{sprintf "$%.4f" metrics.average_fill_price}</span>|}
+        , bps_view ~theme metrics.shortfall_bps )
     in
     {%html|
-      <div %{style}>
-        <span %{bold}><span %{chip}></span>O%{index + 1#Int}</span>
-        <span %{bold}>
-          #{side_str grading.side}
-          #{Int.to_string_hum ~delimiter:','
-              (Size.to_int grading.quantity)}
-        </span>
-        <span %{dim}>
-          #{sprintf "%.0f%%" (grading.completion_rate *. 100.)}
-        </span>
+      <div %{body_row cost_columns}>
+        %{order_cell index}
+        <span %{bold}>#{side_qty grading}</span>
         <span>%{avg_fill}</span>
-        <span>%{shortfall}</span>
         <span>%{cost_cell ~theme grading.timing_cost_cents}</span>
         <span>%{cost_cell ~theme grading.spread_cost_cents}</span>
         <span>%{cost_cell ~theme grading.impact_cost_cents}</span>
-        <span>%{cost_cell ~theme grading.opportunity_cost_cents}</span>
-        <span>%{pnl_cell ~theme grading.net_pnl_cents}</span>
-        <span>%{pnl_cell ~theme row.value_add_cents}</span>
+        <span>%{cost_cell ~theme grading.friction_cost_cents}</span>
+        <span>%{shortfall_bps}</span>
       </div>
     |}
   in
-  let totals_row =
-    let style =
-      Styles.s
-        (row_base
-         ^ "padding:9px 16px;font-size:13px;font-weight:700;color:"
-         ^ theme.Styles.text
-         ^ ";"
-         ^ Styles.mono)
-    in
-    let blank = {%html|<span></span>|} in
+  let cost_totals =
     {%html|
-      <div %{style}>
+      <div %{total_style cost_columns}>
         <span>total</span>
-        %{blank}
-        %{blank}
         %{blank}
         %{blank}
         <span>%{cost_cell ~theme
@@ -1861,9 +2050,54 @@ let results_view
         <span>%{cost_cell ~theme
             (sum (fun row -> row.Replay.grading.impact_cost_cents))}</span>
         <span>%{cost_cell ~theme
+            (sum (fun row -> row.Replay.grading.friction_cost_cents))}</span>
+        %{blank}
+      </div>
+    |}
+  in
+  (* Results table: the P&L identity, net = gross - shortfall - opportunity,
+     plus the baseline comparison. *)
+  let results_columns =
+    "56px 112px 64px 122px 118px 118px 130px 130px 1fr"
+  in
+  let results_row index (row : Replay.result_row) =
+    let grading = row.Replay.grading in
+    let capture =
+      match grading.Transaction_cost.alpha_capture with
+      | None -> dash
+      | Some capture ->
+        {%html|<span %{dim}>#{sprintf "%.1f%%" (capture *. 100.)}</span>|}
+    in
+    {%html|
+      <div %{body_row results_columns}>
+        %{order_cell index}
+        <span %{bold}>#{side_qty grading}</span>
+        <span %{dim}>
+          #{sprintf "%.0f%%" (grading.completion_rate *. 100.)}
+        </span>
+        <span>%{pnl_cell ~theme grading.gross_theoretical_pnl_cents}</span>
+        <span>%{cost_cell ~theme grading.friction_cost_cents}</span>
+        <span>%{cost_cell ~theme grading.opportunity_cost_cents}</span>
+        <span>%{pnl_cell ~theme grading.net_pnl_cents}</span>
+        <span>%{pnl_cell ~theme row.value_add_cents}</span>
+        <span>%{capture}</span>
+      </div>
+    |}
+  in
+  let results_totals =
+    {%html|
+      <div %{total_style results_columns}>
+        <span>total</span>
+        %{blank}
+        %{blank}
+        <span>%{pnl_cell ~theme total_gross}</span>
+        <span>%{cost_cell ~theme
+            (sum (fun row -> row.Replay.grading.friction_cost_cents))}</span>
+        <span>%{cost_cell ~theme
             (sum (fun row -> row.Replay.grading.opportunity_cost_cents))}</span>
         <span>%{pnl_cell ~theme total_net}</span>
         <span>%{pnl_cell ~theme replay.results.total_value_add_cents}</span>
+        <span>#{capture}</span>
       </div>
     |}
   in
@@ -1871,7 +2105,32 @@ let results_view
     Styles.s
       ("color:" ^ theme.Styles.text ^ ";font-size:14px;font-weight:600;")
   in
-  let buttons = Styles.s "display:flex;gap:10px;" in
+  let buttons = Styles.s "display:flex;gap:10px;align-items:center;" in
+  let export_name suffix =
+    sprintf
+      "execlab_%s_%s_%s_%s.csv"
+      (Symbol.to_string replay.symbol)
+      (Date.to_string replay.date)
+      replay.algo_name
+      suffix
+  in
+  let download filename text =
+    Effect.of_sync_fun (fun () -> Download.csv ~filename ~text) ()
+  in
+  let ghost_button ~on_click label =
+    let style =
+      Styles.s
+        ("background:"
+         ^ theme.Styles.chip_bg
+         ^ ";color:"
+         ^ theme.Styles.secondary
+         ^ ";border:1px solid "
+         ^ theme.Styles.chip_border
+         ^ ";border-radius:5px;padding:9px \
+            16px;cursor:pointer;font-size:13px;font-weight:600;")
+    in
+    {%html|<button %{style} on_click=%{on_click}>#{label}</button>|}
+  in
   let page =
     Styles.s
       "display:flex;flex-direction:column;gap:16px;max-width:1240px;margin:0 \
@@ -1888,27 +2147,50 @@ let results_view
         <div %{Styles.s "padding:14px 16px 0 16px;"}>
           <span %{title_style}>Execution cost breakdown</span>
         </div>
-        <div %{head_row}>
+        <div %{head_row cost_columns}>
+          <span>order</span>
+          <span>side · qty</span>
+          <span>avg fill</span>
+          <span>timing</span>
+          <span>+ spread</span>
+          <span>+ impact</span>
+          <span>= shortfall</span>
+          <span>in bps</span>
+        </div>
+        *{List.mapi rows ~f:cost_row}
+        %{cost_totals}
+      </div>
+      <div %{Styles.card theme "padding-bottom:4px;"}>
+        <div %{Styles.s "padding:14px 16px 0 16px;"}>
+          <span %{title_style}>Results</span>
+        </div>
+        <div %{head_row results_columns}>
           <span>order</span>
           <span>side · qty</span>
           <span>filled</span>
-          <span>avg fill</span>
+          <span>gross alpha</span>
           <span>shortfall</span>
-          <span>timing</span>
-          <span>spread</span>
-          <span>impact</span>
           <span>opportunity</span>
           <span>net P&L</span>
           <span>vs immediate</span>
+          <span>capture</span>
         </div>
-        *{List.mapi rows ~f:order_row}
-        %{totals_row}
+        *{List.mapi rows ~f:results_row}
+        %{results_totals}
       </div>
       <div %{buttons}>
         %{primary_button ~theme ~on_click:(fun _ -> new_sim)
             "New simulation"}
         %{primary_button ~theme ~on_click:(fun _ -> to_dashboard)
             "Dashboard"}
+        %{ghost_button
+            ~on_click:(fun _ ->
+              download (export_name "results") (Replay.results_csv replay))
+            "⤓ Results CSV"}
+        %{ghost_button
+            ~on_click:(fun _ ->
+              download (export_name "fills") (Replay.fills_csv replay))
+            "⤓ Fills CSV"}
       </div>
     </div>
   |}
@@ -1965,6 +2247,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let playing, set_playing = Bonsai.state true graph in
   let speed, set_speed = Bonsai.state 4 graph in
   let show_fills, set_show_fills = Bonsai.state false graph in
+  let hover, set_hover = Bonsai.state (None : int option) graph in
   let is_dark, set_is_dark = Bonsai.state false graph in
   (* The symbol whose calendar the choose-day screen is browsing; distinct
      from [selection], which is only set once a session is clicked. *)
@@ -2035,6 +2318,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_speed
   and show_fills
   and set_show_fills
+  and hover
+  and set_hover
   and is_dark
   and set_is_dark
   and cal_symbol
@@ -2126,6 +2411,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~toggle_theme
         ~to_results:(goto Screen.Results)
         ~back:(goto Screen.Setup)
+        ~hover
+        ~set_hover
     | Results, Some r, Some (_ : Symbol.t * Date.t) ->
       results_view
         r

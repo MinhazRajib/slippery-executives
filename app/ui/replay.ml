@@ -408,3 +408,87 @@ let parent_index_of_order t order_id =
   |> Option.map ~f:fst
   |> Option.value ~default:0
 ;;
+
+(* ---------- CSV export ---------- *)
+
+(* One row per order: identity, window, benchmarks, fill quality, and the
+   full cost tree. Costs are exact integer cents; prices are dollars. *)
+let results_csv t =
+  let header =
+    "order,side,symbol,date,algo,quantity,filled,completion_rate,arrival_time,deadline,arrival_price,terminal_price,day_vwap,avg_fill_price,shortfall_bps,vwap_slippage_bps,timing_cost_cents,spread_cost_cents,impact_cost_cents,friction_cost_cents,opportunity_cost_cents,gross_pnl_cents,net_pnl_cents,value_add_vs_immediate_cents,alpha_capture"
+  in
+  let rows =
+    List.mapi
+      (List.zip_exn t.parents t.results.rows)
+      ~f:(fun index (parent, row) ->
+        let grading = row.grading in
+        let instruction = parent.instruction in
+        let fill_metric render =
+          match grading.Transaction_cost.fill_metrics with
+          | None -> ""
+          | Some metrics -> render metrics
+        in
+        String.concat
+          ~sep:","
+          [ Int.to_string (index + 1)
+          ; (match grading.side with Buy -> "BUY" | Sell -> "SELL")
+          ; Symbol.to_string t.symbol
+          ; Date.to_string t.date
+          ; t.algo_name
+          ; Int.to_string (Size.to_int grading.quantity)
+          ; Int.to_string (Size.to_int grading.filled)
+          ; sprintf "%.6f" grading.completion_rate
+          ; String.prefix
+              (Time_ns.Ofday.to_string
+                 instruction.Alpha_instruction.arrival_time)
+              8
+          ; String.prefix
+              (Time_ns.Ofday.to_string
+                 instruction.Alpha_instruction.deadline)
+              8
+          ; sprintf "%.2f" (Price.to_float grading.arrival_price)
+          ; sprintf "%.2f" (Price.to_float grading.terminal_price)
+          ; sprintf "%.4f" grading.day_vwap
+          ; fill_metric (fun metrics ->
+              sprintf
+                "%.6f"
+                metrics.Transaction_cost.Fill_metrics.average_fill_price)
+          ; fill_metric (fun metrics -> sprintf "%.4f" metrics.shortfall_bps)
+          ; fill_metric (fun metrics ->
+              sprintf "%.4f" metrics.vwap_slippage_bps)
+          ; Int.to_string grading.timing_cost_cents
+          ; Int.to_string grading.spread_cost_cents
+          ; Int.to_string grading.impact_cost_cents
+          ; Int.to_string grading.friction_cost_cents
+          ; Int.to_string grading.opportunity_cost_cents
+          ; Int.to_string grading.gross_theoretical_pnl_cents
+          ; Int.to_string grading.net_pnl_cents
+          ; Int.to_string row.value_add_cents
+          ; (match grading.alpha_capture with
+             | None -> ""
+             | Some capture -> sprintf "%.6f" capture)
+          ])
+  in
+  String.concat ~sep:"\n" (header :: rows) ^ "\n"
+;;
+
+(* Every fill of the graded run — the raw material behind the per-order
+   numbers, tagged with its owning order. *)
+let fills_csv t =
+  let header = "fill_id,time,order,side,size,price,liquidity" in
+  let rows =
+    Array.to_list t.fills
+    |> List.map ~f:(fun (fill : Fill.t) ->
+      String.concat
+        ~sep:","
+        [ Int.to_string fill.fill_id
+        ; String.prefix (Time_ns.Ofday.to_string fill.time) 8
+        ; Int.to_string (parent_index_of_order t fill.order_id + 1)
+        ; (match fill.side with Buy -> "BUY" | Sell -> "SELL")
+        ; Int.to_string (Size.to_int fill.size)
+        ; sprintf "%.2f" (Price.to_float fill.price)
+        ; (match fill.liquidity with Taker -> "taker" | Maker -> "maker")
+        ])
+  in
+  String.concat ~sep:"\n" (header :: rows) ^ "\n"
+;;
