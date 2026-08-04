@@ -470,18 +470,18 @@ let chart
           [ Vdom.Node.text (price_label v) ]
       ])
   in
-  (* With a few disjoint orders, full-height tinted windows with arrival
-     annotations read well. Once windows overlap or multiply, the tints stack
-     into mud and the labels collide — so switch to thin stacked lane bands
-     (one per order, tooltip carrying the detail). *)
-  let compact_windows =
-    let overlaps (a : Replay.parent_replay) (b : Replay.parent_replay) =
-      a.arrival_minute < b.deadline_minute
-      && b.arrival_minute < a.deadline_minute
-    in
-    List.length replay.parents > 3
-    || List.existsi replay.parents ~f:(fun i a ->
-      List.existsi replay.parents ~f:(fun j b -> i < j && overlaps a b))
+  (* Windows are drawn as full-height translucent bands and simply allowed to
+     overlap: two bands stacking compound their alpha, so an interval where
+     several orders are live reads as a visibly denser shade without any
+     stacking, offsetting or lane logic. Each band also gets a solid top rail
+     in its own order color, which survives the blend and keeps identity
+     legible no matter how many bands pile up. *)
+  let window_visible (parent : Replay.parent_replay) =
+    parent.arrival_minute <= z1 && parent.deadline_minute >= z0
+  in
+  let window_edges (parent : Replay.parent_replay) =
+    ( x (Int.max z0 parent.arrival_minute)
+    , x (Int.min z1 parent.deadline_minute) )
   in
   let window_tooltip index (parent : Replay.parent_replay) =
     tooltip
@@ -493,75 +493,66 @@ let chart
          (hhmm parent.instruction.Alpha_instruction.deadline)
          (Price.to_string_dollar parent.arrival_price))
   in
-  let window_visible (parent : Replay.parent_replay) =
-    parent.arrival_minute <= z1 && parent.deadline_minute >= z0
-  in
-  let window_edges (parent : Replay.parent_replay) =
-    ( x (Int.max z0 parent.arrival_minute)
-    , x (Int.min z1 parent.deadline_minute) )
-  in
   let windows =
-    if compact_windows
-    then
-      List.filter_mapi replay.parents ~f:(fun index parent ->
-        if not (window_visible parent)
-        then None
-        else (
-          let x0, x1 = window_edges parent in
-          Some
-            (svg
-               "rect"
-               [ attr "x" (fs x0)
-               ; attr "y" (fs (top +. 4. +. (Float.of_int index *. 8.)))
-               ; attr "width" (fs (Float.max 3. (x1 -. x0)))
-               ; attr "height" (if hovered_in parent then "6" else "4")
-               ; attr "rx" "2"
-               ; attr "fill" (Styles.order_color theme index)
-               ; attr
-                   "fill-opacity"
-                   (if hovered_in parent then "1" else "0.9")
-               ]
-               [ window_tooltip index parent ])))
+    List.concat_mapi replay.parents ~f:(fun index parent ->
+      if not (window_visible parent)
+      then []
+      else (
+        let color = Styles.order_color theme index in
+        let x0, x1 = window_edges parent in
+        let width = Float.max 2. (x1 -. x0) in
+        let rail_y = top +. 3. +. (Float.of_int index *. 3.5) in
+        [ svg
+            "rect"
+            [ attr "x" (fs x0)
+            ; attr "y" (fs top)
+            ; attr "width" (fs width)
+            ; attr "height" (fs price_h)
+            ; attr "fill" color
+            ; attr
+                "fill-opacity"
+                (if hovered_in parent then "0.16" else "0.085")
+            ]
+            [ window_tooltip index parent ]
+        ; svg
+            "rect"
+            [ attr "x" (fs x0)
+            ; attr "y" (fs rail_y)
+            ; attr "width" (fs width)
+            ; attr "height" (if hovered_in parent then "3" else "2.2")
+            ; attr "rx" "1"
+            ; attr "fill" color
+            ]
+            [ window_tooltip index parent ]
+        ]))
+  in
+  (* Arrival reference lines stay, but only when few enough to read. *)
+  let arrival_lines =
+    if List.length replay.parents > 4
+    then []
     else
       List.concat_mapi replay.parents ~f:(fun index parent ->
         if not (window_visible parent)
         then []
         else (
-          let color = Styles.order_color theme index in
           let x0, x1 = window_edges parent in
           let arrival = Price.to_float parent.arrival_price in
-          [ svg
-              "rect"
-              [ attr "x" (fs x0)
-              ; attr "y" (fs top)
-              ; attr "width" (fs (Float.max 2. (x1 -. x0)))
-              ; attr "height" (fs price_h)
-              ; attr "fill" color
-              ; attr
-                  "fill-opacity"
-                  (if hovered_in parent then "0.14" else "0.07")
-              ]
-              [ window_tooltip index parent ]
-          ; svg
-              "line"
-              [ attr "x1" (fs x0)
-              ; attr "x2" (fs x1)
-              ; attr "y1" (fs (y arrival))
-              ; attr "y2" (fs (y arrival))
-              ; attr "stroke" theme.Styles.faint
-              ; attr "stroke-width" "1"
-              ; attr "stroke-dasharray" "4 3"
-              ]
-              []
-          ; svg
-              "text"
-              [ attr "x" (fs (x0 +. 4.))
-              ; attr "y" (fs (y arrival -. 5.))
-              ; attr "fill" theme.Styles.faint
-              ; attr "font-size" "11"
-              ]
-              [ Vdom.Node.text (sprintf "arrival %.2f" arrival) ]
-          ]))
+          if Float.( < ) arrival lo || Float.( > ) arrival hi
+          then []
+          else
+            [ svg
+                "line"
+                [ attr "x1" (fs x0)
+                ; attr "x2" (fs x1)
+                ; attr "y1" (fs (y arrival))
+                ; attr "y2" (fs (y arrival))
+                ; attr "stroke" (Styles.order_color theme index)
+                ; attr "stroke-width" "1"
+                ; attr "stroke-opacity" "0.55"
+                ; attr "stroke-dasharray" "4 3"
+                ]
+                []
+            ]))
   in
   (* the whole-day vwap as a flat dashed reference line *)
   let day_vwap = replay.vwap_by_minute.(n - 1) in
@@ -655,35 +646,65 @@ let chart
              [ Vdom.Node.text (hhmm bars.(i).Market_bar.time) ])
       else None)
   in
-  (* optional overlay: each fill as a dot at its executed price *)
+  (* Every fill is drawn at its exact executed price and its exact bar. The
+     engine is bar-granular, so several fills can share one minute; rather
+     than aggregate them (which would hide work) they fan out *within* that
+     bar's own pixel width, ordered by parent. At day zoom a bar is a few
+     pixels wide so the fan is invisible and no false precision is implied;
+     zoom in and the same fills separate cleanly. Radius grows with zoom for
+     the same reason. *)
   let fill_dots =
     if not show_fills
     then []
-    else
-      List.filter_map fills ~f:(fun (fill : Fill.t) ->
-        let index = Replay.parent_index_of_order replay fill.order_id in
+    else (
+      let bar_width = plot_w /. Float.of_int (Int.max 1 (z1 - z0)) in
+      let radius = Float.min 4.2 (Float.max 2. (bar_width /. 3.)) in
+      (* Group the visible fills by minute so each group can be fanned. *)
+      let by_minute = Hashtbl.create (module Int) in
+      List.iter fills ~f:(fun (fill : Fill.t) ->
         let m = Replay.minute_of_time replay fill.time in
-        if m < z0 || m > z1
-        then None
-        else
-          Some
-            (svg
-               "circle"
-               [ attr "cx" (fs (x m))
-               ; attr "cy" (fs (y (Price.to_float fill.price)))
-               ; attr "r" "2.2"
-               ; attr "fill" (Styles.order_color theme index)
-               ; attr "stroke" theme.Styles.card_bg
-               ; attr "stroke-width" "0.8"
-               ]
-               [ tooltip
-                   (sprintf
-                      "%s %s %d @ %s"
-                      (hhmm fill.time)
-                      (side_str fill.side)
-                      (Size.to_int fill.size)
-                      (Price.to_string_dollar fill.price))
-               ]))
+        if m >= z0 && m <= z1
+        then Hashtbl.add_multi by_minute ~key:m ~data:fill);
+      Hashtbl.to_alist by_minute
+      |> List.concat_map ~f:(fun (m, minute_fills) ->
+        let minute_fills = List.rev minute_fills in
+        let count = List.length minute_fills in
+        (* The fan never exceeds the bar it belongs to. *)
+        let spread =
+          Float.min (bar_width *. 0.72) (Float.of_int count *. 3.4)
+        in
+        List.mapi minute_fills ~f:(fun i (fill : Fill.t) ->
+          let index = Replay.parent_index_of_order replay fill.order_id in
+          let offset =
+            if count <= 1
+            then 0.
+            else
+              (Float.of_int i /. Float.of_int (count - 1) *. spread)
+              -. (spread /. 2.)
+          in
+          svg
+            "circle"
+            [ attr "cx" (fs (x m +. offset))
+            ; attr "cy" (fs (y (Price.to_float fill.price)))
+            ; attr "r" (fs radius)
+            ; attr "fill" (Styles.order_color theme index)
+            ; attr "stroke" theme.Styles.card_bg
+            ; attr
+                "stroke-width"
+                (if Float.( > ) radius 3. then "1.1" else "0.7")
+            ]
+            [ tooltip
+                (sprintf
+                   "%s · order %d · %s %d @ %s (%s)"
+                   (hhmm fill.time)
+                   (index + 1)
+                   (side_str fill.side)
+                   (Size.to_int fill.size)
+                   (Price.to_string_dollar fill.price)
+                   (match fill.liquidity with
+                    | Taker -> "taker"
+                    | Maker -> "maker"))
+            ])))
   in
   (* The Google-Finance-style crosshair: a dashed vertical at the hovered
      minute, a dot on the close, and a small panel of that bar's numbers
@@ -819,6 +840,7 @@ let chart
     ]
     (grid
      @ windows
+     @ arrival_lines
      @ vwap_line
      @ time_axis
      @ price_line
@@ -4351,7 +4373,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let minute, set_minute = Bonsai.state' 0 graph in
   let playing, set_playing = Bonsai.state true graph in
   let speed, set_speed = Bonsai.state 4 graph in
-  let show_fills, set_show_fills = Bonsai.state false graph in
+  let show_fills, set_show_fills = Bonsai.state true graph in
   let param_text, set_param_text =
     Bonsai.state Replay.Param_text.default graph
   in
