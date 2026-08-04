@@ -256,34 +256,46 @@ let touch market =
   , Option.value_exn (Book.best book ~side:Side.Sell) )
 ;;
 
-let%expect_test "spread calibration: a median large-cap minute quotes the \
-                 bar model's own spread"
+let%expect_test "spread calibration: the touch tracks the bar's own range \
+                 across the bundled names"
   =
-  (* Real TSLA minutes in the demo window run about 72c of range. A rung is
-     range / 30 = 2c, so the touch sits 2c either side of the open — exactly
-     Fill_model's default half-spread. The two engines therefore agree about
-     what an ordinary trade costs, and disagree only about what happens when
-     you want size. *)
-  let market, (_ : Fill.t list) =
-    Synthetic_market.on_bar_advance
-      (Synthetic_market.create Synthetic_market.Config.default)
-      ~bar:
-        (bar
-           ~minute:0
-           ~open_:15000
-           ~high:15036
-           ~low:14964
-           ~close:15020
-           ~volume:62_429)
-      ~resting_orders:[]
+  (* The premise has to come from the data, not from a bar chosen to flatter
+     it. Median minute ranges across data/ run 7c (NFLX), 46c (TSLA) and 78c
+     (META); at a divisor of 25 those quote a touch of 1c, 2c and 3c either
+     side of the open. So a typical minute costs the order of the bar model's
+     2c default and of a real large-cap spread — quiet names tighter, violent
+     ones wider — rather than any single number. *)
+  let touch_for ~range_cents =
+    let market, (_ : Fill.t list) =
+      Synthetic_market.on_bar_advance
+        (Synthetic_market.create Synthetic_market.Config.default)
+        ~bar:
+          (bar
+             ~minute:0
+             ~open_:15000
+             ~high:(15000 + (range_cents / 2))
+             ~low:(15000 - (range_cents / 2))
+             ~close:15000
+             ~volume:62_429)
+        ~resting_orders:[]
+    in
+    let bid, ask = touch market in
+    printf
+      "range %2dc -> touch %s / %s (half-spread %dc)\n"
+      range_cents
+      (Price.to_string_dollar bid)
+      (Price.to_string_dollar ask)
+      ((Price.to_int_cents ask - Price.to_int_cents bid) / 2)
   in
-  let bid, ask = touch market in
-  printf
-    "touch %s / %s (half-spread %dc)\n"
-    (Price.to_string_dollar bid)
-    (Price.to_string_dollar ask)
-    ((Price.to_int_cents ask - Price.to_int_cents bid) / 2);
-  [%expect {| touch $149.98 / $150.02 (half-spread 2c) |}]
+  touch_for ~range_cents:7;
+  touch_for ~range_cents:46;
+  touch_for ~range_cents:78;
+  [%expect
+    {|
+    range  7c -> touch $149.99 / $150.01 (half-spread 1c)
+    range 46c -> touch $149.98 / $150.02 (half-spread 2c)
+    range 78c -> touch $149.97 / $150.03 (half-spread 3c)
+    |}]
 ;;
 
 let%expect_test "permanent impact: the makers remember being run over, and \

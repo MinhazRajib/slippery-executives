@@ -1,10 +1,11 @@
-(** Engine B: a synthetic exchange behind the same {!Engine_intf} seam as the
-    bar-based {!Fill_model}. Background agents are calibrated to each
-    historical bar — three market-maker archetypes ladder both sides of a
-    {!Book} around the bar's price path with depth proportional to bar volume
-    and spreads that widen with bar range, while noise traders print a tape
-    that tracks the bar's own volume and direction. Client orders walk the
-    resting ladders through real price levels, so partial fills, depth
+(** Engine B: a synthetic exchange behind the same
+    {!Execlab_simulation.Engine_intf} seam as the bar-based
+    {!Execlab_simulation.Fill_model}. Background agents are calibrated to
+    each historical bar — three market-maker archetypes ladder both sides of
+    a {!Book} around the bar's price path with depth proportional to bar
+    volume and spreads that widen with bar range, while noise traders print a
+    tape that tracks the bar's own volume and direction. Client orders walk
+    the resting ladders through real price levels, so partial fills, depth
     exhaustion, and market impact {e emerge mechanically} — and because
     makers requote around the historical path each bar, impact is real but
     temporary (the leash).
@@ -40,12 +41,13 @@ open! Execlab_simulation
 
 module Config : sig
   (** The market's calibration. [rung_range_divisor] sets how wide the makers
-      quote — one rung is the bar's range over the divisor, floored at a cent
-      — and 30 puts a median large-cap minute's touch on {!Fill_model}'s
-      default spread, so the two engines agree about ordinary trades and
-      differ only about size. [permanent_impact_coefficient] is the quote
-      shift at full participation, and [pressure_decay] the share of
-      remembered client aggression that survives each bar. *)
+      quote: one rung is the bar's range over the divisor, rounded and
+      floored at a cent. At 25 that is one to three cents across the bundled
+      names' typical minutes — the order of a real large-cap spread, and of
+      the bar model's 2c default, without pretending to equal it on any
+      particular minute. [permanent_impact_coefficient] is the quote shift at
+      full participation, and [pressure_decay] the share of remembered client
+      aggression that survives each bar. *)
   type t =
     { seed : int
     ; rung_range_divisor : int
@@ -69,8 +71,8 @@ val on_bar_advance
 
 val on_child_order : t -> Child_order.t -> t * Fill.t list
 
-(** The exchange packed behind the engine seam — pass to {!Driver.run}'s
-    [?engine]. *)
+(** The exchange packed behind the engine seam — pass to
+    {!Execlab_simulation.Driver.run}'s [?engine]. *)
 val engine : Config.t -> Engine_intf.t
 
 module For_testing : sig

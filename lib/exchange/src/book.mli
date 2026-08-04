@@ -1,9 +1,9 @@
 (** A price-aggregated limit order book of {e agent} liquidity: each side is
     a list of (price, size) levels, best first. Only the synthetic market's
-    background agents rest here — client orders always take (v1 keeps client
-    resting limits on the driver's strict-through rule, exactly as Engine A
-    prices them) — so there is no queue priority to track {e within} a level,
-    only between levels. *)
+    background agents quote here — a client's resting order is not displayed,
+    it is tracked against the size that {e was} displayed at its price when
+    it arrived (see {!size_at}) — so there is no queue to track within a
+    level, only the depth a newcomer must wait behind. *)
 
 open! Core
 open! Execlab_types

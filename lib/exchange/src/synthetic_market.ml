@@ -13,14 +13,15 @@ module Config = struct
     }
   [@@deriving sexp_of]
 
-  (* A rung of the bar's range over 30 puts the touch of a median large-cap
-     minute (~70c of range) about 2c either side of the fundamental — the
-     same spread Fill_model quotes by default, so the two engines agree about
-     what an ordinary trade costs and differ only where they should: what
-     happens when you want size. *)
+  (* A rung is the bar's range over 25, rounded, floored at a cent — one to
+     three cents across the bundled names' typical minutes (their median
+     ranges run 7c on NFLX to 78c on META), which is the order of a real
+     large-cap spread and of Fill_model's 2c default. Rounding, not
+     truncation: truncating floors most minutes of the quieter names to a
+     single cent, quoting tighter than any real book. *)
   let default =
     { seed = 1
-    ; rung_range_divisor = 30
+    ; rung_range_divisor = 25
     ; permanent_impact_coefficient = Price.of_int_cents 15
     ; pressure_decay = 0.6
     }
@@ -81,10 +82,10 @@ let create config =
    divisor, floored at a cent. Wider bars quote wider, exactly as makers
    widen when the tape turns violent. *)
 let rung_cents t (bar : Market_bar.t) =
+  let range = Price.to_int_cents bar.high - Price.to_int_cents bar.low in
   Int.max
     1
-    ((Price.to_int_cents bar.high - Price.to_int_cents bar.low)
-     / t.config.Config.rung_range_divisor)
+    (Float.iround_nearest_exn (range // t.config.Config.rung_range_divisor))
 ;;
 
 (* What the makers have concluded from being traded against: a square-root
