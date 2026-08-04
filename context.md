@@ -427,13 +427,25 @@ What remains, in order:
    screen (the friend's app/ui/client has a reference
    implementation with text fields).
 2. **Run persistence beyond localStorage** (config + results as sexp
-   files) and the local same-strategy leaderboard; "retest with a
-   different algo" flows from stored configs.
-3. **Server split** (Async RPC at the one client<->server seam): real
+   files); "retest with a different algo" flows from stored configs.
+   The local same-day leaderboard shipped 2026-08-04 on the results
+   screen (best stored run per algorithm, rank badges, value-add
+   bars, a retest button) — fed by the localStorage scorecards until
+   real persistence lands. The results screen also gained a
+   plain-language verdict + big-tile summary the same day.
+3. **Multi-symbol alpha files.** `Alpha_instruction` carries a symbol
+   and the parser accepts mixed-symbol files, but `Driver.run` binds a
+   run to one `(symbol, Trading_day)` and the UI validates against the
+   chosen day. Multi-stock strategies need the driver to step several
+   Trading_days in lockstep (per-symbol fill models and day stats, one
+   clock), a portfolio spanning symbols, and a day picker that binds a
+   date rather than a (symbol, date) pair. Do after persistence; the
+   UI sample library should then grow multi-symbol presets.
+4. **Server split** (Async RPC at the one client<->server seam): real
    data hosting replaces the embedded catalog, alpha uploads stay
    client-side, the server re-runs submitted configs (determinism as
    anti-cheat), and the multiplayer fixed-alpha leaderboard arrives.
-4. **Engine B**, the synthetic exchange reusing jsip's book/matching
+5. **Engine B**, the synthetic exchange reusing jsip's book/matching
    engine with the historical path as the fundamental.
 
 Smaller open items: POV's rolling volume-window smoothing knob;
