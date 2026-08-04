@@ -1,0 +1,12 @@
+(library
+ (name execlab_session_test)
+ (libraries
+  execlab_session
+  execlab_types
+  execlab_market
+  execlab_simulation
+  expect_test_helpers_core
+  core)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane)))

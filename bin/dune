@@ -7,6 +7,8 @@
   execlab_simulation
   execlab_analytics
   execlab_alpha
+  execlab_session
+  execlab_server
   core
   core_unix.sys_unix)
  (preprocess

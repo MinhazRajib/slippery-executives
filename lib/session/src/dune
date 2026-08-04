@@ -1,0 +1,12 @@
+(library
+ (name execlab_session)
+ (public_name execlab.session)
+ (libraries
+  core
+  execlab_types
+  execlab_market
+  execlab_execution
+  execlab_simulation
+  execlab_analytics)
+ (preprocess
+  (pps ppx_jane)))

@@ -1,0 +1,13 @@
+(library
+ (name execlab_server)
+ (public_name execlab.server)
+ (libraries
+  core
+  core_unix
+  core_unix.sys_unix
+  execlab_types
+  execlab_market
+  execlab_session
+  execlab_protocol)
+ (preprocess
+  (pps ppx_jane)))

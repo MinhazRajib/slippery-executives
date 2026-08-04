@@ -56,22 +56,7 @@ let parse_alpha text =
     parsed.instructions)
 ;;
 
-(* Run parameters: the fill model's knobs plus each algorithm's own. Defaults
-   mirror [Fill_model.Config.default] and the CLI's constants. *)
-module Params = struct
-  type t =
-    { fill_config : Fill_model.Config.t
-    ; pov_rate : float
-    ; is_urgency : float
-    }
-
-  let default =
-    { fill_config = Fill_model.Config.default
-    ; pov_rate = 0.0015
-    ; is_urgency = 2.0
-    }
-  ;;
-end
+module Params = Execlab_session.Params
 
 (* The setup screen's raw text fields, one per knob; parsed and validated
    only when the user hits Run. *)
@@ -153,38 +138,6 @@ let parse_params (text : Param_text.t) : Params.t Or_error.t =
   }
 ;;
 
-(* VWAP's forecast: the average volume curve of the symbol's *other* embedded
-   sessions — the simulated day is left out so the algorithm never peeks at
-   the volume it is about to trade against. Falls back to the day's own curve
-   if the symbol has just one session. *)
-let forecast_profile ~symbol ~date ~(day : Trading_day.t) =
-  let others =
-    Dataset.dates_for symbol
-    |> List.filter ~f:(fun other -> not (Date.equal other date))
-    |> List.filter_map ~f:(fun other ->
-      Or_error.ok (Dataset.load ~symbol ~date:other))
-  in
-  match Day_stats.average_volume_profile others with
-  | Ok profile -> profile
-  | Error (_ : Error.t) -> Day_stats.volume_profile day
-;;
-
-let algorithm_named ~symbol ~date ~(day : Trading_day.t) ~(params : Params.t)
-  = function
-  | "immediate" -> (module Immediate : Algorithm_intf.S)
-  | "vwap" ->
-    let profile =
-      List.map2_exn
-        day.bars
-        (forecast_profile ~symbol ~date ~day)
-        ~f:(fun bar weight -> bar.Market_bar.time, weight)
-    in
-    Vwap.create ~profile
-  | "pov" -> Pov.create ~participation_rate:params.pov_rate ()
-  | "is" -> Implementation_shortfall.create ~urgency:params.is_urgency ()
-  | _ -> (module Twap : Algorithm_intf.S)
-;;
-
 let minute_of_ofday ~(bars : Market_bar.t array) time =
   Float.to_int
     (Time_ns.Span.to_min (Time_ns.Ofday.diff time bars.(0).Market_bar.time))
@@ -205,68 +158,6 @@ let parents_of ~bars (result : Driver.t) =
         minute_of_ofday ~bars instruction.Alpha_instruction.deadline
     ; arrival_price = bars.(arrival_minute).Market_bar.open_
     })
-;;
-
-let fills_of_parent (result : Driver.t) (parent : parent_replay) =
-  List.filter result.fills ~f:(fun fill ->
-    Set.mem parent.order_ids fill.Fill.order_id)
-;;
-
-let grade
-  ~day
-  ~(fill_config : Fill_model.Config.t)
-  (result : Driver.t)
-  ~parents
-  =
-  let day_vwap = Day_stats.vwap day in
-  let terminal_price = Benchmarks.terminal_price day in
-  let half_spread = fill_config.Fill_model.Config.half_spread in
-  List.map parents ~f:(fun parent ->
-    let instruction = parent.instruction in
-    let arrival_price =
-      Or_error.ok_exn
-        (Benchmarks.arrival_price
-           day
-           ~arrival_time:instruction.Alpha_instruction.arrival_time)
-    in
-    Or_error.ok_exn
-      (Transaction_cost.create
-         ~instruction
-         ~fills:(fills_of_parent result parent)
-         ~day
-         ~arrival_price
-         ~terminal_price
-         ~day_vwap
-         ~half_spread))
-;;
-
-let results ~day ~fill_config ~bars ~algo_result ~baseline_result =
-  let algo =
-    grade
-      ~day
-      ~fill_config
-      algo_result
-      ~parents:(parents_of ~bars algo_result)
-  in
-  let baseline =
-    grade
-      ~day
-      ~fill_config
-      baseline_result
-      ~parents:(parents_of ~bars baseline_result)
-  in
-  let rows =
-    List.map2_exn algo baseline ~f:(fun a b ->
-      { grading = a
-      ; value_add_cents =
-          Or_error.ok_exn
-            (Transaction_cost.value_add_cents ~algo:a ~baseline:b)
-      })
-  in
-  { rows
-  ; total_value_add_cents =
-      List.sum (module Int) rows ~f:(fun row -> row.value_add_cents)
-  }
 ;;
 
 let events ~symbol ~(algo_result : Driver.t) parents =
@@ -378,26 +269,30 @@ let run ~symbol ~date ~alpha_text ~algo_name ~(params : Params.t) =
             (instruction : Alpha_instruction.t)
             (symbol : Symbol.t)]
   in
-  let%map () =
+  let%bind () =
     if List.is_empty instructions
     then Or_error.error_string "the alpha has no instructions"
     else Ok ()
   in
-  let run_one algorithm =
-    Driver.run
-      ~day
-      ~instructions
-      ~algorithm
-      ~fill_config:params.fill_config
-      ()
+  let forecast_days =
+    Dataset.dates_for symbol
+    |> List.filter ~f:(fun other -> not (Date.equal other date))
+    |> List.filter_map ~f:(fun other ->
+      Or_error.ok (Dataset.load ~symbol ~date:other))
   in
-  let algo_result =
-    run_one (algorithm_named ~symbol ~date ~day ~params algo_name)
+  let%map outcome =
+    Execlab_session.run ~day ~forecast_days ~instructions ~algo_name ~params
   in
-  let baseline_result = run_one (module Immediate) in
+  let algo_result = outcome.Execlab_session.Outcome.algo_result in
   let bars = Array.of_list day.Trading_day.bars in
   let parents = parents_of ~bars algo_result in
   let fills = Array.of_list algo_result.fills in
+  let rows =
+    List.map outcome.graded ~f:(fun graded ->
+      { grading = graded.Execlab_session.Graded.grading
+      ; value_add_cents = graded.value_add_cents
+      })
+  in
   { symbol
   ; date
   ; algo_name
@@ -406,12 +301,10 @@ let run ~symbol ~date ~alpha_text ~algo_name ~(params : Params.t) =
   ; parents
   ; events = events ~symbol ~algo_result parents
   ; results =
-      results
-        ~day
-        ~fill_config:params.fill_config
-        ~bars
-        ~algo_result
-        ~baseline_result
+      { rows
+      ; total_value_add_cents =
+          Execlab_session.Outcome.value_add_cents outcome
+      }
   ; vwap_by_minute = vwap_by_minute bars
   ; target_by_minute = target_by_minute ~bars parents
   ; actual_by_minute = actual_by_minute ~bars fills
