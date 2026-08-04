@@ -5,17 +5,26 @@ open! Execlab_execution
 open! Execlab_simulation
 open! Execlab_analytics
 
+module Engine_choice = struct
+  type t =
+    | Bar_model
+    | Synthetic of { seed : int }
+  [@@deriving sexp, equal]
+end
+
 module Params = struct
   type t =
     { fill_config : Fill_model.Config.t
     ; pov_rate : float
     ; is_urgency : float
+    ; engine : Engine_choice.t
     }
 
   let default =
     { fill_config = Fill_model.Config.default
     ; pov_rate = 0.0015
     ; is_urgency = 2.0
+    ; engine = Engine_choice.Bar_model
     }
   ;;
 end
@@ -130,13 +139,13 @@ let run ~day ~forecast_days ~instructions ~algo_name ~(params : Params.t) =
   let%bind algorithm =
     algorithm_named ~day ~forecast_days ~params algo_name
   in
+  let engine () =
+    match params.engine with
+    | Engine_choice.Bar_model -> Fill_model.engine params.fill_config
+    | Synthetic { seed } -> Execlab_exchange.Synthetic_market.engine { seed }
+  in
   let run_one algorithm =
-    Driver.run
-      ~day
-      ~instructions
-      ~algorithm
-      ~fill_config:params.fill_config
-      ()
+    Driver.run ~day ~instructions ~algorithm ~engine:(engine ()) ()
   in
   let algo_result = run_one algorithm in
   let baseline_result = run_one (module Immediate) in

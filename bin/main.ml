@@ -29,7 +29,21 @@ let print_instructions filename =
     print_s [%sexp (instruction : Alpha_instruction.t)])
 ;;
 
-let run_report ~alpha_file ~symbol ~date ~algo_name =
+(* "bar" (default) or "synthetic[:seed]". *)
+let engine_of_string text =
+  match String.lsplit2 text ~on:':' with
+  | None when String.equal text "bar" ->
+    Execlab_session.Engine_choice.Bar_model
+  | None when String.equal text "synthetic" ->
+    Execlab_session.Engine_choice.Synthetic { seed = 1 }
+  | Some ("synthetic", seed) ->
+    Execlab_session.Engine_choice.Synthetic { seed = Int.of_string seed }
+  | Some ((_ : string), (_ : string)) | None ->
+    raise_s
+      [%message "unknown engine" (text : string) ~known:"bar, synthetic[:N]"]
+;;
+
+let run_report ~alpha_file ~symbol ~date ~algo_name ~engine =
   let symbol = Symbol.of_string (String.uppercase symbol) in
   let date = Date.of_string date in
   let day = Or_error.ok_exn (Data_loader.load ~symbol ~date ()) in
@@ -58,7 +72,7 @@ let run_report ~alpha_file ~symbol ~date ~algo_name =
          ~forecast_days
          ~instructions
          ~algo_name
-         ~params:Execlab_session.Params.default)
+         ~params:{ Execlab_session.Params.default with engine })
   in
   printf
     "%s %s: %d instruction(s), %s vs immediate baseline\n\n"
@@ -81,14 +95,31 @@ let () =
   match Sys.get_argv () with
   | [| _; filename |] -> print_instructions filename
   | [| _; alpha_file; symbol; date |] ->
-    run_report ~alpha_file ~symbol ~date ~algo_name:"twap"
+    run_report
+      ~alpha_file
+      ~symbol
+      ~date
+      ~algo_name:"twap"
+      ~engine:Execlab_session.Engine_choice.Bar_model
   | [| _; alpha_file; symbol; date; algo_name |] ->
-    run_report ~alpha_file ~symbol ~date ~algo_name
+    run_report
+      ~alpha_file
+      ~symbol
+      ~date
+      ~algo_name
+      ~engine:Execlab_session.Engine_choice.Bar_model
+  | [| _; alpha_file; symbol; date; algo_name; engine |] ->
+    run_report
+      ~alpha_file
+      ~symbol
+      ~date
+      ~algo_name
+      ~engine:(engine_of_string engine)
   | _ ->
     eprintf
       "usage: main.exe <alpha.csv>                        (parse only)\n";
     eprintf
       "       main.exe <alpha.csv> <SYMBOL> <DATE> \
-       [twap|vwap|pov|is|immediate]\n";
+       [twap|vwap|pov|is|immediate] [bar|synthetic[:N]]\n";
     exit 2
 ;;

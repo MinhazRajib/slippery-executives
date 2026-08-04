@@ -25,6 +25,9 @@ type t =
 val run
   :  ?fill_config:Fill_model.Config.t
        (** default {!Fill_model.Config.default} *)
+  -> ?engine:Engine_intf.t
+       (** the market to trade in; default {!Fill_model.engine} of
+           [fill_config], which [engine] overrides entirely *)
   -> day:Trading_day.t
   -> instructions:Alpha_instruction.t list
   -> algorithm:Algorithm_intf.t

@@ -16,6 +16,12 @@ let params_of_config (config : Run_config.t) =
       }
   ; pov_rate = config.pov_rate
   ; is_urgency = config.is_urgency
+  ; engine =
+      (match config.engine_name with
+       | "synthetic" ->
+         Execlab_session.Engine_choice.Synthetic
+           { seed = config.engine_seed }
+       | (_ : string) -> Execlab_session.Engine_choice.Bar_model)
   }
 ;;
 

@@ -13,6 +13,8 @@ module Run_config = struct
     ; impact_coefficient_cents : int
     ; pov_rate : float
     ; is_urgency : float
+    ; engine_name : string
+    ; engine_seed : int
     }
   [@@deriving sexp, equal]
 end

@@ -43,6 +43,9 @@ type t [@@deriving sexp_of]
 
 val create : Config.t -> t
 
+(** The model packed behind the engine seam — the driver's default market. *)
+val engine : Config.t -> Engine_intf.t
+
 (** Starts a new bar: resets the participation budget, then gives each live
     resting limit order a chance to fill against the bar's range. Raises if a
     market order appears in [resting_orders] — market orders never rest. *)

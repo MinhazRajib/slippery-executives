@@ -12,12 +12,25 @@ open! Execlab_execution
 open! Execlab_simulation
 open! Execlab_analytics
 
+module Engine_choice : sig
+  (** Which market to trade in: Engine A's bar calculator, or Engine B's
+      synthetic exchange (seeded, so a run is reproducible — the same config
+      yields bit-identical fills everywhere). *)
+  type t =
+    | Bar_model
+    | Synthetic of { seed : int }
+  [@@deriving sexp, equal]
+end
+
 module Params : sig
-  (** The fill model's knobs plus each algorithm's own. *)
+  (** The fill model's knobs plus each algorithm's own. [fill_config] prices
+      Engine A and is the grading's spread attribution either way; the
+      synthetic engine has its own internal calibration. *)
   type t =
     { fill_config : Fill_model.Config.t
     ; pov_rate : float (** POV's share of observed tape volume *)
     ; is_urgency : float (** IS front-loading; [0.] is the TWAP limit *)
+    ; engine : Engine_choice.t
     }
 
   val default : t

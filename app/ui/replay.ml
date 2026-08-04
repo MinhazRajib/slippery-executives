@@ -71,6 +71,8 @@ module Param_text = struct
     ; impact : string (** dollars at 100% participation *)
     ; pov_rate : string (** fraction of tape volume *)
     ; urgency : string (** IS front-loading, [0.] = TWAP *)
+    ; engine : string (** ["bar"] or ["synthetic"] *)
+    ; seed : string (** the synthetic engine's seed *)
     }
   [@@deriving sexp, equal]
 
@@ -81,6 +83,8 @@ module Param_text = struct
     ; impact = sprintf "%.2f" (Price.to_float config.impact_coefficient)
     ; pov_rate = sprintf "%.4f" Params.default.pov_rate
     ; urgency = sprintf "%.1f" Params.default.is_urgency
+    ; engine = "bar"
+    ; seed = "1"
     }
   ;;
 end
@@ -125,12 +129,26 @@ let parse_params (text : Param_text.t) : Params.t Or_error.t =
       ~check:(fun v -> Float.( > ) v 0. && Float.( <= ) v 1.)
       ~message:"a fraction in (0, 1]"
   in
-  let%map is_urgency =
+  let%bind is_urgency =
     field
       "urgency"
       text.urgency
       ~check:(fun v -> Float.( >= ) v 0. && Float.( <= ) v 10_000.)
       ~message:"at least 0 (0 = TWAP)"
+  in
+  let%map engine =
+    match text.engine with
+    | "bar" -> Ok Execlab_session.Engine_choice.Bar_model
+    | "synthetic" ->
+      (match Int.of_string_opt (String.strip text.seed) with
+       | Some seed -> Ok (Execlab_session.Engine_choice.Synthetic { seed })
+       | None ->
+         Or_error.error_s
+           [%message
+             "bad parameter" "seed" ~raw:(text.seed : string) "an integer"])
+    | other ->
+      Or_error.error_s
+        [%message "unknown engine" (other : string) ~known:"bar, synthetic"]
   in
   { Params.fill_config =
       { half_spread = dollars half_spread
@@ -139,6 +157,7 @@ let parse_params (text : Param_text.t) : Params.t Or_error.t =
       }
   ; pov_rate
   ; is_urgency
+  ; engine
   }
 ;;
 

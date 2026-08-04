@@ -1,13 +1,13 @@
 (library
- (name execlab_session)
- (public_name execlab.session)
+ (name execlab_exchange_test)
  (libraries
-  core
+  execlab_exchange
   execlab_types
   execlab_market
   execlab_execution
   execlab_simulation
-  execlab_exchange
-  execlab_analytics)
+  expect_test_helpers_core
+  core)
+ (inline_tests)
  (preprocess
   (pps ppx_jane)))

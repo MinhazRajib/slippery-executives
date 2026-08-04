@@ -34,11 +34,17 @@ let never_rests (request : Child_order.Request.t) =
 
 let run
   ?(fill_config = Fill_model.Config.default)
+  ?engine
   ~day
   ~instructions
   ~algorithm
   ()
   =
+  let engine =
+    match engine with
+    | Some engine -> engine
+    | None -> Fill_model.engine fill_config
+  in
   let (module A : Algorithm_intf.S) = algorithm in
   let bars = day.Trading_day.bars in
   let first_bar = List.hd_exn bars in
@@ -55,13 +61,10 @@ let run
       ~now:first_bar.Market_bar.time
       ~price_for:(fun (_ : Symbol.t) -> first_bar.Market_bar.open_)
   in
-  let fill_model, (_ : Fill.t list) =
-    Fill_model.on_bar_advance
-      (Fill_model.create fill_config)
-      ~bar:first_bar
-      ~resting_orders:[]
+  let engine, (_ : Fill.t list) =
+    Engine_intf.advance engine ~bar:first_bar ~resting_orders:[]
   in
-  let step (manager, fill_model, states, all_fills) (previous_bar, bar) =
+  let step (manager, engine, states, all_fills) (previous_bar, bar) =
     let now = bar.Market_bar.time in
     let manager =
       Order_manager.activate_due
@@ -91,70 +94,61 @@ let run
     in
     let states = List.map states_and_decisions ~f:fst in
     (* The bar trades: resting orders get first claim on the budget. *)
-    let fill_model, resting_fills =
-      Fill_model.on_bar_advance
-        fill_model
+    let engine, resting_fills =
+      Engine_intf.advance
+        engine
         ~bar
         ~resting_orders:(live_orders_of manager)
     in
     let manager = apply_fills manager resting_fills in
-    let manager, fill_model, action_fills =
+    let manager, engine, action_fills =
       List.fold
         (List.map states_and_decisions ~f:snd)
-        ~init:(manager, fill_model, [])
+        ~init:(manager, engine, [])
         ~f:(fun init (parent_index, actions) ->
-          List.fold
-            actions
-            ~init
-            ~f:(fun (manager, fill_model, fills) action ->
-              match (action : Algorithm_intf.Action.t) with
-              | Submit request ->
-                let manager, child =
-                  Order_manager.submit_exn
-                    manager
-                    ~parent_index
-                    ~request
-                    ~now
-                in
-                let fill_model, new_fills =
-                  Fill_model.on_child_order fill_model child
-                in
-                let manager = apply_fills manager new_fills in
-                let manager =
-                  if not (never_rests child.request)
-                  then manager
-                  else (
-                    match
-                      find_child manager ~parent_index ~order_id:child.id
-                    with
-                    | Some child when Child_order.is_live child ->
-                      Order_manager.cancel_exn
-                        manager
-                        ~order_id:child.id
-                        ~reason:Ioc_remainder
-                    | Some _ | None -> manager)
-                in
-                manager, fill_model, fills @ new_fills
-              | Cancel order_id ->
-                (* The order may have died this very bar; canceling a dead
-                   order is the race resolving in the market's favor, not a
-                   bug. *)
-                (match find_child manager ~parent_index ~order_id with
-                 | Some child when Child_order.is_live child ->
-                   ( Order_manager.cancel_exn
-                       manager
-                       ~order_id
-                       ~reason:Algorithm_requested
-                   , fill_model
-                   , fills )
-                 | Some _ | None -> manager, fill_model, fills)))
+          List.fold actions ~init ~f:(fun (manager, engine, fills) action ->
+            match (action : Algorithm_intf.Action.t) with
+            | Submit request ->
+              let manager, child =
+                Order_manager.submit_exn manager ~parent_index ~request ~now
+              in
+              let engine, new_fills = Engine_intf.child_order engine child in
+              let manager = apply_fills manager new_fills in
+              let manager =
+                if not (never_rests child.request)
+                then manager
+                else (
+                  match
+                    find_child manager ~parent_index ~order_id:child.id
+                  with
+                  | Some child when Child_order.is_live child ->
+                    Order_manager.cancel_exn
+                      manager
+                      ~order_id:child.id
+                      ~reason:Ioc_remainder
+                  | Some _ | None -> manager)
+              in
+              manager, engine, fills @ new_fills
+            | Cancel order_id ->
+              (* The order may have died this very bar; canceling a dead
+                 order is the race resolving in the market's favor, not a
+                 bug. *)
+              (match find_child manager ~parent_index ~order_id with
+               | Some child when Child_order.is_live child ->
+                 ( Order_manager.cancel_exn
+                     manager
+                     ~order_id
+                     ~reason:Algorithm_requested
+                 , engine
+                 , fills )
+               | Some _ | None -> manager, engine, fills)))
     in
-    manager, fill_model, states, all_fills @ resting_fills @ action_fills
+    manager, engine, states, all_fills @ resting_fills @ action_fills
   in
-  let manager, (_ : Fill_model.t), (_ : A.state list), fills =
+  let manager, (_ : Engine_intf.t), (_ : A.state list), fills =
     List.fold
       (List.zip_exn (List.drop_last_exn bars) (List.tl_exn bars))
-      ~init:(manager, fill_model, states, [])
+      ~init:(manager, engine, states, [])
       ~f:step
   in
   { manager; fills }

@@ -2151,12 +2151,44 @@ let setup_view
         ]
       else []
     in
+    let engine_pills =
+      let pill value label =
+        algo_pill
+          ~theme
+          ~selected:(String.equal param_text.Replay.Param_text.engine value)
+          ~on_click:(fun _ ->
+            update (fun p v -> { p with Replay.Param_text.engine = v }) value)
+          label
+      in
+      [ {%html|
+          <div %{Styles.s "display:flex;gap:8px;align-items:flex-end;"}>
+            %{pill "bar" "Bar model"}
+            %{pill "synthetic" "Synthetic exchange"}
+          </div>
+        |}
+      ]
+      @
+      if String.equal param_text.Replay.Param_text.engine "synthetic"
+      then
+        [ param_field
+            ~label:"seed"
+            ~value:param_text.Replay.Param_text.seed
+            ~set:(update (fun p v -> { p with Replay.Param_text.seed = v }))
+        ]
+      else []
+    in
     {%html|
       <div %{Styles.card theme "padding:20px;"}>
         <div %{section_label}>Parameters</div>
         <div %{Styles.s "display:flex;gap:14px;flex-wrap:wrap;"}>
           *{fill_fields}
           *{algo_fields}
+        </div>
+        <div %{Styles.s (Styles.label theme ^ "margin:14px 0 8px 0;")}>
+          Fill engine
+        </div>
+        <div %{Styles.s "display:flex;gap:14px;flex-wrap:wrap;"}>
+          *{engine_pills}
         </div>
       </div>
     |}
@@ -2711,6 +2743,14 @@ let config_of (replay : Replay.t) ~player =
   ; impact_coefficient_cents = Price.to_int_cents fill.impact_coefficient
   ; pov_rate = replay.params.pov_rate
   ; is_urgency = replay.params.is_urgency
+  ; engine_name =
+      (match replay.params.engine with
+       | Execlab_session.Engine_choice.Bar_model -> "bar"
+       | Synthetic { seed = (_ : int) } -> "synthetic")
+  ; engine_seed =
+      (match replay.params.engine with
+       | Execlab_session.Engine_choice.Bar_model -> 0
+       | Synthetic { seed } -> seed)
   }
 ;;
 

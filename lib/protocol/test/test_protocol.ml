@@ -30,6 +30,8 @@ let%expect_test "run config round-trips through its sexp" =
     ; impact_coefficient_cents = 25
     ; pov_rate = 0.0015
     ; is_urgency = 2.0
+    ; engine_name = "synthetic"
+    ; engine_seed = 7
     }
   in
   let round_tripped = Run_config.t_of_sexp (Run_config.sexp_of_t config) in

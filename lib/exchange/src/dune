@@ -1,0 +1,11 @@
+(library
+ (name execlab_exchange)
+ (public_name execlab.exchange)
+ (libraries
+  core
+  execlab_types
+  execlab_market
+  execlab_execution
+  execlab_simulation)
+ (preprocess
+  (pps ppx_jane)))
