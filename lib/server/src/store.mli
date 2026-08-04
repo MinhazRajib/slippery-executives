@@ -1,7 +1,9 @@
 (** Run persistence: one sexp file per submitted run, grouped into a
-    directory per (symbol, date, alpha-hash) — a leaderboard {e is} a
-    directory listing. Corrupt or foreign files are skipped, never fatal;
-    ranking is by value-add over the immediate baseline, best first. *)
+    directory per (symbol, date, alpha-hash, engine, physics digest) — a
+    leaderboard {e is} a directory listing, and recalibrating the simulator
+    starts a fresh one rather than mixing incomparable runs. Corrupt or
+    foreign files are skipped, never fatal; ranking is by value-add over the
+    immediate baseline, best first. *)
 
 open! Core
 open! Execlab_types
@@ -18,7 +20,7 @@ module Record : sig
   val row : t -> Leaderboard_row.t
 end
 
-val save : runs_dir:string -> Record.t -> unit
+val save : runs_dir:string -> physics:string -> Record.t -> unit
 
 val load_board
   :  runs_dir:string
@@ -26,4 +28,5 @@ val load_board
   -> date:Date.t
   -> alpha_hash:string
   -> engine_name:string
+  -> physics:string
   -> Leaderboard_row.t list

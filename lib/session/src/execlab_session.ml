@@ -29,6 +29,30 @@ module Params = struct
   ;;
 end
 
+(* Everything about the market a run was graded in, as a short digest.
+   Recalibrating any of it changes the digest, which keeps runs graded under
+   different physics off the same leaderboard instead of silently ranking
+   them against each other. The synthetic seed is excluded: it is derived per
+   board, not part of the market's calibration. *)
+let physics_fingerprint (params : Params.t) =
+  let engine =
+    match params.engine with
+    | Engine_choice.Bar_model -> Sexp.Atom "bar"
+    | Synthetic { seed = (_ : int) } ->
+      [%sexp
+        Synthetic
+          ({ Execlab_exchange.Synthetic_market.Config.default with seed = 0 }
+           : Execlab_exchange.Synthetic_market.Config.t)]
+  in
+  let sexp =
+    [%message
+      ""
+        ~fill:(params.fill_config : Fill_model.Config.t)
+        ~engine:(engine : Sexp.t)]
+  in
+  String.prefix (Md5.to_hex (Md5.digest_string (Sexp.to_string sexp))) 8
+;;
+
 let forecast_profile ~(day : Trading_day.t) ~forecast_days =
   match Day_stats.average_volume_profile forecast_days with
   | Ok profile -> profile

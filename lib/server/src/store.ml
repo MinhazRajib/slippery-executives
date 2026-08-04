@@ -21,19 +21,20 @@ end
 
 (* One board per (symbol, day, alpha, engine): a bar-model run and a
    synthetic-exchange run of the same alpha are different contests. *)
-let board_dir ~runs_dir ~symbol ~date ~alpha_hash ~engine_name =
+let board_dir ~runs_dir ~symbol ~date ~alpha_hash ~engine_name ~physics =
   runs_dir
   ^/ sprintf
-       "%s-%s-%s-%s"
+       "%s-%s-%s-%s-%s"
        (Symbol.to_string symbol)
        (Date.to_string date)
        alpha_hash
        (match engine_name with
         | "synthetic" -> "synthetic"
         | (_ : string) -> "bar")
+       physics
 ;;
 
-let save ~runs_dir (record : Record.t) =
+let save ~runs_dir ~physics (record : Record.t) =
   let dir =
     board_dir
       ~runs_dir
@@ -41,6 +42,7 @@ let save ~runs_dir (record : Record.t) =
       ~date:record.config.date
       ~alpha_hash:(alpha_hash record.config.alpha_text)
       ~engine_name:record.config.engine_name
+      ~physics
   in
   Core_unix.mkdir_p dir;
   let file =
@@ -59,8 +61,10 @@ let save ~runs_dir (record : Record.t) =
     ~data:(Sexp.to_string_hum [%sexp (record : Record.t)])
 ;;
 
-let load_board ~runs_dir ~symbol ~date ~alpha_hash ~engine_name =
-  let dir = board_dir ~runs_dir ~symbol ~date ~alpha_hash ~engine_name in
+let load_board ~runs_dir ~symbol ~date ~alpha_hash ~engine_name ~physics =
+  let dir =
+    board_dir ~runs_dir ~symbol ~date ~alpha_hash ~engine_name ~physics
+  in
   match Sys_unix.readdir dir with
   | exception (_ : exn) -> []
   | files ->

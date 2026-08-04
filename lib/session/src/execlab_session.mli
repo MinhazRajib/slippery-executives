@@ -37,6 +37,14 @@ module Params : sig
   val default : t
 end
 
+(** A short digest of the market a run is graded in: the fill model's knobs
+    and, for a synthetic run, the exchange's calibration. Boards key on it so
+    that recalibrating the simulator starts a fresh contest rather than
+    ranking new runs against ones graded under different physics. The
+    synthetic seed is deliberately excluded — it is derived per board, not
+    part of the calibration. *)
+val physics_fingerprint : Params.t -> string
+
 (** The average profile of [forecast_days] (the honest leave-one-out forecast
     for VWAP), falling back to [day]'s own curve when there is nothing to
     average. *)

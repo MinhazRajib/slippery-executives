@@ -261,10 +261,12 @@ let%expect_test "spread calibration: the touch tracks the bar's own range \
   =
   (* The premise has to come from the data, not from a bar chosen to flatter
      it. Median minute ranges across data/ run 7c (NFLX), 46c (TSLA) and 78c
-     (META); at a divisor of 25 those quote a touch of 1c, 2c and 3c either
-     side of the open. So a typical minute costs the order of the bar model's
-     2c default and of a real large-cap spread — quiet names tighter, violent
-     ones wider — rather than any single number. *)
+     (META), and the catalog's own median is 23c. A rung of 0.42 *
+     sqrt(range) quotes those at 1c, 3c and 4c either side of the open, and
+     the catalog median at exactly the bar model's 2c default: a typical
+     minute costs what Engine A says it costs, quiet names quote tighter and
+     violent ones wider, and the spread grows far more slowly than the range
+     — as real spreads do. *)
   let touch_for ~range_cents =
     let market, (_ : Fill.t list) =
       Synthetic_market.on_bar_advance
@@ -293,8 +295,8 @@ let%expect_test "spread calibration: the touch tracks the bar's own range \
   [%expect
     {|
     range  7c -> touch $149.99 / $150.01 (half-spread 1c)
-    range 46c -> touch $149.98 / $150.02 (half-spread 2c)
-    range 78c -> touch $149.97 / $150.03 (half-spread 3c)
+    range 46c -> touch $149.97 / $150.03 (half-spread 3c)
+    range 78c -> touch $149.96 / $150.04 (half-spread 4c)
     |}]
 ;;
 
@@ -424,5 +426,76 @@ let%expect_test "a resting limit waits its turn in the queue" =
       filled 3698 @ $149.99 (maker)
     order 1 total filled: 20000
     order 2 total filled: 3698
+    |}]
+;;
+
+let%expect_test "a resting limit priced through the touch crosses instead \
+                 of collecting a maker fill"
+  =
+  (* A buy limit above the offer is not resting, whatever the driver calls
+     it: the makers would have hit it the moment they quoted. It must take at
+     the book's price and be charged as a taker, not sit at the front of a
+     queue and collect the spread at its own limit. *)
+  let market, (_ : Fill.t list) =
+    Synthetic_market.on_bar_advance
+      (Synthetic_market.create Synthetic_market.Config.default)
+      ~bar:(List.hd_exn flat_day.Trading_day.bars)
+      ~resting_orders:[]
+  in
+  let through = limit_child ~id:1 ~quantity:400 ~price_cents:15_010 in
+  let (_ : Synthetic_market.t), fills =
+    Synthetic_market.on_bar_advance
+      market
+      ~bar:(List.nth_exn flat_day.Trading_day.bars 1)
+      ~resting_orders:[ through ]
+  in
+  List.iter fills ~f:(fun (fill : Fill.t) ->
+    printf
+      "filled %d @ %s (%s)\n"
+      (Size.to_int fill.size)
+      (Price.to_string_dollar fill.price)
+      (match fill.liquidity with Taker -> "taker" | Maker -> "maker"));
+  [%expect {| filled 400 @ $150.01 (taker) |}]
+;;
+
+let%expect_test "the zero-client calibration holds on a wide-range day too" =
+  (* The flat and trending fixtures both floor to a one-cent rung, so they
+     cannot tell one spread model from another. This day's minutes swing 60c
+     — a four-cent rung — and the background tape must still track the
+     historical VWAP, which is what says the ladders are centred rather than
+     merely narrow. *)
+  let wide =
+    let bar_at minute =
+      let open_ = 15_000 + (minute % 7 * 10) in
+      Or_error.ok_exn
+        (Market_bar.create
+           ~time:(time_at_minute minute)
+           ~open_:(Price.of_int_cents open_)
+           ~high:(Price.of_int_cents (open_ + 30))
+           ~low:(Price.of_int_cents (open_ - 30))
+           ~close:(Price.of_int_cents (open_ + 5))
+           ~volume:(Size.of_int 50_000))
+    in
+    Or_error.ok_exn
+      (Trading_day.create
+         ~symbol:(Symbol.of_string "NVDA")
+         ~date:(Date.of_string "2026-07-09")
+         ~bars:(List.init 390 ~f:bar_at))
+  in
+  let market =
+    background_only ~config:Synthetic_market.Config.default wide
+  in
+  let sim =
+    Option.value_exn (Synthetic_market.For_testing.sim_vwap market)
+  in
+  let historical = Day_stats.vwap wide in
+  printf "sim %.4f vs historical %.4f\n" sim historical;
+  printf
+    "within 5bps: %b\n"
+    (Float.( < ) (Float.abs (sim -. historical) /. historical) 0.0005);
+  [%expect
+    {|
+    sim 150.3646 vs historical 150.3154
+    within 5bps: true
     |}]
 ;;

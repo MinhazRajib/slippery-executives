@@ -92,7 +92,10 @@ let submit_run ~data_dir ~runs_dir (config : Run_config.t) =
   let record =
     { Store.Record.config; summary; submitted_at = now_string () }
   in
-  Store.save ~runs_dir record;
+  Store.save
+    ~runs_dir
+    ~physics:(Execlab_session.physics_fingerprint params)
+    record;
   let leaderboard =
     Store.load_board
       ~runs_dir
@@ -100,6 +103,7 @@ let submit_run ~data_dir ~runs_dir (config : Run_config.t) =
       ~date:config.date
       ~alpha_hash:(alpha_hash config.alpha_text)
       ~engine_name:config.engine_name
+      ~physics:(Execlab_session.physics_fingerprint params)
   in
   Ok { Submit_run.Response.summary; leaderboard }
 ;;
@@ -113,6 +117,15 @@ let leaderboard ~runs_dir (request : Leaderboard.Request.t) =
           ~date:request.date
           ~alpha_hash:request.alpha_hash
           ~engine_name:request.engine_name
+          ~physics:
+            (Execlab_session.physics_fingerprint
+               { Execlab_session.Params.default with
+                 engine =
+                   (match request.engine_name with
+                    | "synthetic" ->
+                      Execlab_session.Engine_choice.Synthetic { seed = 0 }
+                    | (_ : string) -> Execlab_session.Engine_choice.Bar_model)
+               })
     }
 ;;
 

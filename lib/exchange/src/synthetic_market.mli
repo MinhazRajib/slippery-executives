@@ -40,17 +40,19 @@ open! Execlab_execution
 open! Execlab_simulation
 
 module Config : sig
-  (** The market's calibration. [rung_range_divisor] sets how wide the makers
-      quote: one rung is the bar's range over the divisor, rounded and
-      floored at a cent. At 25 that is one to three cents across the bundled
-      names' typical minutes — the order of a real large-cap spread, and of
-      the bar model's 2c default, without pretending to equal it on any
-      particular minute. [permanent_impact_coefficient] is the quote shift at
-      full participation, and [pressure_decay] the share of remembered client
+  (** The market's calibration. [spread_coefficient] sets how wide the makers
+      quote: one rung is that coefficient times the square root of the bar's
+      range in cents, floored at a cent. Spreads widen with volatility but
+      far more slowly than ranges do, and the default 0.42 puts the catalog's
+      median minute on {!Fill_model}'s own 2c half-spread — so the two
+      engines agree about what an ordinary trade costs and differ only where
+      they should: what happens when you want size.
+      [permanent_impact_coefficient] is the quote shift at full
+      participation, and [pressure_decay] the share of remembered client
       aggression that survives each bar. *)
   type t =
     { seed : int
-    ; rung_range_divisor : int
+    ; spread_coefficient : float
     ; permanent_impact_coefficient : Price.t
     ; pressure_decay : float
     }

@@ -60,3 +60,29 @@ let%expect_test "a market sell hits the bids downward" =
   print_s [%sexp (fills : (Price.t * int) list)];
   [%expect {| ((9998 60) (9997 40)) |}]
 ;;
+
+let%expect_test "size_at reports what a client order would queue behind" =
+  (* Only the exact price matters for queue position: better prices decide
+     whether the market reaches you at all, not who is ahead of you when it
+     does. *)
+  let book =
+    Book.set_side
+      Book.empty
+      ~side:Side.Buy
+      [ Price.of_int_cents 9_999, 500; Price.of_int_cents 9_998, 1_200 ]
+  in
+  let at side cents =
+    Book.size_at book ~side ~price:(Price.of_int_cents cents)
+  in
+  printf "bid 99.99: %d\n" (at Side.Buy 9_999);
+  printf "bid 99.98: %d\n" (at Side.Buy 9_998);
+  printf "bid 99.97 (nobody there): %d\n" (at Side.Buy 9_997);
+  printf "ask 99.99 (wrong side): %d\n" (at Side.Sell 9_999);
+  [%expect
+    {|
+    bid 99.99: 500
+    bid 99.98: 1200
+    bid 99.97 (nobody there): 0
+    ask 99.99 (wrong side): 0
+    |}]
+;;
