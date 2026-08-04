@@ -27,6 +27,14 @@ let create ~urgency () : Algorithm_intf.t =
       let target =
         if total_minutes = 0
         then total
+        else if Float.( <= ) urgency 1e-6
+        then
+          (* The zero-urgency limit is Twap, so compute it Twap's way — the
+             same integer division, truncating alike — and the two agree
+             share for share rather than merely in shape. Rounding the curve
+             to nearest, as the general case does, would part company with
+             Twap by a share whenever the ideal position lands past the half. *)
+          total * elapsed_minutes / total_minutes
         else (
           let f = elapsed_minutes // total_minutes in
           (* The ratio in exponential form: for 0 <= a <= b, sinh a / sinh b
@@ -35,14 +43,11 @@ let create ~urgency () : Algorithm_intf.t =
              blow up the rounding below). Below ~1e-6 the exponential form is
              0/0, and the ratio is the straight line to float precision
              anyway. *)
+          let a = urgency *. (1. -. f) in
           let remaining_fraction =
-            if Float.( <= ) urgency 1e-6
-            then 1. -. f
-            else (
-              let a = urgency *. (1. -. f) in
-              Float.exp (a -. urgency)
-              *. (1. -. Float.exp (-2. *. a))
-              /. (1. -. Float.exp (-2. *. urgency)))
+            Float.exp (a -. urgency)
+            *. (1. -. Float.exp (-2. *. a))
+            /. (1. -. Float.exp (-2. *. urgency))
           in
           total
           - Float.iround_nearest_exn

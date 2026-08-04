@@ -77,3 +77,12 @@ let take t ~taker_side ?limit ~size () =
   | Buy -> { t with asks = levels }, fills
   | Sell -> { t with bids = levels }, fills
 ;;
+
+let size_at t ~side ~price =
+  let levels = match (side : Side.t) with Buy -> t.bids | Sell -> t.asks in
+  let price = Price.to_int_cents price in
+  Option.value_map
+    (List.find levels ~f:(fun (level, (_ : int)) -> level = price))
+    ~default:0
+    ~f:snd
+;;

@@ -15,7 +15,8 @@
     rather than estimate those pieces separately we expose their product as
     the single dimensionless [urgency] knob:
 
-    - [urgency -> 0] flattens into TWAP's straight line (pure patience);
+    - [urgency = 0] {e is} {!Twap}, computed by Twap's own arithmetic so the
+      two agree share for share;
     - large [urgency] approaches {!Immediate} (risk swamps impact);
     - around [2.] front-loads noticeably without slamming the tape.
 

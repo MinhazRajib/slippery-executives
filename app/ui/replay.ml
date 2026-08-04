@@ -179,7 +179,12 @@ let parents_of ~bars (result : Driver.t) =
     ; arrival_minute
     ; deadline_minute =
         minute_of_ofday ~bars instruction.Alpha_instruction.deadline
-    ; arrival_price = bars.(arrival_minute).Market_bar.open_
+        (* The parent's own sampled benchmark, so the chart annotation and
+           the results table can never disagree. *)
+    ; arrival_price =
+        Option.value
+          parent.Parent_order.arrival_price
+          ~default:bars.(arrival_minute).Market_bar.open_
     })
 ;;
 

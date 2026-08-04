@@ -161,7 +161,11 @@ let submit_run ~data_dir ~runs_dir (request : Submit_run.Request.t) =
   let%bind params = canonical_params config in
   let%map summary = grade ~data_dir ~config ~params in
   let submitted_at = now_string () in
-  Store.save ~runs_dir { Store.Record.config; summary; submitted_at };
+  let physics = Execlab_session.physics_fingerprint params in
+  Store.save
+    ~runs_dir
+    ~physics
+    { Store.Record.config; summary; submitted_at };
   (* The board is public and the notebook is the owner's copy of the same
      run, so a published run shows as published in My Runs. *)
   let run_id = Store.run_id ~config ~ran_at:submitted_at in
@@ -185,6 +189,7 @@ let submit_run ~data_dir ~runs_dir (request : Submit_run.Request.t) =
       ~date:config.date
       ~alpha_hash:(alpha_hash config.alpha_text)
       ~engine_name:config.engine_name
+      ~physics
   in
   { Submit_run.Response.summary; leaderboard }
 ;;
@@ -223,6 +228,17 @@ let leaderboard ~runs_dir (request : Leaderboard.Request.t) =
           ~date:request.date
           ~alpha_hash:request.alpha_hash
           ~engine_name:request.engine_name
+            (* A board is asked for by its engine; the physics that engine is
+               calibrated with today decide which board that is. *)
+          ~physics:
+            (Execlab_session.physics_fingerprint
+               { Execlab_session.Params.default with
+                 engine =
+                   (match request.engine_name with
+                    | "synthetic" ->
+                      Execlab_session.Engine_choice.Synthetic { seed = 0 }
+                    | (_ : string) -> Execlab_session.Engine_choice.Bar_model)
+               })
     }
 ;;
 

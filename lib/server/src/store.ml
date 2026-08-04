@@ -32,16 +32,17 @@ let run_id ~(config : Run_config.t) ~ran_at =
 
 (* One board per (symbol, day, alpha, engine): a bar-model run and a
    synthetic-exchange run of the same alpha are different contests. *)
-let board_dir ~runs_dir ~symbol ~date ~alpha_hash ~engine_name =
+let board_dir ~runs_dir ~symbol ~date ~alpha_hash ~engine_name ~physics =
   boards_dir ~runs_dir
   ^/ sprintf
-       "%s-%s-%s-%s"
+       "%s-%s-%s-%s-%s"
        (Symbol.to_string symbol)
        (Date.to_string date)
        alpha_hash
        (match engine_name with
         | "synthetic" -> "synthetic"
         | (_ : string) -> "bar")
+       physics
 ;;
 
 (* The only two places a caller-supplied string becomes a path component.
@@ -71,7 +72,7 @@ let write_sexp_file file ~sexp =
   Out_channel.write_all file ~data:(Sexp.to_string_hum sexp)
 ;;
 
-let save ~runs_dir (record : Record.t) =
+let save ~runs_dir ~physics (record : Record.t) =
   let dir =
     board_dir
       ~runs_dir
@@ -79,6 +80,7 @@ let save ~runs_dir (record : Record.t) =
       ~date:record.config.date
       ~alpha_hash:(alpha_hash record.config.alpha_text)
       ~engine_name:record.config.engine_name
+      ~physics
   in
   Core_unix.mkdir_p dir;
   let file =
@@ -104,8 +106,10 @@ let sexp_files dir =
     |> List.sort ~compare:String.compare
 ;;
 
-let load_board ~runs_dir ~symbol ~date ~alpha_hash ~engine_name =
-  let dir = board_dir ~runs_dir ~symbol ~date ~alpha_hash ~engine_name in
+let load_board ~runs_dir ~symbol ~date ~alpha_hash ~engine_name ~physics =
+  let dir =
+    board_dir ~runs_dir ~symbol ~date ~alpha_hash ~engine_name ~physics
+  in
   sexp_files dir
   |> List.filter_map ~f:(fun file ->
     load_sexp_file (dir ^/ file) ~of_sexp:[%of_sexp: Record.t])

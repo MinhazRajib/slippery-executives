@@ -5,9 +5,31 @@ open! Execlab_execution
 open! Execlab_simulation
 
 module Config = struct
-  type t = { seed : int } [@@deriving sexp_of]
+  type t =
+    { seed : int
+    ; spread_coefficient : float
+    ; permanent_impact_coefficient : Price.t
+    ; pressure_decay : float
+    }
+  [@@deriving sexp_of]
 
-  let default = { seed = 1 }
+  (* Spreads widen with volatility, but nothing like as fast as ranges do: a
+     minute that swings four times as far does not quote four times as wide.
+     One rung is therefore a coefficient times the square root of the bar's
+     range in cents, floored at a cent — which over the catalog puts the
+     median minute's touch on Fill_model's own 2c half-spread, the quiet
+     quarter at 1c and the violent tenth at 4c, and lands each name where its
+     own liquidity says it should (1c on NFLX, 4c on META). No linear divisor
+     can do that: tuned to the median it quotes a single cent for most of the
+     day, and tuned to a busy minute it charges an order of magnitude too
+     much on an ordinary one. *)
+  let default =
+    { seed = 1
+    ; spread_coefficient = 0.42
+    ; permanent_impact_coefficient = Price.of_int_cents 15
+    ; pressure_decay = 0.6
+    }
+  ;;
 end
 
 (* Three maker archetypes, tight to loose: quote offset in multiples of the
@@ -32,6 +54,18 @@ type t =
   ; next_fill_id : int
   ; print_notional : float (* dollars, everything that traded *)
   ; print_volume : int
+  ; client_pressure : float
+      (* signed participation clients have taken — their share of the volume
+         of the bar they actually traded in — decayed each bar: what the
+         makers remember about being run over. Shares would be the wrong
+         unit: 76,000 of them is a beating in a thin minute and a rounding
+         error in a busy one. *)
+  ; queues : int Order_id.Map.t
+      (* resting client order -> agent shares still ahead of it at its price,
+         counted when it was posted *)
+  ; flow : (Side.t * int * int) list
+  (* the completed bar's noise prints as (taker side, price cents, size): the
+     trading a resting client order could have joined *)
   }
 
 let create config =
@@ -42,13 +76,37 @@ let create config =
   ; next_fill_id = 1
   ; print_notional = 0.
   ; print_volume = 0
+  ; client_pressure = 0.
+  ; queues = Order_id.Map.empty
+  ; flow = []
   }
 ;;
 
-(* Base half-spread widens with the bar's range: a sixth of it, floored at
-   one cent. *)
-let base_half_spread_cents (bar : Market_bar.t) =
-  Int.max 1 ((Price.to_int_cents bar.high - Price.to_int_cents bar.low) / 6)
+(* One rung of the ladder, floored at a cent: see [Config]. *)
+let rung_cents t (bar : Market_bar.t) =
+  let range = Price.to_int_cents bar.high - Price.to_int_cents bar.low in
+  Int.max
+    1
+    (Float.iround_nearest_exn
+       (t.config.Config.spread_coefficient
+        *. Float.sqrt (Float.of_int (Int.max 0 range))))
+;;
+
+(* What the makers have concluded from being traded against: a square-root
+   shift of the quote centre in the direction of the client's flow. This is
+   the {e permanent} half of impact — it survives the rebuilding of the
+   ladders and fades over bars instead — so a buyer who keeps lifting offers
+   finds the offers rising to meet him. *)
+let pressure_shift_cents t (_ : Market_bar.t) =
+  if Float.( = ) t.client_pressure 0.
+  then 0
+  else (
+    let magnitude =
+      Float.of_int (Price.to_int_cents t.config.permanent_impact_coefficient)
+      *. Float.sqrt (Float.abs t.client_pressure)
+    in
+    (if Float.( > ) t.client_pressure 0. then 1 else -1)
+    * Float.iround_nearest_exn magnitude)
 ;;
 
 let record_print t ~price_cents ~size =
@@ -63,7 +121,10 @@ let record_print t ~price_cents ~size =
 (* Makers requote both sides fresh around [fundamental]: the leash that pulls
    the market back to the historical path and makes client impact temporary. *)
 let requote t ~(bar : Market_bar.t) ~fundamental_cents =
-  let half = base_half_spread_cents bar in
+  let half = rung_cents t bar in
+  let fundamental_cents =
+    Int.max 1 (fundamental_cents + pressure_shift_cents t bar)
+  in
   let volume = Size.to_int bar.volume in
   (* A level whose price would fall to zero or below (a penny stock wider
      than its own price) is dropped, not clamped: clamping would pile phantom
@@ -144,7 +205,11 @@ let trade_background t ~(bar : Market_bar.t) =
       in
       let t =
         List.fold prints ~init:{ t with book } ~f:(fun t (price, size) ->
-          record_print t ~price_cents:(Price.to_int_cents price) ~size)
+          let price_cents = Price.to_int_cents price in
+          let t = record_print t ~price_cents ~size in
+          (* Remember the print's side and price: this is the flow a resting
+             client order could have been part of. *)
+          { t with flow = (taker_side, price_cents, size) :: t.flow })
       in
       slices t (index + 1) fundamental_cents)
   in
@@ -175,11 +240,22 @@ let make_fill t ~(child : Child_order.t) ~price ~size ~liquidity =
   t, fill
 ;;
 
-(* Client resting limits keep Engine A's strict-through convention (the book
-   only holds agent liquidity in v1, so there is no queue to model): if the
-   bar trades strictly through the limit, the whole remainder fills there as
-   a maker. *)
-let fill_resting t ~(child : Child_order.t) ~(bar : Market_bar.t) =
+(* A resting client order sits in the queue at its price: it fills only once
+   the flow that could have hit it exceeds the agent size that was displayed
+   ahead of it when it arrived. Buys are hit by noise sells at or below the
+   limit, sells lifted by noise buys at or above — so being early, or
+   improving on a price nobody else shows, is worth exactly what it should
+   be. *)
+let servable_volume t ~(child : Child_order.t) ~limit =
+  let limit_cents = Price.to_int_cents limit in
+  List.sum (module Int) t.flow ~f:(fun (taker_side, price_cents, size) ->
+    match child.request.side, taker_side with
+    | Side.Buy, Side.Sell when price_cents <= limit_cents -> size
+    | Sell, Buy when price_cents >= limit_cents -> size
+    | (Buy | Sell), (Buy | Sell) -> 0)
+;;
+
+let fill_resting t ~claimed ~already_taken ~(child : Child_order.t) =
   match child.request.order_type with
   | Market ->
     raise_s
@@ -187,45 +263,50 @@ let fill_resting t ~(child : Child_order.t) ~(bar : Market_bar.t) =
         "Synthetic_market: a market order cannot rest"
           ~order_id:(child.id : Order_id.t)]
   | Limit limit ->
-    let traded_through =
-      match child.request.side with
-      | Buy -> Price.( < ) bar.low limit
-      | Sell -> Price.( > ) bar.high limit
+    let ahead = Option.value (Map.find t.queues child.id) ~default:0 in
+    (* The bar traded a finite amount: whatever better-priced resting orders
+       have already claimed is gone, and cannot fill this one too. *)
+    let served = Int.max 0 (servable_volume t ~child ~limit - claimed) in
+    let queue_drain = Int.min ahead served in
+    (* The caller's copy of the child still shows the whole quantity
+       outstanding, so anything it crossed for earlier in this same bar must
+       be netted off before the queue hands it more. *)
+    let outstanding =
+      Int.max 0 (Size.to_int child.remaining - already_taken)
     in
-    if not traded_through
-    then t, []
+    let ours = Int.min outstanding (served - queue_drain) in
+    let t =
+      { t with
+        queues = Map.set t.queues ~key:child.id ~data:(ahead - queue_drain)
+      }
+    in
+    if ours <= 0
+    then t, claimed + queue_drain, []
     else (
       let t, fill =
-        make_fill
-          t
-          ~child
-          ~price:limit
-          ~size:(Size.to_int child.remaining)
-          ~liquidity:Liquidity.Maker
+        make_fill t ~child ~price:limit ~size:ours ~liquidity:Liquidity.Maker
       in
-      t, [ fill ])
+      t, claimed + queue_drain + ours, [ fill ])
 ;;
 
-let on_bar_advance t ~bar ~resting_orders =
-  (* Background trading of the previous bar happens conceptually before this
-     bar opens; its prints are already in the stats. Then: fresh ladders
-     around this bar's open — client submissions this bar walk these, and
-     their dents last until the next requote (impact is real but temporary). *)
-  let t =
-    match t.current_bar with
-    | None -> t
-    | Some previous -> trade_background t ~bar:previous
+(* Price priority, then arrival: the best-priced resting order gets first
+   claim on the bar's flow, and what it takes is not there for the next. Buys
+   and sells draw on opposite flows, so each side keeps its own running
+   claim. *)
+let in_priority_order resting_orders =
+  let limit_cents (child : Child_order.t) =
+    match child.request.order_type with
+    | Limit limit -> Price.to_int_cents limit
+    | Market -> 0
   in
-  let t = { t with current_bar = Some bar } in
-  let t =
-    requote
-      t
-      ~bar
-      ~fundamental_cents:(Price.to_int_cents bar.Market_bar.open_)
+  let buys, sells =
+    List.partition_tf resting_orders ~f:(fun (child : Child_order.t) ->
+      match child.request.side with Buy -> true | Sell -> false)
   in
-  List.fold resting_orders ~init:(t, []) ~f:(fun (t, fills) child ->
-    let t, new_fills = fill_resting t ~child ~bar in
-    t, fills @ new_fills)
+  List.stable_sort buys ~compare:(fun a b ->
+    Int.compare (limit_cents b) (limit_cents a))
+  @ List.stable_sort sells ~compare:(fun a b ->
+    Int.compare (limit_cents a) (limit_cents b))
 ;;
 
 let on_child_order t (child : Child_order.t) =
@@ -243,12 +324,149 @@ let on_child_order t (child : Child_order.t) =
       ~size:(Size.to_int child.remaining)
       ()
   in
-  let t = { t with book } in
+  let taken = List.sum (module Int) prints ~f:snd in
+  (* Taking liquidity is the aggression the makers react to; whatever a limit
+     could not take rests, joining the queue behind the size displayed at its
+     price right now. *)
+  let t =
+    { t with
+      book
+    ; client_pressure =
+        (* Participation is measured against the bar the shares were actually
+           taken from, and the running total is clamped, so the remembered
+           aggression stays bounded by the coefficient however hard a client
+           leans. *)
+        (let participation =
+           match t.current_bar with
+           | None -> 0.
+           | Some bar ->
+             let volume = Size.to_int bar.Market_bar.volume in
+             if volume <= 0 then 0. else taken // volume
+         in
+         Float.clamp_exn
+           ~min:(-1.)
+           ~max:1.
+           (t.client_pressure
+            +. (Float.of_int (Side.sign child.request.side) *. participation)
+           ))
+    }
+  in
+  let t =
+    match limit, Size.to_int child.remaining - taken with
+    | Some limit, resting when resting > 0 ->
+      { t with
+        queues =
+          Map.set
+            t.queues
+            ~key:child.id
+            ~data:(Book.size_at t.book ~side:child.request.side ~price:limit)
+      }
+    | (Some (_ : Price.t) | None), (_ : int) -> t
+  in
   List.fold prints ~init:(t, []) ~f:(fun (t, fills) (price, size) ->
     let t, fill =
       make_fill t ~child ~price ~size ~liquidity:Liquidity.Taker
     in
     t, fills @ [ fill ])
+;;
+
+let on_bar_advance t ~bar ~resting_orders =
+  (* The previous bar's background trading happens conceptually before this
+     bar opens: it prints that bar's tape and leaves behind the flow a
+     resting order could have joined. Then the makers thin their memory of
+     client aggression, rebuild ladders around this bar's open shifted by
+     whatever pressure remains, and the orders still resting take their turn
+     in the queue. *)
+  let t = { t with flow = [] } in
+  let t =
+    match t.current_bar with
+    | None -> t
+    | Some previous -> trade_background t ~bar:previous
+  in
+  let t =
+    { t with
+      current_bar = Some bar
+    ; client_pressure = t.client_pressure *. t.config.Config.pressure_decay
+    ; queues =
+        Map.filter_keys t.queues ~f:(fun id ->
+          List.exists resting_orders ~f:(fun (child : Child_order.t) ->
+            Order_id.equal child.id id))
+    }
+  in
+  let t =
+    requote
+      t
+      ~bar
+      ~fundamental_cents:(Price.to_int_cents bar.Market_bar.open_)
+  in
+  (* A limit priced through the freshly quoted touch is not resting at all —
+     it is marketable, and the makers would have hit it before any noise
+     trader got the chance. Cross it first, then let whatever is left take
+     its place in the queue. *)
+  let (t, crossed), crossing_fills =
+    List.fold
+      resting_orders
+      ~init:((t, Order_id.Map.empty), [])
+      ~f:(fun ((t, crossed), fills) child ->
+        match child.Child_order.request.order_type with
+        | Market -> (t, crossed), fills
+        | Limit limit ->
+          let resting_price =
+            match child.request.side with
+            | Side.Buy -> Book.best t.book ~side:Sell
+            | Sell -> Book.best t.book ~side:Buy
+          in
+          (match resting_price with
+           | None -> (t, crossed), fills
+           | Some resting_price
+             when not
+                    (Price.is_marketable
+                       child.request.side
+                       ~price:limit
+                       ~resting_price) ->
+             (t, crossed), fills
+           | Some (_ : Price.t) ->
+             let t, new_fills = on_child_order t child in
+             (* Remember what it just took: the caller's copy of the child
+                still shows the whole quantity outstanding, so the queue pass
+                below would hand it the same shares again. *)
+             let took =
+               List.sum (module Int) new_fills ~f:(fun (fill : Fill.t) ->
+                 Size.to_int fill.size)
+             in
+             ( ( t
+               , Map.update crossed child.id ~f:(fun existing ->
+                   Option.value existing ~default:0 + took) )
+             , fills @ new_fills )))
+  in
+  let (t, (_ : int), (_ : int)), fills =
+    List.fold_map
+      (in_priority_order resting_orders)
+      ~init:(t, 0, 0)
+      ~f:(fun (t, buy_claimed, sell_claimed) (child : Child_order.t) ->
+        match child.request.side with
+        | Buy ->
+          let t, buy_claimed, fills =
+            fill_resting
+              t
+              ~claimed:buy_claimed
+              ~already_taken:
+                (Option.value (Map.find crossed child.id) ~default:0)
+              ~child
+          in
+          (t, buy_claimed, sell_claimed), fills
+        | Sell ->
+          let t, sell_claimed, fills =
+            fill_resting
+              t
+              ~claimed:sell_claimed
+              ~already_taken:
+                (Option.value (Map.find crossed child.id) ~default:0)
+              ~child
+          in
+          (t, buy_claimed, sell_claimed), fills)
+  in
+  t, crossing_fills @ List.concat fills
 ;;
 
 let engine config =

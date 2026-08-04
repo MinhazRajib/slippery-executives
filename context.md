@@ -433,11 +433,14 @@ What remains:
    stats, one clock), a portfolio spanning symbols, and a day picker
    that binds a date rather than a (symbol, date) pair. The UI sample
    library should then grow multi-symbol presets.
-3. **Engine B v2**: client limit orders resting in the book with real
-   queue position (v1 keeps Engine A's strict-through convention);
-   grading attribution tuned to exchange fills (a synthetic run
-   currently attributes zero spread and books the whole residual as
-   impact).
+3. **Engine B v3**: v2 shipped 2026-08-04 — spreads calibrated to bar
+   range, permanent impact (makers remember client aggression and
+   requote against it, decaying over bars), and resting client limits
+   with real queue position. Still open: a client's resting order is
+   invisible to the background agents (it takes a place in the queue
+   but does not deepen the book others trade against), and a synthetic
+   run's grading attributes zero spread, booking the whole residual as
+   impact.
 4. **Cross-day experiments**: one alpha across every session, engine,
    and algorithm — the league-table script.
 

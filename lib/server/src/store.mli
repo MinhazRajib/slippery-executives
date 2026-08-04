@@ -1,15 +1,17 @@
 (** Run persistence — sexp files in a directory tree, no database:
 
     {v
-      <runs_dir>/boards/<SYMBOL>-<date>-<alpha-hash>-<engine>/<file>.sexp
+      <runs_dir>/boards/<SYM>-<date>-<alpha-hash>-<engine>-<physics>/…
       <runs_dir>/users/<username>/<run_id>.sexp
       <runs_dir>/accounts/<username>.sexp        (see {!Accounts})
     v}
 
     A leaderboard {e is} a directory listing, and an account's notebook is
-    another one. Corrupt or foreign files are skipped, never fatal: a board
-    that half-parses still ranks. Board ranking is by value-add over the
-    immediate baseline, best first.
+    another one. The physics digest in a board's name keeps runs graded under
+    different simulator calibrations off the same board rather than ranking
+    them against each other. Corrupt or foreign files are skipped, never
+    fatal: a board that half-parses still ranks. Board ranking is by
+    value-add over the immediate baseline, best first.
 
     Board files keep the whole {!Record.t}, config included, so the server
     can re-grade or audit a submission — but {!Record.row} publishes only
@@ -45,7 +47,7 @@ val accounts_dir : runs_dir:string -> string
 val run_id : config:Run_config.t -> ran_at:string -> string
 
 (** Appends to the board named by the record's own config. *)
-val save : runs_dir:string -> Record.t -> unit
+val save : runs_dir:string -> physics:string -> Record.t -> unit
 
 val load_board
   :  runs_dir:string
@@ -53,6 +55,7 @@ val load_board
   -> date:Date.t
   -> alpha_hash:string
   -> engine_name:string
+  -> physics:string
   -> Leaderboard_row.t list
 
 (** Writes (or overwrites) one entry of [username]'s notebook, keyed by
