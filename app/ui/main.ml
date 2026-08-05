@@ -136,23 +136,9 @@ let wordmark ?on_click ~theme () =
     Styles.s
       ("color:"
        ^ theme.Styles.blue
-       ^ ";font-size:17px;font-weight:800;letter-spacing:-0.01em;")
+       ^ ";font-size:22px;font-weight:800;letter-spacing:-0.015em;")
   in
-  let suffix =
-    Styles.s
-      ("color:"
-       ^ theme.Styles.faint
-       ^ ";font-size:9.5px;font-weight:600;letter-spacing:0.18em;text-transform:uppercase;"
-       ^ Styles.mono)
-  in
-  let lockup =
-    {%html|
-      <span %{Styles.s "display:inline-flex;align-items:baseline;gap:9px;white-space:nowrap;"}>
-        <span %{name}>ExecLab</span>
-        <span %{suffix}>execution research</span>
-      </span>
-    |}
-  in
+  let lockup = {%html|<span %{name}>ExecLab</span>|} in
   match on_click with
   | None -> lockup
   | Some effect ->
@@ -5167,6 +5153,154 @@ let landing_engines_and_metrics ~theme =
   |}
 ;;
 
+(* The hero's ambient visual: a real session (TSLA 2026-07-09) drawing itself
+   in — price line, VWAP reference, an order window, fills popping as the
+   line passes them, and a breathing playhead. Pure CSS motion over real
+   data; decorative, but honest decoration. *)
+let hero_visual ~theme =
+  match
+    Dataset.load_cached
+      ~symbol:(Symbol.of_string "TSLA")
+      ~date:(Date.of_string "2026-07-09")
+  with
+  | Error (_ : Error.t) -> Vdom.Node.none
+  | Ok day ->
+    let bars = Array.of_list day.Trading_day.bars in
+    let n = Array.length bars in
+    let w = 560. in
+    let h = 340. in
+    let pad = 14. in
+    let closes =
+      Array.map bars ~f:(fun bar -> Price.to_float bar.Market_bar.close)
+    in
+    let lo = Array.fold closes ~init:Float.infinity ~f:Float.min in
+    let hi = Array.fold closes ~init:Float.neg_infinity ~f:Float.max in
+    let span = Float.max (hi -. lo) 0.01 in
+    let x i =
+      pad +. (Float.of_int i /. Float.of_int (n - 1) *. (w -. (2. *. pad)))
+    in
+    let y v = pad +. ((hi -. v) /. span *. (h -. (2. *. pad) -. 20.)) in
+    let svg name attrs children =
+      Vdom.Node.create_svg name ~attrs children
+    in
+    let attr = Vdom.Attr.create in
+    (* Every 4th minute keeps the path light without visibly coarsening. *)
+    let sampled =
+      List.filter (List.init n ~f:Fn.id) ~f:(fun i -> i % 4 = 0 || i = n - 1)
+    in
+    let pts =
+      List.map sampled ~f:(fun i -> sprintf "%.1f,%.1f" (x i) (y closes.(i)))
+    in
+    let path = "M " ^ String.concat ~sep:" L " pts in
+    let area =
+      sprintf
+        "%s L %.1f,%.1f L %.1f,%.1f Z"
+        path
+        (x (n - 1))
+        (h -. pad)
+        (x 0)
+        (h -. pad)
+    in
+    let vwap = Day_stats.vwap day in
+    (* One order window, tinted in the first order color. *)
+    let win0 = x 30
+    and win1 = x 150 in
+    let draw_seconds = 3.8 in
+    let start_delay = 0.4 in
+    let fill_dot k i =
+      let frac = Float.of_int i /. Float.of_int (n - 1) in
+      let delay = start_delay +. (draw_seconds *. frac) in
+      let color = Styles.order_color theme (k % 2) in
+      svg
+        "circle"
+        [ attr "cx" (sprintf "%.1f" (x i))
+        ; attr "cy" (sprintf "%.1f" (y closes.(i)))
+        ; attr "r" "3.4"
+        ; attr "fill" color
+        ; attr "stroke" theme.Styles.card_bg
+        ; attr "stroke-width" "1"
+        ; Vdom.Attr.class_ "hero-dot"
+        ; Styles.s (sprintf "animation-delay:%.2fs;" delay)
+        ]
+        []
+    in
+    let dots =
+      List.mapi [ 36; 56; 76; 96; 116; 140; 210; 260; 320 ] ~f:fill_dot
+    in
+    let playhead =
+      svg
+        "circle"
+        [ attr "cx" (sprintf "%.1f" (x (n - 1)))
+        ; attr "cy" (sprintf "%.1f" (y closes.(n - 1)))
+        ; attr "r" "4.5"
+        ; attr "fill" theme.Styles.blue
+        ; Vdom.Attr.class_ "hero-pulse"
+        ]
+        []
+    in
+    let caption =
+      svg
+        "text"
+        [ attr "x" (sprintf "%.1f" pad)
+        ; attr "y" (sprintf "%.1f" (h -. 6.))
+        ; attr "fill" theme.Styles.faint
+        ; attr "font-size" "10.5"
+        ; attr "letter-spacing" "0.08em"
+        ]
+        [ Vdom.Node.text "TSLA · 2026-07-09 · REPLAYED" ]
+    in
+    svg
+      "svg"
+      [ attr "viewBox" (sprintf "0 0 %.0f %.0f" w h)
+      ; Styles.s "width:100%;max-width:600px;display:block;"
+      ]
+      ([ svg
+           "rect"
+           [ attr "x" (sprintf "%.1f" win0)
+           ; attr "y" (sprintf "%.1f" pad)
+           ; attr "width" (sprintf "%.1f" (win1 -. win0))
+           ; attr "height" (sprintf "%.1f" (h -. (2. *. pad) -. 20.))
+           ; attr "fill" (Styles.order_color theme 0)
+           ; attr "fill-opacity" "0.07"
+           ; Vdom.Attr.class_ "hero-area"
+           ]
+           []
+       ; svg
+           "line"
+           [ attr "x1" (sprintf "%.1f" pad)
+           ; attr "x2" (sprintf "%.1f" (w -. pad))
+           ; attr "y1" (sprintf "%.1f" (y vwap))
+           ; attr "y2" (sprintf "%.1f" (y vwap))
+           ; attr "stroke" theme.Styles.orange
+           ; attr "stroke-width" "1.2"
+           ; attr "stroke-dasharray" "5 4"
+           ; Vdom.Attr.class_ "hero-area"
+           ]
+           []
+       ; svg
+           "path"
+           [ attr "d" area
+           ; attr "fill" theme.Styles.blue
+           ; attr "fill-opacity" "0.06"
+           ; Vdom.Attr.class_ "hero-area"
+           ]
+           []
+       ; svg
+           "path"
+           [ attr "d" path
+           ; attr "pathLength" "1"
+           ; attr "fill" "none"
+           ; attr "stroke" theme.Styles.blue
+           ; attr "stroke-width" "2"
+           ; attr "stroke-linejoin" "round"
+           ; Vdom.Attr.class_ "hero-line"
+           ]
+           []
+       ]
+       @ dots
+       @ [ playhead; caption ])
+;;
+
 let landing_view ~theme ~is_dark ~toggle_theme ~enter ~to_dashboard =
   let page =
     Styles.s
@@ -5235,11 +5369,18 @@ let landing_view ~theme ~is_dark ~toggle_theme ~enter ~to_dashboard =
           %{theme_button ~theme ~is_dark ~toggle_theme}
         </span>
       </div>
-      <div>
-        %{hero_kicker}
-        %{headline}
-        <div %{Styles.s "margin-top:14px;"}>%{subhead}</div>
-        %{cta}
+      <div
+        %{Styles.s
+            "display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:40px;align-items:center;"}>
+        <div>
+          %{hero_kicker}
+          %{headline}
+          <div %{Styles.s "margin-top:14px;"}>%{subhead}</div>
+          %{cta}
+        </div>
+        <div %{Styles.s "display:flex;justify-content:flex-end;"}>
+          %{hero_visual ~theme}
+        </div>
       </div>
       <div>
         %{landing_section_head ~theme "how a run works"}
