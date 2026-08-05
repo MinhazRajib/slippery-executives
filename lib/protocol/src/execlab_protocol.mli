@@ -193,6 +193,22 @@ module Submit_run : sig
   end
 end
 
+(** Erases the caller's notebook: every saved run under their account is
+    deleted and the count returned. Published board rows are {e not}
+    withdrawn — a leaderboard entry is part of the shared record other
+    players competed against. The account itself survives. *)
+module Reset_account : sig
+  val path : string
+
+  module Request : sig
+    type t = { token : string } [@@deriving sexp, equal]
+  end
+
+  module Response : sig
+    type t = { deleted_runs : int } [@@deriving sexp, equal]
+  end
+end
+
 module Leaderboard : sig
   val path : string
 

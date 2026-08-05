@@ -149,6 +149,14 @@ let load_user_runs ~runs_dir ~username =
   |> List.sort ~compare:newest_first
 ;;
 
+let delete_user_runs ~runs_dir ~username =
+  let dir = user_dir ~runs_dir ~username in
+  let files = sexp_files dir in
+  List.iter files ~f:(fun file ->
+    try Core_unix.unlink (dir ^/ file) with (_ : exn) -> ());
+  List.length files
+;;
+
 let mark_published ~runs_dir ~username ~run_id =
   match find_user_run ~runs_dir ~username ~run_id with
   | None -> ()

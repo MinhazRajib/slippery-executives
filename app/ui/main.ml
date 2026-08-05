@@ -348,6 +348,8 @@ let controls
   ~set_chart_view
   ~zoom_mode
   ~set_zoom_mode
+  ~zoom_tool
+  ~set_zoom_tool
   ~view:(z0, z1)
   ~set_playing
   ~set_speed
@@ -432,7 +434,10 @@ let controls
         class="btn"
         %{style}
         title="Zoom mode: scroll to zoom at the cursor, drag to pan"
-        on_click=%{fun _ -> set_zoom_mode (not zoom_mode)}>
+        on_click=%{fun _ ->
+          if zoom_mode
+          then Effect.Many [ set_zoom_mode false; set_zoom_tool None ]
+          else set_zoom_mode true}>
         %{Icon.search ~size:14 ()}
         #{if zoom_mode then "Zoom on" else "Zoom"}
       </button>
@@ -466,29 +471,37 @@ let controls
        ^ ";font-size:15px;font-weight:700;"
        ^ Styles.mono)
   in
-  (* Buttons for people who would rather not discover a scroll gesture: step
-     in and out around the middle of the current window. *)
-  let step_zoom factor =
-    let span = z1 - z0 in
-    let mid = z0 + (span / 2) in
-    let new_span = Float.iround_nearest_exn (Float.of_int span *. factor) in
-    let n = Array.length replay.bars in
-    let z0, z1 = clamp_window ~n ~z0:(mid - (new_span / 2)) ~span:new_span in
-    set_chart_view (Chart_view.Manual { z0; z1 })
-  in
-  let icon_button ~title_ ~glyph ~on_click =
+  (* The magnifier buttons arm a click tool rather than acting once: click
+     the chart to zoom exactly there, as many times as you like; click the
+     button again to disarm. Arming also switches zoom mode on so the rest of
+     the machinery (cursor, wheel, pan) is consistent. *)
+  let tool_button direction ~title_ ~glyph =
+    let armed =
+      match zoom_tool, direction with
+      | Some `In, `In | Some `Out, `Out -> true
+      | (Some (`In | `Out) | None), (`In | `Out) -> false
+    in
     let style =
       Styles.s
         ("display:inline-flex;align-items:center;justify-content:center;background:"
-         ^ theme.Styles.chip_bg
+         ^ (if armed then theme.Styles.blue else theme.Styles.chip_bg)
          ^ ";color:"
-         ^ theme.Styles.secondary
+         ^ (if armed then theme.Styles.page_bg else theme.Styles.secondary)
          ^ ";border:1px solid "
-         ^ theme.Styles.chip_border
+         ^ (if armed then theme.Styles.blue else theme.Styles.chip_border)
          ^ ";border-radius:7px;width:32px;height:32px;cursor:pointer;")
     in
     {%html|
-      <button class="btn" %{style} title=%{title_} on_click=%{on_click}>
+      <button
+        class="btn"
+        %{style}
+        title=%{title_}
+        on_click=%{fun _ ->
+          if armed
+          then set_zoom_tool None
+          else
+            Effect.Many
+              [ set_zoom_tool (Some direction); set_zoom_mode true ]}>
         %{glyph}
       </button>
     |}
@@ -526,12 +539,10 @@ let controls
     {%html|
       <span %{Styles.s "display:flex;gap:6px;align-items:center;"}>
         %{magnifier}
-        %{icon_button ~title_:"Zoom in"
-            ~glyph:(Icon.zoom_in ~size:15 ())
-            ~on_click:(fun _ -> step_zoom 0.6)}
-        %{icon_button ~title_:"Zoom out"
-            ~glyph:(Icon.zoom_out ~size:15 ())
-            ~on_click:(fun _ -> step_zoom 1.7)}
+        %{tool_button `In ~title_:"Zoom in where you click"
+            ~glyph:(Icon.zoom_in ~size:15 ())}
+        %{tool_button `Out ~title_:"Zoom out where you click"
+            ~glyph:(Icon.zoom_out ~size:15 ())}
         %{reset_button}
         %{range_readout}
       </span>
@@ -640,6 +651,7 @@ let chart
   ~set_hover
   ~view:(z0, z1)
   ~zoom_mode
+  ~zoom_tool
   ~set_view
   ~drag
   ~set_drag
@@ -766,7 +778,7 @@ let chart
             ; attr "fill" color
             ; attr
                 "fill-opacity"
-                (if hovered_in parent then "0.16" else "0.085")
+                (if hovered_in parent then "0.22" else "0.13")
             ]
             [ window_tooltip index parent ]
         ; svg
@@ -1001,21 +1013,20 @@ let chart
                let bar_close = Price.to_float bar.Market_bar.close in
                tooltip
                  (sprintf
-                    "%s · order %d · %s %d @ $%.4f\n\
-                     bar open $%.2f (%+.4f) · close $%.2f (%+.4f)\n\
-                     %s fill"
-                    (hhmm fill.time)
-                    (index + 1)
+                    "YOUR FILL: %s %d shares @ $%.4f (%s, order %d, %s)\n\
+                     STOCK THAT MINUTE: opened $%.2f · closed $%.2f\n\
+                     you paid %+.4f vs the open"
                     (side_str fill.side)
                     (Size.to_int fill.size)
                     fill_price
-                    bar_open
-                    (fill_price -. bar_open)
-                    bar_close
-                    (fill_price -. bar_close)
+                    (hhmm fill.time)
+                    (index + 1)
                     (match fill.liquidity with
                      | Taker -> "taker"
-                     | Maker -> "maker")))
+                     | Maker -> "maker")
+                    bar_open
+                    bar_close
+                    (fill_price -. bar_open)))
             ])))
   in
   (* The Google-Finance-style crosshair: a dashed vertical at the hovered
@@ -1147,7 +1158,10 @@ let chart
     [ attr "viewBox" (sprintf "0 0 %s %s" (fs w) (fs h))
     ; Styles.s
         ("width:100%;display:block;cursor:"
-         ^ (if zoom_mode then "grab" else "crosshair")
+         ^ (match zoom_tool with
+            | Some `In -> "zoom-in"
+            | Some `Out -> "zoom-out"
+            | None -> if zoom_mode then "grab" else "crosshair")
          ^ ";")
     ; Vdom.Attr.on_mousemove (fun evt ->
         match drag with
@@ -1166,12 +1180,39 @@ let chart
         | Some (_ : float * int) | None ->
           set_hover (minute_of_mouse ~view:(z0, z1) ~shown:minute evt))
     ; Vdom.Attr.on_mousedown (fun evt ->
-        if not zoom_mode
+        if (not zoom_mode) || Option.is_some zoom_tool
         then Effect.Ignore
         else (
           match plot_ratio_of_mouse evt with
           | None -> Effect.Ignore
           | Some ratio -> set_drag (Some (ratio, z0))))
+    ; Vdom.Attr.on_click (fun evt ->
+        (* An armed magnifier zooms about the exact point you click — the
+           clicked minute keeps its screen position — and stays armed so
+           successive clicks keep going. *)
+        match zoom_tool with
+        | None -> Effect.Ignore
+        | Some direction ->
+          (match plot_ratio_of_mouse evt with
+           | None -> Effect.Ignore
+           | Some ratio ->
+             let span = z1 - z0 in
+             let cursor =
+               z0 + Float.iround_nearest_exn (ratio *. Float.of_int span)
+             in
+             let factor = match direction with `In -> 0.55 | `Out -> 1.8 in
+             let new_span =
+               Int.max
+                 min_zoom_minutes
+                 (Int.min
+                    (Float.iround_nearest_exn (Float.of_int span *. factor))
+                    (n - 1))
+             in
+             let new_z0 =
+               cursor
+               - Float.iround_nearest_exn (ratio *. Float.of_int new_span)
+             in
+             set_view (clamp_window ~n ~z0:new_z0 ~span:new_span)))
     ; Vdom.Attr.on_mouseup (fun (_ : _) -> set_drag None)
     ; Vdom.Attr.on_wheel (fun evt ->
         if not zoom_mode
@@ -1190,10 +1231,11 @@ let chart
             let cursor =
               z0 + Float.iround_nearest_exn (ratio *. Float.of_int span)
             in
+            (* Gentle: repeated notches glide instead of leaping. *)
             let factor =
               if Float.( > ) (Js_of_ocaml.Js.to_float evt##.deltaY) 0.
-              then 1.25
-              else 1. /. 1.25
+              then 1.08
+              else 1. /. 1.08
             in
             let new_span =
               Float.iround_nearest_exn (Float.of_int span *. factor)
@@ -1725,6 +1767,8 @@ let sim_view
   ~set_chart_view
   ~zoom_mode
   ~set_zoom_mode
+  ~zoom_tool
+  ~set_zoom_tool
   ~drag
   ~set_drag
   ~set_playing
@@ -1801,12 +1845,13 @@ let sim_view
         %{step_progress ~theme ~current:3}
       </div>
       %{controls replay ~theme ~minute ~playing ~speed ~chart_view
-          ~set_chart_view ~zoom_mode ~set_zoom_mode ~view ~set_playing
+          ~set_chart_view ~zoom_mode ~set_zoom_mode ~zoom_tool
+          ~set_zoom_tool ~view ~set_playing
           ~set_speed ~set_minute ~restart}
       <div %{Styles.card theme "padding-bottom:8px;"}>
         %{legend replay ~theme ~minute ~fills ~show_fills ~toggle_fills}
         %{chart replay ~theme ~minute ~fills ~show_fills ~hover
-            ~set_hover ~view ~zoom_mode ~drag ~set_drag
+            ~set_hover ~view ~zoom_mode ~zoom_tool ~drag ~set_drag
             ~set_view:(fun (z0, z1) ->
               set_chart_view (Chart_view.Manual { z0; z1 }))}
       </div>
@@ -2544,6 +2589,8 @@ let my_runs_view
   ~my_runs
   ~open_run
   ~refresh
+  ~reset_account
+  ~confirm_reset
   ~new_sim
   ~back
   =
@@ -2704,6 +2751,30 @@ let my_runs_view
       |}
       :: List.map runs ~f:run_row
   in
+  (* Destructive, so it asks twice: the first click arms it and turns it red,
+     the second actually erases. *)
+  let reset_button =
+    let style =
+      Styles.s
+        ("display:inline-flex;align-items:center;gap:6px;background:"
+         ^ (if confirm_reset then theme.Styles.red else theme.Styles.chip_bg)
+         ^ ";color:"
+         ^ (if confirm_reset then "#ffffff" else theme.Styles.red)
+         ^ ";border:1px solid "
+         ^ (if confirm_reset
+            then theme.Styles.red
+            else theme.Styles.chip_border)
+         ^ ";border-radius:7px;padding:6px \
+            11px;cursor:pointer;font-size:12px;font-weight:700;")
+    in
+    {%html|
+      <button class="btn" %{style} on_click=%{fun _ -> reset_account}>
+        #{if confirm_reset
+          then "Click again to erase everything"
+          else "Reset my data"}
+      </button>
+    |}
+  in
   let who =
     match (session : Session.t option) with
     | None -> "not signed in"
@@ -2726,8 +2797,11 @@ let my_runs_view
                  ^ ";font-size:14px;font-weight:700;")}>
             Saved runs
           </span>
-          %{icon_action ~theme ~glyph:(Icon.refresh ~size:14 ())
-              ~label:"Refresh" ~on_click:(fun _ -> refresh)}
+          <span %{Styles.s "display:flex;gap:8px;align-items:center;"}>
+            %{icon_action ~theme ~glyph:(Icon.refresh ~size:14 ())
+                ~label:"Refresh" ~on_click:(fun _ -> refresh)}
+            %{reset_button}
+          </span>
         </div>
         *{body}
       </div>
@@ -4802,6 +4876,7 @@ let fetch_board_effect = Effect.of_deferred_fun Net.leaderboard
 let create_account_effect = Effect.of_deferred_fun Net.create_account
 let sign_in_effect = Effect.of_deferred_fun Net.sign_in
 let save_run_effect = Effect.of_deferred_fun Net.save_run
+let reset_account_effect = Effect.of_deferred_fun Net.reset_account
 let my_runs_effect = Effect.of_deferred_fun Net.my_runs
 
 let persist_session =
@@ -4890,6 +4965,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let my_runs, set_my_runs =
     Bonsai.state (None : Saved_run.t list option) graph
   in
+  let confirm_reset, set_confirm_reset = Bonsai.state false graph in
   let board, set_board =
     Bonsai.state (None : Leaderboard_row.t list option) graph
   in
@@ -4909,6 +4985,9 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     Bonsai.state (Chart_view.Follow None) graph
   in
   let zoom_mode, set_zoom_mode = Bonsai.state false graph in
+  let zoom_tool, set_zoom_tool =
+    Bonsai.state (None : [ `In | `Out ] option) graph
+  in
   (* While panning: the cursor's plot ratio at mousedown and the window start
      it was anchored to. *)
   let drag, set_drag = Bonsai.state (None : (float * int) option) graph in
@@ -4919,16 +4998,24 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     Bonsai.state (None : Symbol.t option) graph
   in
   let advance =
-    let%arr playing and speed and replay and set_minute in
+    let%arr playing and replay and set_minute in
     match replay with
     | Some r when playing ->
-      set_minute (fun m -> Int.min (Replay.last_minute r) (m + speed))
+      set_minute (fun m -> Int.min (Replay.last_minute r) (m + 1))
     | Some _ | None -> Effect.Ignore
+  in
+  (* Smoothness comes from the tick, not the step: the playhead always moves
+     one minute at a time, and speeding up shortens the tick instead of
+     lengthening the jump. At 16x that is a tick every ~16ms — animation rate
+     — where the old +16-minutes-per-quarter-second visibly lurched. *)
+  let tick_span =
+    let%arr speed in
+    Time_ns.Span.of_ms (250. /. Float.of_int (Int.max 1 speed))
   in
   Bonsai.Clock.every
     ~when_to_start_next_effect:`Every_multiple_of_period_non_blocking
     ~trigger_on_activate:false
-    (Bonsai.return (Time_ns.Span.of_ms 250.))
+    tick_span
     advance
     graph;
   let start =
@@ -5081,6 +5168,34 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         in
         set_screen Screen.Results
   in
+  (* "Reset all my data": the server notebook and the browser-local run
+     history both go. Two clicks — the first only arms the button. *)
+  let reset_account =
+    let%arr session
+    and confirm_reset
+    and set_confirm_reset
+    and set_my_runs
+    and set_runs
+    and set_previous_run
+    and set_submit_status in
+    match session with
+    | None -> Effect.Ignore
+    | Some { Session.token; username = (_ : string) } ->
+      if not confirm_reset
+      then set_confirm_reset true
+      else (
+        let%bind.Effect (_ : Reset_account.Response.t Or_error.t) =
+          reset_account_effect { Reset_account.Request.token }
+        in
+        let%bind.Effect () = set_confirm_reset false in
+        let%bind.Effect () = set_my_runs (Some []) in
+        let%bind.Effect () = set_previous_run None in
+        let%bind.Effect () = set_submit_status None in
+        let%bind.Effect () =
+          Effect.of_sync_fun (fun () -> History.save []) ()
+        in
+        set_runs [])
+  in
   let sign_out =
     let%arr set_session and set_my_runs and set_screen in
     let%bind.Effect () = set_session None in
@@ -5182,6 +5297,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_chart_view
   and zoom_mode
   and set_zoom_mode
+  and zoom_tool
+  and set_zoom_tool
   and drag
   and set_drag
   and is_dark
@@ -5203,6 +5320,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and my_runs
   and submit_auth
   and sign_out
+  and reset_account
+  and confirm_reset
   and open_run
   and refresh_my_runs
   and board
@@ -5217,6 +5336,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   in
   let goto s = set_screen s in
   let select symbol date = set_selection (Some (symbol, date)) in
+  let open_my_runs = Effect.Many [ goto Screen.My_runs; refresh_my_runs ] in
   let profile =
     Some
       (profile_button
@@ -5236,7 +5356,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
       ~session
       ~sign_out
       ~to_sign_in:(goto Screen.Landing)
-      ~to_my_runs:(goto Screen.My_runs)
+      ~to_my_runs:open_my_runs
       ~quick_start_with:(fun symbol ->
         let%bind.Effect () = set_cal_symbol (Some symbol) in
         set_screen Screen.Choose_day)
@@ -5270,7 +5390,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~is_dark
         ~toggle_theme
         ~enter:(goto Screen.Choose_day)
-        ~to_dashboard:(goto Screen.My_runs)
+        ~to_dashboard:open_my_runs
         ~session
         ~auth_mode
         ~set_auth_mode
@@ -5292,6 +5412,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~my_runs
         ~open_run
         ~refresh:refresh_my_runs
+        ~reset_account
+        ~confirm_reset
         ~new_sim:(goto Screen.Choose_day)
         ~back:(goto Screen.Dashboard)
     | Dashboard, _, _ -> dashboard ()
@@ -5339,6 +5461,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~set_chart_view
         ~zoom_mode
         ~set_zoom_mode
+        ~zoom_tool
+        ~set_zoom_tool
         ~drag
         ~set_drag
         ~set_playing

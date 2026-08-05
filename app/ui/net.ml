@@ -88,6 +88,14 @@ let submit_run request =
     request
 ;;
 
+let reset_account request =
+  call
+    ~path:Reset_account.path
+    ~sexp_of_req:[%sexp_of: Reset_account.Request.t]
+    ~resp_of_sexp:[%of_sexp: Reset_account.Response.t]
+    request
+;;
+
 let leaderboard request =
   call
     ~path:Leaderboard.path

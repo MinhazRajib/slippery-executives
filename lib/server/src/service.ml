@@ -219,6 +219,14 @@ let my_runs ~runs_dir (request : My_runs.Request.t) =
   { My_runs.Response.runs = Store.load_user_runs ~runs_dir ~username }
 ;;
 
+let reset_account ~runs_dir (request : Reset_account.Request.t) =
+  let open Or_error.Let_syntax in
+  let%map username = username_of_token ~runs_dir ~token:request.token in
+  { Reset_account.Response.deleted_runs =
+      Store.delete_user_runs ~runs_dir ~username
+  }
+;;
+
 let leaderboard ~runs_dir (request : Leaderboard.Request.t) =
   Ok
     { Leaderboard.Response.rows =
@@ -348,6 +356,13 @@ let handle ~data_dir ~runs_dir ~root ~(request : Http.Request.t) ~writer =
       ~req_of_sexp:[%of_sexp: My_runs.Request.t]
       ~sexp_of_resp:[%sexp_of: My_runs.Response.t]
       ~handle:(my_runs ~runs_dir)
+  | "POST", path when String.equal path Reset_account.path ->
+    api_response
+      ~writer
+      ~body:request.body
+      ~req_of_sexp:[%of_sexp: Reset_account.Request.t]
+      ~sexp_of_resp:[%sexp_of: Reset_account.Response.t]
+      ~handle:(reset_account ~runs_dir)
   | "POST", path when String.equal path Submit_run.path ->
     api_response
       ~writer

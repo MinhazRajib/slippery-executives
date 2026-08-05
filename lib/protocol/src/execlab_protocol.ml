@@ -139,6 +139,18 @@ module Submit_run = struct
   end
 end
 
+module Reset_account = struct
+  let path = "/api/reset-account"
+
+  module Request = struct
+    type t = { token : string } [@@deriving sexp, equal]
+  end
+
+  module Response = struct
+    type t = { deleted_runs : int } [@@deriving sexp, equal]
+  end
+end
+
 module Leaderboard = struct
   let path = "/api/leaderboard"
 

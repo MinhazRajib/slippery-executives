@@ -75,6 +75,10 @@ val find_user_run
 (** Flips an existing entry's [published] flag on, for when a saved run is
     later submitted to its board. A run that is not in the notebook (or is
     unreadable) is left alone — publishing must not fail over bookkeeping. *)
+(** Deletes every saved run in [username]'s notebook, returning how many
+    files went. Board entries are untouched. *)
+val delete_user_runs : runs_dir:string -> username:string -> int
+
 val mark_published
   :  runs_dir:string
   -> username:string
