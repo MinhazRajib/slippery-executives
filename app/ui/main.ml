@@ -94,6 +94,51 @@ let money_stat ~theme ~label:text value_cents =
   |}
 ;;
 
+(* The account chip: identity plus a way into your own runs, in the same
+   corner on every screen. Guests get a way to sign in instead. *)
+let profile_button ~theme ~session ~on_click =
+  let label, bg, fg =
+    match (session : Session.t option) with
+    | Some { Session.username; token = (_ : string) } ->
+      username, theme.Styles.blue_soft, theme.Styles.blue
+    | None -> "Guest", theme.Styles.chip_bg, theme.Styles.secondary
+  in
+  let style =
+    Styles.s
+      ("display:inline-flex;align-items:center;gap:7px;background:"
+       ^ bg
+       ^ ";color:"
+       ^ fg
+       ^ ";border:1px solid "
+       ^ theme.Styles.chip_border
+       ^ ";border-radius:999px;padding:5px 12px 5px \
+          6px;cursor:pointer;font-size:12.5px;font-weight:700;white-space:nowrap;"
+      )
+  in
+  let avatar =
+    let initial = String.prefix (String.uppercase label) 1 in
+    let dot =
+      Styles.s
+        ("display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:999px;background:"
+         ^ fg
+         ^ ";color:"
+         ^ theme.Styles.page_bg
+         ^ ";font-size:11px;font-weight:800;")
+    in
+    {%html|<span %{dot}>#{initial}</span>|}
+  in
+  {%html|
+    <button
+      class="btn"
+      %{style}
+      title="Your runs"
+      on_click=%{fun _ -> on_click}>
+      %{avatar}
+      #{label}
+    </button>
+  |}
+;;
+
 (* Light/dark switch; lives in each screen's header. *)
 let theme_button ~theme ~is_dark ~toggle_theme =
   let style =
@@ -164,6 +209,10 @@ module Icon = struct
 
   let arrow_right ?size () = make ?size "M5 12h14M12 5l7 7-7 7"
   let arrow_left ?size () = make ?size "M19 12H5M12 19l-7-7 7-7"
+
+  let search ?size () =
+    make ?size "M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35"
+  ;;
 end
 
 let wizard_steps =
@@ -244,16 +293,67 @@ let pill ~theme ~active ~on_click label =
   {%html|<button %{style} on_click=%{on_click}>#{label}</button>|}
 ;;
 
+let chart_w = 1140.
+let chart_left = 52.
+let chart_right = 20.
+let chart_plot_w = chart_w -. chart_left -. chart_right
+
+module Chart_view = struct
+  type t =
+    | Follow of int option
+    | Manual of
+        { z0 : int
+        ; z1 : int
+        }
+  [@@deriving equal]
+end
+
+(* The narrowest window we allow: below this the axis has nothing left to say
+   and the fan of fills stops meaning anything. *)
+let min_zoom_minutes = 6
+
+(* Clamp a proposed window into the session, preserving its span. *)
+let clamp_window ~n ~z0 ~span =
+  let span = Int.max min_zoom_minutes (Int.min span (n - 1)) in
+  let z0 = Int.max 0 (Int.min z0 (n - 1 - span)) in
+  z0, z0 + span
+;;
+
+(* The cursor's position across the plot area, 0 at the left edge and 1 at
+   the right; [None] when it is outside. *)
+let plot_ratio_of_mouse
+  (evt : Js_of_ocaml.Dom_html.mouseEvent Js_of_ocaml.Js.t)
+  =
+  let open Js_of_ocaml in
+  match Js.Opt.to_option evt##.currentTarget with
+  | None -> None
+  | Some target ->
+    let rect = target##getBoundingClientRect in
+    let x_px = Js.to_float evt##.clientX -. Js.to_float rect##.left in
+    let width = Float.of_int target##.clientWidth in
+    if Float.( <= ) width 0.
+    then None
+    else (
+      let svg_x = x_px *. (chart_w /. width) in
+      let ratio = (svg_x -. chart_left) /. chart_plot_w in
+      if Float.( < ) ratio 0. || Float.( > ) ratio 1.
+      then None
+      else Some ratio)
+;;
+
 let controls
   (replay : Replay.t)
   ~theme
   ~minute
   ~playing
   ~speed
-  ~zoom
+  ~chart_view
+  ~set_chart_view
+  ~zoom_mode
+  ~set_zoom_mode
+  ~view:(z0, z1)
   ~set_playing
   ~set_speed
-  ~set_zoom
   ~set_minute
   ~restart
   =
@@ -272,6 +372,81 @@ let controls
       ("display:flex;gap:2px;background:"
        ^ theme.Styles.chip_bg
        ^ ";border-radius:5px;padding:2px;")
+  in
+  let zoom_pill target label =
+    pill
+      ~theme
+      ~active:(Chart_view.equal chart_view target)
+      ~on_click:(fun _ -> set_chart_view target)
+      label
+  in
+  (* Zoom mode is a stated mode, not a hidden gesture: the button lights up,
+     the cursor changes, and the wheel stops scrolling the page. *)
+  let magnifier =
+    let style =
+      Styles.s
+        ("display:inline-flex;align-items:center;gap:6px;background:"
+         ^ (if zoom_mode then theme.Styles.blue else theme.Styles.chip_bg)
+         ^ ";color:"
+         ^ (if zoom_mode
+            then theme.Styles.page_bg
+            else theme.Styles.secondary)
+         ^ ";border:1px solid "
+         ^ (if zoom_mode then theme.Styles.blue else theme.Styles.chip_border)
+         ^ ";border-radius:7px;padding:7px \
+            12px;cursor:pointer;font-size:12.5px;font-weight:700;white-space:nowrap;"
+        )
+    in
+    {%html|
+      <button
+        class="btn"
+        %{style}
+        title="Zoom mode: scroll to zoom at the cursor, drag to pan"
+        on_click=%{fun _ -> set_zoom_mode (not zoom_mode)}>
+        %{Icon.search ~size:14 ()}
+        #{if zoom_mode then "Zoom on" else "Zoom"}
+      </button>
+    |}
+  in
+  let range_readout =
+    let range_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.secondary
+         ^ ";font-size:12px;white-space:nowrap;"
+         ^ Styles.mono)
+    in
+    let reset =
+      let style =
+        Styles.s
+          ("background:none;border:none;color:"
+           ^ theme.Styles.blue
+           ^ ";font-size:12px;font-weight:700;cursor:pointer;padding:4px \
+              6px;")
+      in
+      match (chart_view : Chart_view.t) with
+      | Follow None -> {%html|<span></span>|}
+      | Follow (Some _) | Manual _ ->
+        {%html|
+          <button
+            class="btn"
+            %{style}
+            on_click=%{fun _ -> set_chart_view (Chart_view.Follow None)}>
+            reset
+          </button>
+        |}
+    in
+    {%html|
+      <span %{Styles.s "display:flex;gap:4px;align-items:center;"}>
+        <span %{range_style}>
+          #{sprintf "%s–%s · %d min"
+              (Replay.clock_string replay ~minute:z0)
+              (Replay.clock_string replay ~minute:z1)
+              (z1 - z0)}
+        </span>
+        %{reset}
+      </span>
+    |}
   in
   let slider_style =
     Styles.s
@@ -321,17 +496,14 @@ let controls
               ~on_click:(fun _ -> set_speed 16) "16x"}
         </div>
         <div %{group}>
-          %{pill ~theme ~active:([%equal: int option] zoom None)
-              ~on_click:(fun _ -> set_zoom None) "Day"}
-          %{pill ~theme ~active:([%equal: int option] zoom (Some 120))
-              ~on_click:(fun _ -> set_zoom (Some 120)) "2h"}
-          %{pill ~theme ~active:([%equal: int option] zoom (Some 60))
-              ~on_click:(fun _ -> set_zoom (Some 60)) "1h"}
-          %{pill ~theme ~active:([%equal: int option] zoom (Some 30))
-              ~on_click:(fun _ -> set_zoom (Some 30)) "30m"}
-          %{pill ~theme ~active:([%equal: int option] zoom (Some 15))
-              ~on_click:(fun _ -> set_zoom (Some 15)) "15m"}
+          %{zoom_pill (Chart_view.Follow None) "Day"}
+          %{zoom_pill (Chart_view.Follow (Some 120)) "2h"}
+          %{zoom_pill (Chart_view.Follow (Some 60)) "1h"}
+          %{zoom_pill (Chart_view.Follow (Some 30)) "30m"}
+          %{zoom_pill (Chart_view.Follow (Some 15)) "15m"}
         </div>
+        %{magnifier}
+        %{range_readout}
         <input
           type="range"
           min=%{0.}
@@ -349,13 +521,12 @@ let controls
 (* ---------- the chart: price line, order windows, crosshair ---------- *)
 
 (* Geometry shared by the renderer and the mouse-position inverse. *)
-let chart_w = 1140.
-let chart_left = 52.
-let chart_right = 20.
-let chart_plot_w = chart_w -. chart_left -. chart_right
 
 (* The hovered minute, from a mouse event over the chart svg: CSS pixels ->
    viewBox units -> bar index, clamped to the replayed range. *)
+(* Where the chart is looking. [Follow] tracks the playhead with a preset
+   span (None = the whole session); [Manual] is an explicit window the user
+   reached by wheel-zooming or dragging, and stops following. *)
 let minute_of_mouse
   ~view:(z0, z1)
   ~shown
@@ -395,6 +566,10 @@ let chart
   ~hover
   ~set_hover
   ~view:(z0, z1)
+  ~zoom_mode
+  ~set_view
+  ~drag
+  ~set_drag
   =
   let bars = replay.bars in
   let n = Array.length bars in
@@ -402,7 +577,7 @@ let chart
   let left = chart_left in
   let plot_w = chart_plot_w in
   let top = 10. in
-  let price_h = 340. in
+  let price_h = 430. in
   let axis_y = top +. price_h +. 18. in
   let h = axis_y +. 6. in
   (* The y scale fits the *visible* window, so zooming in also zooms the
@@ -415,6 +590,13 @@ let chart
   let hi =
     Array.fold visible ~init:Float.neg_infinity ~f:(fun acc bar ->
       Float.max acc (Price.to_float bar.Market_bar.high))
+  in
+  (* Pad the price domain so the line breathes instead of grazing the top and
+     bottom edges of the plot. *)
+  let lo, hi =
+    let raw = Float.max (hi -. lo) 0.01 in
+    let pad = raw *. 0.08 in
+    lo -. pad, hi +. pad
   in
   let span = Float.max (hi -. lo) 0.01 in
   let x i =
@@ -524,7 +706,54 @@ let chart
             ; attr "fill" color
             ]
             [ window_tooltip index parent ]
-        ]))
+        ]
+        (* The window says what it is, on the window. A legend listing every
+           parent order stops fitting the moment an alpha file has more than
+           a handful; a tag anchored to its own band never does. *)
+        @
+        let label =
+          sprintf
+            "O%d %s %s"
+            (index + 1)
+            (side_str parent.instruction.Alpha_instruction.side)
+            (Int.to_string_hum
+               ~delimiter:','
+               (Size.to_int parent.instruction.Alpha_instruction.quantity))
+        in
+        let short = sprintf "O%d" (index + 1) in
+        let text =
+          if Float.( > ) width 108.
+          then label
+          else if Float.( > ) width 26.
+          then short
+          else ""
+        in
+        if String.is_empty text
+        then []
+        else (
+          let tag_w = (Float.of_int (String.length text) *. 6.4) +. 12. in
+          let tag_y = rail_y +. 5.5 in
+          [ svg
+              "rect"
+              [ attr "x" (fs (x0 +. 2.))
+              ; attr "y" (fs tag_y)
+              ; attr "width" (fs tag_w)
+              ; attr "height" "15"
+              ; attr "rx" "3"
+              ; attr "fill" color
+              ; attr "fill-opacity" "0.92"
+              ]
+              [ window_tooltip index parent ]
+          ; svg
+              "text"
+              [ attr "x" (fs (x0 +. 8.))
+              ; attr "y" (fs (tag_y +. 11.))
+              ; attr "fill" theme.Styles.card_bg
+              ; attr "font-size" "10.5"
+              ; attr "font-weight" "700"
+              ]
+              [ Vdom.Node.text text ]
+          ])))
   in
   (* Arrival reference lines stay, but only when few enough to read. *)
   let arrival_lines =
@@ -833,10 +1062,71 @@ let chart
   svg
     "svg"
     [ attr "viewBox" (sprintf "0 0 %s %s" (fs w) (fs h))
-    ; Styles.s "width:100%;display:block;cursor:crosshair;"
+    ; Styles.s
+        ("width:100%;display:block;cursor:"
+         ^ (if zoom_mode then "grab" else "crosshair")
+         ^ ";")
     ; Vdom.Attr.on_mousemove (fun evt ->
-        set_hover (minute_of_mouse ~view:(z0, z1) ~shown:minute evt))
-    ; Vdom.Attr.on_mouseleave (fun (_ : _) -> set_hover None)
+        match drag with
+        | Some (anchor_ratio, anchor_z0) when zoom_mode ->
+          (* Panning: hold the minute under the cursor still by shifting the
+             window against the drag. *)
+          (match plot_ratio_of_mouse evt with
+           | None -> Effect.Ignore
+           | Some ratio ->
+             let span = z1 - z0 in
+             let shift =
+               Float.iround_nearest_exn
+                 ((anchor_ratio -. ratio) *. Float.of_int span)
+             in
+             set_view (clamp_window ~n ~z0:(anchor_z0 + shift) ~span))
+        | Some (_ : float * int) | None ->
+          set_hover (minute_of_mouse ~view:(z0, z1) ~shown:minute evt))
+    ; Vdom.Attr.on_mousedown (fun evt ->
+        if not zoom_mode
+        then Effect.Ignore
+        else (
+          match plot_ratio_of_mouse evt with
+          | None -> Effect.Ignore
+          | Some ratio -> set_drag (Some (ratio, z0))))
+    ; Vdom.Attr.on_mouseup (fun (_ : _) -> set_drag None)
+    ; Vdom.Attr.on_wheel (fun evt ->
+        if not zoom_mode
+        then Effect.Ignore
+        else (
+          match
+            plot_ratio_of_mouse
+              (evt :> Js_of_ocaml.Dom_html.mouseEvent Js_of_ocaml.Js.t)
+          with
+          | None -> Effect.Ignore
+          | Some ratio ->
+            (* Zoom about the cursor: the minute under the pointer keeps its
+               screen position, so the chart grows around what you are
+               looking at rather than around the middle. *)
+            let span = z1 - z0 in
+            let cursor =
+              z0 + Float.iround_nearest_exn (ratio *. Float.of_int span)
+            in
+            let factor =
+              if Float.( > ) (Js_of_ocaml.Js.to_float evt##.deltaY) 0.
+              then 1.25
+              else 1. /. 1.25
+            in
+            let new_span =
+              Float.iround_nearest_exn (Float.of_int span *. factor)
+            in
+            let new_span =
+              Int.max min_zoom_minutes (Int.min new_span (n - 1))
+            in
+            let new_z0 =
+              cursor
+              - Float.iround_nearest_exn (ratio *. Float.of_int new_span)
+            in
+            (* Stop the page from scrolling underneath the zoom. *)
+            evt##preventDefault;
+            set_view (clamp_window ~n ~z0:new_z0 ~span:new_span)))
+    ; Vdom.Attr.on_mouseleave (fun (_ : _) ->
+        Effect.Many [ set_drag None; set_hover None ])
     ]
     (grid
      @ windows
@@ -875,20 +1165,15 @@ let legend
     in
     {%html|<span><span %{swatch}></span> <span %{text_style}>#{label}</span></span>|}
   in
-  (* Per-order legend entries stop earning their space past a few orders; the
-     table below carries the mapping instead. *)
+  (* No per-order entries: a legend that grows with the alpha file is a
+     legend that stops fitting. Orders are tagged on their own windows, and
+     each fill takes its parent's color. *)
   let order_items =
-    if List.length replay.parents > 3
-    then []
-    else
-      List.mapi replay.parents ~f:(fun index parent ->
-        item
-          ~color:(Styles.order_color theme index)
-          ~line:false
-          (sprintf
-             "%s fills (order %d)"
-             (side_str parent.instruction.Alpha_instruction.side)
-             (index + 1)))
+    [ item
+        ~color:theme.Styles.faint
+        ~line:false
+        "fills, colored by their order (tagged on the chart)"
+    ]
   in
   let row =
     Styles.s
@@ -1353,10 +1638,14 @@ let sim_view
   ~playing
   ~speed
   ~show_fills
-  ~zoom
+  ~chart_view
+  ~set_chart_view
+  ~zoom_mode
+  ~set_zoom_mode
+  ~drag
+  ~set_drag
   ~set_playing
   ~set_speed
-  ~set_zoom
   ~set_minute
   ~restart
   ~toggle_fills
@@ -1369,14 +1658,14 @@ let sim_view
   let fills = Replay.fills_upto replay ~minute in
   (* The visible bar window: full session, or a preset span centered on the
      playhead (clamped at the edges), so the zoom follows the replay. *)
+  let n = Array.length replay.bars in
   let view =
-    let n = Array.length replay.bars in
-    match zoom with
-    | None -> 0, n - 1
-    | Some span ->
-      let span = Int.min span (n - 1) in
-      let z0 = Int.max 0 (Int.min (minute - (span / 2)) (n - 1 - span)) in
-      z0, z0 + span
+    match (chart_view : Chart_view.t) with
+    | Follow None -> 0, n - 1
+    | Follow (Some span) ->
+      (* A preset window rides the playhead, clamped at the session edges. *)
+      clamp_window ~n ~z0:(minute - (span / 2)) ~span
+    | Manual { z0; z1 } -> clamp_window ~n ~z0 ~span:(z1 - z0)
   in
   let page =
     Styles.s
@@ -1426,12 +1715,15 @@ let sim_view
         </div>
         %{step_progress ~theme ~current:3}
       </div>
-      %{controls replay ~theme ~minute ~playing ~speed ~zoom ~set_playing
-          ~set_speed ~set_zoom ~set_minute ~restart}
+      %{controls replay ~theme ~minute ~playing ~speed ~chart_view
+          ~set_chart_view ~zoom_mode ~set_zoom_mode ~view ~set_playing
+          ~set_speed ~set_minute ~restart}
       <div %{Styles.card theme "padding-bottom:8px;"}>
         %{legend replay ~theme ~minute ~fills ~show_fills ~toggle_fills}
         %{chart replay ~theme ~minute ~fills ~show_fills ~hover
-            ~set_hover ~view}
+            ~set_hover ~view ~zoom_mode ~drag ~set_drag
+            ~set_view:(fun (z0, z1) ->
+              set_chart_view (Chart_view.Manual { z0; z1 }))}
       </div>
       %{orders_table replay ~theme ~fills ~minute}
       %{event_log replay ~theme ~fills ~minute}
@@ -1512,6 +1804,7 @@ let instruction_row ~theme (instruction : Alpha_instruction.t) =
    link, theme toggle, and (when [step] is given) the progress rail. *)
 let wizard_header
   ?step
+  ?profile
   ~theme
   ~is_dark
   ~toggle_theme
@@ -1560,6 +1853,7 @@ let wizard_header
       <span %{Styles.s "display:flex;gap:10px;align-items:center;"}>
         *{back_button}
         %{theme_button ~theme ~is_dark ~toggle_theme}
+        ?{profile}
       </span>
     </div>
   |}
@@ -1580,93 +1874,40 @@ let two_col =
 (* ---------- landing page ---------- *)
 
 let landing_stats =
-  [ "66", "historical sessions — 6 symbols x 11 days, July 2026"
-  ; "25,740", "one-minute bars of real prices and volume"
-  ; "5", "execution algorithms, from naive to adaptive"
-  ; "2", "fill engines: bar model and synthetic order book"
+  [ "66", "real trading sessions"
+  ; "25,740", "minutes of price and volume"
+  ; "5", "execution algorithms"
   ]
 ;;
 
 let landing_sections =
   [ ( "How a run works"
-    , "Five steps, no setup. Bring a CSV of trade instructions, pick a day \
-       and an algorithm, and watch the fills land against that day's real \
-       tape."
+    , "Five steps. Bring a CSV of trade instructions, pick a day and an \
+       algorithm, and watch the fills land against that day's real prices."
     , [ ( "1. Pick a day"
-        , "One symbol, one real session from the bundled data: AAPL, GOOG, \
-           META, MSFT, NFLX, TSLA." )
+        , "One symbol, one real session from the bundled data." )
       ; ( "2. Load your alpha"
-        , "A CSV your model already produced — time, symbol, side, \
-           quantity, deadline — or start from a built-in sample." )
-      ; ( "3. Choose an algorithm"
-        , "TWAP, VWAP, POV, IS, or Immediate, with the market knobs that \
-           matter: half spread, participation cap, impact." )
+        , "A CSV of time, symbol, side, quantity, deadline — or a built-in \
+           sample." )
+      ; "3. Choose an algorithm", "TWAP, VWAP, POV, IS, or Immediate."
       ; ( "4. Watch it trade"
-        , "390 minutes on a scrubber at 1x, 4x or 16x: price chart, \
-           per-order fill ticks, running P&L, event log." )
+        , "The session replays minute by minute, with every fill on the \
+           chart." )
       ; ( "5. Get graded"
-        , "Every run is scored against the Immediate baseline on the same \
-           day, so you always see what your algorithm was worth." )
-      ] )
-  ; ( "The five algorithms"
-    , "Each one is a different bet about the day. They fail in different \
-       ways, and finding out where is the point of the lab."
-    , [ ( "TWAP"
-        , "Even slices across the clock. Ignores the market entirely — \
-           either discipline or negligence, depending on the session." )
-      ; ( "VWAP"
-        , "Follows the forecast volume curve, heavier at the open and \
-           close. Promises a finish time, not a market share." )
-      ; ( "POV"
-        , "Chases the volume that actually prints, at a fixed share of it. \
-           Promises a market share, not a finish time." )
-      ; ( "IS"
-        , "Implementation shortfall: trades the cost of moving fast against \
-           the risk of moving slow, and re-decides every minute." )
-      ; ( "Immediate"
-        , "Dump the whole order at once. The naive baseline every run is \
-           measured against — and it is not always the loser." )
+        , "Scored against trading everything the moment it arrived." )
       ] )
   ; ( "What gets measured"
     , "The headline is alpha captured: what you kept divided by what the \
-       idea was worth on paper. Everything below it explains where the rest \
-       went."
+       idea was worth on paper. The rest explains the gap."
     , [ ( "Implementation shortfall"
-        , "Your average fill price against the price at the moment you \
-           decided, in dollars and basis points." )
+        , "Your average fill price against the price when you decided." )
       ; ( "Cost split"
-        , "Shortfall broken into timing (the price moved), spread (the toll \
-           on demanding a fill), and impact (you moved it)." )
+        , "Timing, spread and impact — the three things that made up that \
+           gap." )
       ; ( "Opportunity cost"
-        , "Shares that never traded before the deadline. A correct signal \
-           you failed to trade is a pure loss, and it is priced here." )
-      ; ( "VWAP slippage"
-        , "Your average price against the whole day's average. Did you \
-           trade better or worse than everyone else?" )
+        , "What the shares you never filled would have been worth." )
       ; ( "Value added"
-        , "Your net P&L minus the Immediate baseline's, on the identical \
-           day — the number the leaderboard ranks." )
-      ] )
-  ; ( "The market model, stated plainly"
-    , "ExecLabs is a simulation calibrated to a real historical session, \
-       not a reconstruction of the real order book. The bars are real; the \
-       spread, the queue and the counterparties are modeled."
-    , [ ( "Bar fill engine"
-        , "Marketable orders fill at the bar price plus a half spread and a \
-           square-root impact penalty, capped at a share of that minute's \
-           volume." )
-      ; ( "Synthetic exchange"
-        , "A real limit order book with background agents. Impact emerges \
-           from price-time priority instead of a formula." )
-      ; ( "Deterministic replay"
-        , "The same config and seed give identical fills every time. Runs \
-           are reproducible artifacts, not anecdotes." )
-      ; ( "Calibrated, not reconstructed"
-        , "We never saw the true book. What is trustworthy is the \
-           comparison: every run faces the same distortions." )
-      ; ( "Server-verified leaderboard"
-        , "Submit a config and the server re-runs it under identical house \
-           physics. Nobody uploads a score, so only execution differs." )
+        , "Your result minus the same orders traded all at once." )
       ] )
   ]
 ;;
@@ -2017,21 +2258,21 @@ let landing_view
         </span>
       </div>
       <div %{hero}>
-        <h1 %{headline}>Backtest your execution, not just your alpha.</h1>
+        <h1 %{headline}>Test how much your strategy costs to trade.</h1>
         <div %{subhead}>
-          Your model says buy 50,000 shares by 11:00. The price you actually
-          get is not the price on the chart. ExecLabs replays your orders
-          minute by minute against a real historical trading session and
-          reports <span %{accent}>how much of the paper profit survived the
-          cost of trading it</span>.
+          A strategy that says "buy 50,000 shares by 11:00" does not get the
+          price on the chart. ExecLabs runs those orders through a real
+          historical trading day and shows
+          <span %{accent}>how much of the profit is left afterwards</span>.
         </div>
         <div %{cta_row}>*{entry}</div>
       </div>
       <div %{stat_grid}>*{List.map landing_stats ~f:stat}</div>
       *{List.map landing_sections ~f:section}
       <div %{closing}>
-        Bring the orders your model already generated. Find out what they
-        actually cost.
+        The market data is real. The spread, the queue and the other traders
+        are modeled — so treat the comparison between runs as the answer,
+        not the absolute dollar cost.
       </div>
     </div>
   |}
@@ -2228,6 +2469,7 @@ let what_changed ~theme ~(current : History.Run_record.t) ~previous =
 let my_runs_view
   ~theme
   ~is_dark
+  ~profile
   ~toggle_theme
   ~session
   ~my_runs
@@ -2401,7 +2643,7 @@ let my_runs_view
   in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
-      %{wizard_header ~theme ~is_dark ~toggle_theme ~title:"My runs"
+      %{wizard_header ?profile ~theme ~is_dark ~toggle_theme ~title:"My runs"
           ~subtitle:("your execution notebook — " ^ who)
           ~back:(Some ("← Dashboard", back)) ()}
       <div %{Styles.card theme "padding-bottom:4px;"}>*{body}</div>
@@ -2583,7 +2825,16 @@ let help_modal ~theme ~close =
   |}
 ;;
 
-let dashboard_view ~theme ~is_dark ~runs ~new_sim ~toggle_theme =
+let dashboard_view
+  ~theme
+  ~is_dark
+  ~runs
+  ~new_sim
+  ~to_my_runs
+  ~quick_start_with
+  ~profile
+  ~toggle_theme
+  =
   let section_label = Styles.s (Styles.label theme ^ "margin-bottom:8px;") in
   let empty_style =
     Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:13px;")
@@ -2653,14 +2904,125 @@ let dashboard_view ~theme ~is_dark ~runs ~new_sim ~toggle_theme =
               ~f:(fun (run : History.Run_record.t) -> run.value_add_cents))
     |> fun sorted -> List.take sorted 5
   in
+  (* A dashboard should answer "how am I doing" before it offers a button.
+     These four come straight from the local run history. *)
+  let stat_tiles =
+    let count = List.length runs in
+    let beat =
+      List.count runs ~f:(fun (run : History.Run_record.t) ->
+        run.value_add_cents > 0)
+    in
+    let best_capture =
+      List.filter_map runs ~f:(fun (run : History.Run_record.t) ->
+        run.alpha_capture)
+      |> List.max_elt ~compare:Float.compare
+    in
+    let algos =
+      List.map runs ~f:(fun (run : History.Run_record.t) -> run.algo_name)
+      |> List.dedup_and_sort ~compare:String.compare
+      |> List.length
+    in
+    let tile ~label ~value ~sub ~accent =
+      let card =
+        Styles.s
+          ("display:flex;flex-direction:column;gap:3px;background:"
+           ^ theme.Styles.card_bg
+           ^ ";border:"
+           ^ theme.Styles.border
+           ^ ";border-radius:12px;padding:16px 18px;"
+           ^ theme.Styles.shadow)
+      in
+      let value_style =
+        Styles.s
+          ("color:"
+           ^ accent
+           ^ ";font-size:26px;font-weight:800;"
+           ^ Styles.mono)
+      in
+      {%html|
+        <div class="card-lift" %{card}>
+          <span %{Styles.s (Styles.label theme)}>#{label}</span>
+          <span %{value_style}>#{value}</span>
+          <span
+            %{Styles.s
+                ("color:" ^ theme.Styles.faint ^ ";font-size:11.5px;")}>
+            #{sub}
+          </span>
+        </div>
+      |}
+    in
+    {%html|
+      <div
+        %{Styles.s
+            "display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;"}>
+        %{tile ~label:"Runs" ~value:(Int.to_string count)
+            ~sub:"simulations in this browser"
+            ~accent:theme.Styles.text}
+        %{tile ~label:"Beat the baseline"
+            ~value:(if count = 0 then "—"
+                    else sprintf "%d of %d" beat count)
+            ~sub:"runs that outperformed Immediate"
+            ~accent:(if beat > 0 then theme.Styles.green else theme.Styles.faint)}
+        %{tile ~label:"Best capture"
+            ~value:(match best_capture with
+                    | None -> "—"
+                    | Some c -> sprintf "%.1f%%" (c *. 100.))
+            ~sub:"most alpha kept in one run"
+            ~accent:theme.Styles.blue}
+        %{tile ~label:"Algorithms tried"
+            ~value:(sprintf "%d of 5" algos)
+            ~sub:"TWAP, VWAP, POV, IS, Immediate"
+            ~accent:theme.Styles.text}
+      </div>
+    |}
+  in
+  (* One click into a full run: pick a stock and go. *)
+  let quick_start =
+    let chip symbol =
+      let style =
+        Styles.s
+          ("background:"
+           ^ theme.Styles.chip_bg
+           ^ ";color:"
+           ^ theme.Styles.text
+           ^ ";border:1px solid "
+           ^ theme.Styles.chip_border
+           ^ ";border-radius:8px;padding:9px \
+              14px;cursor:pointer;font-size:13px;font-weight:700;"
+           ^ Styles.mono)
+      in
+      {%html|
+        <button
+          class="btn"
+          %{style}
+          on_click=%{fun _ -> quick_start_with symbol}>
+          #{Symbol.to_string symbol}
+        </button>
+      |}
+    in
+    {%html|
+      <div %{Styles.card theme "padding:20px;"}>
+        <div %{section_label}>Start with a symbol</div>
+        <div %{Styles.s "display:flex;gap:8px;flex-wrap:wrap;"}>
+          *{List.map Dataset.symbols ~f:chip}
+        </div>
+      </div>
+    |}
+  in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
-      %{wizard_header ~theme ~is_dark ~toggle_theme
-          ~title:"Historical execution laboratory"
-          ~subtitle:"upload an alpha, pick a day, and see how much survives \
-                     execution" ~back:None ()}
-      %{primary_button ~icon:(Icon.arrow_right ~size:14 ()) ~theme
-          ~on_click:(fun _ -> new_sim) "New simulation"}
+      %{wizard_header ?profile ~theme ~is_dark ~toggle_theme
+          ~title:"Your execution lab"
+          ~subtitle:"pick a day, bring an alpha, and see what execution \
+                     costs you" ~back:None ()}
+      %{stat_tiles}
+      <div %{Styles.s "display:flex;gap:12px;flex-wrap:wrap;"}>
+        %{primary_button ~icon:(Icon.arrow_right ~size:15 ()) ~theme
+            ~on_click:(fun _ -> new_sim) "New simulation"}
+        %{secondary_button ~theme ~on_click:(fun _ -> to_my_runs)
+            "My runs"}
+      </div>
+      %{quick_start}
       <div %{Styles.s two_col}>
         <div %{Styles.card theme "padding:20px;"}>
           <div %{section_label}>Recent runs</div>
@@ -2727,6 +3089,7 @@ let choose_day_view
   ~selection
   ~select
   ~continue_
+  ~profile
   ~toggle_theme
   ~back
   =
@@ -3016,7 +3379,7 @@ let choose_day_view
   in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
-      %{wizard_header ~step:0 ~theme ~is_dark ~toggle_theme
+      %{wizard_header ~step:0 ?profile ~theme ~is_dark ~toggle_theme
           ~title:"Choose a market day"
           ~subtitle:"pick a symbol, then a session from its calendar"
           ~back:None ()}
@@ -3143,6 +3506,7 @@ let alpha_view
   ~alpha_text
   ~set_alpha_text
   ~continue_
+  ~profile
   ~toggle_theme
   ~back
   =
@@ -3242,7 +3606,7 @@ let alpha_view
   in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
-      %{wizard_header ~step:1 ~theme ~is_dark ~toggle_theme
+      %{wizard_header ~step:1 ?profile ~theme ~is_dark ~toggle_theme
           ~title:"Alpha instructions" ~subtitle
           ~back:None ()}
       <div %{Styles.s two_col}>
@@ -3510,6 +3874,7 @@ let setup_view
   ~set_param_text
   ~start
   ~run_error
+  ~profile
   ~toggle_theme
   ~back
   =
@@ -3655,7 +4020,7 @@ let setup_view
   in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
-      %{wizard_header ~step:2 ~theme ~is_dark ~toggle_theme
+      %{wizard_header ~step:2 ?profile ~theme ~is_dark ~toggle_theme
           ~title:"New simulation" ~subtitle
           ~back:None ()}
       <div %{Styles.s two_col}>
@@ -3730,6 +4095,7 @@ let results_view
   ~is_dark
   ~open_help
   ~previous_run
+  ~profile
   ~to_sim
   ~new_sim
   ~to_dashboard
@@ -4208,7 +4574,7 @@ let results_view
   in
   {%html|
     <div class="page fade" %{page}>
-      %{wizard_header ~step:4 ~theme ~is_dark ~toggle_theme ~title
+      %{wizard_header ~step:4 ?profile ~theme ~is_dark ~toggle_theme ~title
           ~subtitle:"shortfall split into the metric tree: timing + spread \
                      + impact, plus opportunity on unfilled shares"
           ~back:(Some ("← Replay", to_sim)) ()}
@@ -4378,9 +4744,13 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     Bonsai.state Replay.Param_text.default graph
   in
   let hover, set_hover = Bonsai.state (None : int option) graph in
-  (* Chart zoom: [None] = full session, [Some span] = span minutes centered
-     on the playhead. *)
-  let zoom, set_zoom = Bonsai.state (None : int option) graph in
+  let chart_view, set_chart_view =
+    Bonsai.state (Chart_view.Follow None) graph
+  in
+  let zoom_mode, set_zoom_mode = Bonsai.state false graph in
+  (* While panning: the cursor's plot ratio at mousedown and the window start
+     it was anchored to. *)
+  let drag, set_drag = Bonsai.state (None : (float * int) option) graph in
   let is_dark, set_is_dark = Bonsai.state false graph in
   (* The symbol whose calendar the choose-day screen is browsing; distinct
      from [selection], which is only set once a session is clicked. *)
@@ -4647,8 +5017,12 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_show_help
   and hover
   and set_hover
-  and zoom
-  and set_zoom
+  and chart_view
+  and set_chart_view
+  and zoom_mode
+  and set_zoom_mode
+  and drag
+  and set_drag
   and is_dark
   and set_is_dark
   and cal_symbol
@@ -4682,12 +5056,27 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   in
   let goto s = set_screen s in
   let select symbol date = set_selection (Some (symbol, date)) in
+  let profile =
+    Some
+      (profile_button
+         ~theme
+         ~session
+         ~on_click:
+           (match session with
+            | Some (_ : Session.t) -> goto Screen.My_runs
+            | None -> goto Screen.Landing))
+  in
   let dashboard () =
     dashboard_view
       ~theme
       ~is_dark
       ~runs
       ~new_sim:(goto Screen.Choose_day)
+      ~to_my_runs:(goto Screen.My_runs)
+      ~quick_start_with:(fun symbol ->
+        let%bind.Effect () = set_cal_symbol (Some symbol) in
+        set_screen Screen.Choose_day)
+      ~profile
       ~toggle_theme
   in
   let choose_day () =
@@ -4705,6 +5094,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
       ~selection
       ~select
       ~continue_:(goto Screen.Alpha)
+      ~profile
       ~toggle_theme
       ~back:(goto Screen.Dashboard)
   in
@@ -4733,6 +5123,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~is_dark
         ~toggle_theme
         ~session
+        ~profile
         ~my_runs
         ~open_run
         ~refresh:refresh_my_runs
@@ -4750,6 +5141,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~alpha_text
         ~set_alpha_text
         ~continue_:(goto Screen.Setup)
+        ~profile
         ~toggle_theme
         ~back:(goto Screen.Choose_day)
     | Setup, _, Some (symbol, date)
@@ -4766,6 +5158,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~set_param_text
         ~start
         ~run_error
+        ~profile
         ~toggle_theme
         ~back:(goto Screen.Alpha)
     | Sim, Some r, Some (_ : Symbol.t * Date.t) ->
@@ -4777,10 +5170,14 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~playing
         ~speed
         ~show_fills
-        ~zoom
+        ~chart_view
+        ~set_chart_view
+        ~zoom_mode
+        ~set_zoom_mode
+        ~drag
+        ~set_drag
         ~set_playing
         ~set_speed
-        ~set_zoom
         ~set_minute
         ~restart
         ~toggle_fills:(set_show_fills (not show_fills))
@@ -4796,6 +5193,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~is_dark
         ~open_help:(set_show_help true)
         ~previous_run
+        ~profile
         ~to_sim:(goto Screen.Sim)
         ~new_sim:(goto Screen.Choose_day)
         ~to_dashboard:(goto Screen.Dashboard)
