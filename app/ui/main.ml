@@ -271,10 +271,10 @@ let pill ~theme ~active ~on_click label =
 (* What an alpha actually trades, for the wizard headers. The symbol a user
    browsed to get here is not the run's — the file decides that — so the
    headers read the file rather than the calendar. *)
-let alpha_symbols_line ~fallback alpha_text =
+let alpha_symbols_line alpha_text =
   match Replay.parse_alpha alpha_text with
-  | Error (_ : Error.t) -> Symbol.to_string fallback
-  | Ok [] -> Symbol.to_string fallback
+  | Error (_ : Error.t) -> "—"
+  | Ok [] -> "—"
   | Ok instructions ->
     List.map instructions ~f:(fun instruction ->
       instruction.Alpha_instruction.symbol)
@@ -1954,14 +1954,10 @@ let sim_view
             ~set_view:(fun (z0, z1) ->
               set_chart_view (Chart_view.Manual { z0; z1 }))}
       </div>
-      <div
-        %{Styles.s
-            "display:grid;grid-template-columns:minmax(0,2.2fr) minmax(300px,1fr);gap:16px;align-items:start;"}>
-        <div %{Styles.s "overflow-x:auto;min-width:0;"}>
-          %{orders_table replay ~theme ~fills ~minute}
-        </div>
-        %{event_log replay ~theme ~fills ~minute}
+      <div %{Styles.s "overflow-x:auto;min-width:0;"}>
+        %{orders_table replay ~theme ~fills ~minute}
       </div>
+      %{event_log replay ~theme ~fills ~minute}
       %{nav_footer ~theme
           ~back:("New simulation", back)
           ~next:("Results", to_results, true) ()}
@@ -2737,7 +2733,6 @@ let dashboard_view
   ~runs
   ~new_sim
   ~to_my_runs
-  ~quick_start_with
   ~profile
   ~on_brand
   ~toggle_theme
@@ -2963,41 +2958,6 @@ let dashboard_view
       </div>
     |}
   in
-  (* One click into a full run: pick a stock and go. *)
-  let quick_start =
-    let chip symbol =
-      let style =
-        Styles.s
-          ("background:"
-           ^ theme.Styles.card_bg
-           ^ ";color:"
-           ^ theme.Styles.text
-           ^ ";border:1px solid "
-           ^ theme.Styles.chip_border
-           ^ ";border-radius:3px;padding:8px \
-              14px;cursor:pointer;font-size:12.5px;font-weight:700;"
-           ^ Styles.mono)
-      in
-      {%html|
-        <button
-          class="btn"
-          %{style}
-          on_click=%{fun _ -> quick_start_with symbol}>
-          #{Symbol.to_string symbol}
-        </button>
-      |}
-    in
-    {%html|
-      <div>
-        <div %{Styles.s (Styles.label theme ^ "margin-bottom:8px;")}>
-          Start with a symbol
-        </div>
-        <div %{Styles.s "display:flex;gap:8px;flex-wrap:wrap;"}>
-          *{List.map Dataset.symbols ~f:chip}
-        </div>
-      </div>
-    |}
-  in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
       %{wizard_header ?profile ~on_brand ~theme ~is_dark ~toggle_theme
@@ -3012,7 +2972,6 @@ let dashboard_view
             "My runs"}
       </div>
       %{stats_band}
-      %{quick_start}
       <div %{Styles.s two_col}>
         <div %{Styles.card theme "padding-bottom:4px;"}>
           %{section_head ~title:"Recent runs" ~aside:"newest first"}
@@ -3080,8 +3039,6 @@ let month_weeks ~year ~month =
 let choose_day_view
   ~theme
   ~is_dark
-  ~browse_symbol
-  ~set_symbol
   ~selection
   ~select
   ~continue_
@@ -3090,28 +3047,18 @@ let choose_day_view
   ~toggle_theme
   ~back
   =
-  let sessions = Dataset.dates_for browse_symbol in
+  (* One calendar for the whole dataset: a day is pickable if any bundled
+     symbol traded it. Which symbols a run touches is the alpha's decision,
+     so the picker stops asking. *)
+  let sessions =
+    List.concat_map Dataset.symbols ~f:(fun symbol ->
+      Dataset.dates_for symbol)
+    |> List.dedup_and_sort ~compare:Date.compare
+  in
   let session_set = Date.Set.of_list sessions in
-  (* The mockup's segmented symbol row: one pill per bundled name. *)
-  let symbol_pill symbol =
-    let selected = Symbol.equal symbol browse_symbol in
-    let style =
-      Styles.s
-        ("border:1px solid "
-         ^ (if selected then theme.Styles.blue else theme.Styles.chip_border)
-         ^ ";background:"
-         ^ (if selected then theme.Styles.blue else theme.Styles.card_bg)
-         ^ ";color:"
-         ^ (if selected then "#ffffff" else theme.Styles.secondary)
-         ^ ";border-radius:3px;padding:6px \
-            12px;font-size:12px;font-weight:700;cursor:pointer;"
-         ^ Styles.mono)
-    in
-    {%html|
-      <button class="btn" %{style} on_click=%{fun _ -> set_symbol symbol}>
-        #{Symbol.to_string symbol}
-      </button>
-    |}
+  let symbols_on date =
+    List.filter Dataset.symbols ~f:(fun symbol ->
+      List.mem (Dataset.dates_for symbol) date ~equal:Date.equal)
   in
   let hint =
     Styles.s
@@ -3134,9 +3081,7 @@ let choose_day_view
         {%html|<span %{dim}>#{day}</span>|})
       else (
         let selected =
-          match selection with
-          | Some (s, d) -> Symbol.equal s browse_symbol && Date.equal d date
-          | None -> false
+          match selection with Some d -> Date.equal d date | None -> false
         in
         let bg =
           if selected then theme.Styles.blue else theme.Styles.chip_bg
@@ -3169,7 +3114,7 @@ let choose_day_view
             class="btn cell-pop"
             %{style}
             title=%{Date.to_string date}
-            on_click=%{fun _ -> select browse_symbol date}>
+            on_click=%{fun _ -> select date}>
             #{day}
           </button>
         |})
@@ -3211,10 +3156,8 @@ let choose_day_view
     |> List.map ~f:(fun date -> Date.year date, Date.month date)
     |> List.dedup_and_sort ~compare:[%compare: int * Month.t]
   in
-  let picker_row = Styles.s "display:flex;gap:12px;align-items:center;" in
-  let label = Styles.s (Styles.label theme) in
-  (* The click-to-reveal preview: sparkline + session stats for the selected
-     day, or a prompt when nothing is chosen yet. *)
+  (* The whole market day at a glance: one row per symbol that traded it — a
+     small sparkline and the session's vitals. *)
   let day_preview =
     let empty message =
       {%html|
@@ -3241,158 +3184,153 @@ let choose_day_view
       |}
     in
     match selection with
-    | None -> empty "Pick a session to preview it"
-    | Some (symbol, date) ->
-      (match Dataset.load_cached ~symbol ~date with
-       | Error (_ : Error.t) -> empty "No data for that session"
-       | Ok day ->
-         let bars = day.Trading_day.bars in
-         let closes =
-           List.map bars ~f:(fun bar -> Price.to_float bar.Market_bar.close)
-         in
-         let open_ = Price.to_float (List.hd_exn bars).Market_bar.open_ in
-         let close = List.last_exn closes in
-         let volume =
-           List.sum (module Int) bars ~f:(fun bar ->
-             Size.to_int bar.Market_bar.volume)
-         in
-         let move_bps = (close -. open_) /. open_ *. 10000. in
-         let sparkline =
-           let w = 520. in
-           let h = 110. in
-           let pad = 6. in
-           let lo =
-             List.min_elt closes ~compare:Float.compare
-             |> Option.value ~default:0.
-           in
-           let hi =
-             List.max_elt closes ~compare:Float.compare
-             |> Option.value ~default:1.
-           in
-           let span = Float.max (hi -. lo) 0.01 in
-           let count = List.length closes in
-           let pt i v =
-             sprintf
-               "%.1f,%.1f"
-               (pad
-                +. (Float.of_int i
-                    /. Float.of_int (Int.max 1 (count - 1))
-                    *. (w -. (2. *. pad))))
-               (pad +. ((hi -. v) /. span *. (h -. (2. *. pad))))
-           in
-           let pts = String.concat ~sep:" " (List.mapi closes ~f:pt) in
-           let area =
-             sprintf
-               "%.1f,%.1f %s %.1f,%.1f"
-               pad
-               (h -. pad)
-               pts
-               (w -. pad)
-               (h -. pad)
-           in
-           let svg name attrs children =
-             Vdom.Node.create_svg name ~attrs children
-           in
-           let attr = Vdom.Attr.create in
-           svg
-             "svg"
-             [ attr "viewBox" (sprintf "0 0 %.0f %.0f" w h)
-             ; Styles.s "width:100%;display:block;margin:10px 0 14px;"
-             ]
-             [ svg
-                 "polygon"
-                 [ attr "points" area
-                 ; attr "fill" theme.Styles.blue
-                 ; attr "fill-opacity" "0.08"
-                 ]
-                 []
-             ; svg
-                 "polyline"
-                 [ attr "points" pts
-                 ; attr "fill" "none"
-                 ; attr "stroke" theme.Styles.blue
-                 ; attr "stroke-width" "1.8"
-                 ; attr "stroke-linejoin" "round"
-                 ]
-                 []
-             ]
-         in
-         let stat ~label:text value =
-           let tile =
-             Styles.s
-               ("display:flex;flex-direction:column;gap:3px;border-top:1px \
-                 solid "
-                ^ theme.Styles.hairline
-                ^ ";padding:10px 2px 2px;")
-           in
-           let value_style =
-             Styles.s
-               ("font-size:16px;font-weight:700;color:"
-                ^ theme.Styles.text
-                ^ ";"
-                ^ Styles.mono)
-           in
-           {%html|
-             <div %{tile}>
-               <span %{Styles.s (Styles.label theme)}>#{text}</span>
-               <span %{value_style}>#{value}</span>
-             </div>
-           |}
-         in
-         let title_row =
-           Styles.s
-             ("display:flex;justify-content:space-between;align-items:baseline;gap:14px;flex-wrap:wrap;color:"
-              ^ theme.Styles.text
-              ^ ";font-size:16px;font-weight:700;")
-         in
-         let title_name = Styles.s "white-space:nowrap;" in
-         let tiles =
-           Styles.s
-             "display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;"
-         in
-         {%html|
-           <div %{Styles.card theme "padding:20px;"}>
-             <div %{title_row}>
-               <span %{title_name}>
-                 #{Symbol.to_string symbol} · #{Date.to_string date}
-               </span>
-               <span %{hint}>1-minute closes · 09:30–15:59 · historical replay, not a forecast</span>
-             </div>
-             %{sparkline}
-             <div %{tiles}>
-               %{stat ~label:"open" (sprintf "$%.2f" open_)}
-               %{stat ~label:"close" (sprintf "$%.2f" close)}
-               %{stat ~label:"day move" (sprintf "%+.0f bps" move_bps)}
-               %{stat ~label:"volume"
-                   (Float.to_string_hum ~delimiter:',' ~decimals:0
-                      (Float.of_int volume))}
-             </div>
-           </div>
-         |})
+    | None -> empty "Pick a market day to preview it"
+    | Some date ->
+      let symbol_row symbol =
+        match Dataset.load_cached ~symbol ~date with
+        | Error (_ : Error.t) -> None
+        | Ok day ->
+          let bars = day.Trading_day.bars in
+          let closes =
+            Array.of_list_map bars ~f:(fun bar ->
+              Price.to_float bar.Market_bar.close)
+          in
+          let n = Array.length closes in
+          let open_ = Price.to_float (List.hd_exn bars).Market_bar.open_ in
+          let close = closes.(n - 1) in
+          let volume =
+            List.sum (module Int) bars ~f:(fun bar ->
+              Size.to_int bar.Market_bar.volume)
+          in
+          let move_bps = (close -. open_) /. open_ *. 10000. in
+          let spark =
+            let w = 150. in
+            let h = 34. in
+            let lo = Array.fold closes ~init:Float.infinity ~f:Float.min in
+            let hi =
+              Array.fold closes ~init:Float.neg_infinity ~f:Float.max
+            in
+            let span = Float.max (hi -. lo) 0.01 in
+            let pts =
+              List.filter_map (List.init n ~f:Fn.id) ~f:(fun i ->
+                if i % 6 = 0 || i = n - 1
+                then
+                  Some
+                    (sprintf
+                       "%.1f,%.1f"
+                       (Float.of_int i /. Float.of_int (n - 1) *. w)
+                       (2. +. ((hi -. closes.(i)) /. span *. (h -. 4.))))
+                else None)
+              |> String.concat ~sep:" "
+            in
+            Vdom.Node.create_svg
+              "svg"
+              ~attrs:
+                [ Vdom.Attr.create "viewBox" (sprintf "0 0 %.0f %.0f" w h)
+                ; Styles.s "width:150px;height:34px;display:block;"
+                ]
+              [ Vdom.Node.create_svg
+                  "polyline"
+                  ~attrs:
+                    [ Vdom.Attr.create "points" pts
+                    ; Vdom.Attr.create "fill" "none"
+                    ; Vdom.Attr.create
+                        "stroke"
+                        (if Float.( >= ) close open_
+                         then theme.Styles.blue
+                         else theme.Styles.secondary)
+                    ; Vdom.Attr.create "stroke-width" "1.4"
+                    ]
+                  []
+              ]
+          in
+          let row =
+            Styles.s
+              ("display:grid;grid-template-columns:64px 150px 1fr 1fr 1fr \
+                1fr;gap:12px;align-items:center;padding:9px \
+                0;border-bottom:1px solid "
+               ^ theme.Styles.hairline
+               ^ ";font-size:12.5px;color:"
+               ^ theme.Styles.text
+               ^ ";"
+               ^ Styles.mono)
+          in
+          let num = Styles.s "text-align:right;" in
+          Some
+            {%html|
+              <div %{row}>
+                <span %{Styles.s "font-weight:700;"}>
+                  #{Symbol.to_string symbol}
+                </span>
+                %{spark}
+                <span %{num}>#{sprintf "$%.2f" open_}</span>
+                <span %{num}>#{sprintf "$%.2f" close}</span>
+                <span %{num}>#{sprintf "%+.0f bps" move_bps}</span>
+                <span %{num}>
+                  #{Float.to_string_hum ~delimiter:',' ~decimals:0
+                      (Float.of_int volume)}
+                </span>
+              </div>
+            |}
+      in
+      let rows = List.filter_map (symbols_on date) ~f:symbol_row in
+      let title_row =
+        Styles.s
+          ("display:flex;justify-content:space-between;align-items:baseline;gap:14px;flex-wrap:wrap;color:"
+           ^ theme.Styles.text
+           ^ ";font-size:16px;font-weight:700;")
+      in
+      let head =
+        Styles.s
+          ("display:grid;grid-template-columns:64px 150px 1fr 1fr 1fr \
+            1fr;gap:12px;padding:12px 0 6px;border-bottom:1px solid "
+           ^ theme.Styles.hairline
+           ^ ";"
+           ^ Styles.table_label theme)
+      in
+      let num = Styles.s "text-align:right;" in
+      {%html|
+        <div %{Styles.card theme "padding:20px;"}>
+          <div %{title_row}>
+            <span %{Styles.s "white-space:nowrap;"}>
+              #{Date.to_string date} ·
+              #{Int.to_string (List.length rows)} symbols trading
+            </span>
+            <span %{hint}>your alpha may name any of them — or several</span>
+          </div>
+          <div %{head}>
+            <span>symbol</span>
+            <span>session</span>
+            <span %{num}>open</span>
+            <span %{num}>close</span>
+            <span %{num}>day move</span>
+            <span %{num}>volume</span>
+          </div>
+          *{rows}
+        </div>
+      |}
   in
   let selection_hint =
     match selection with
-    | Some ((_ : Symbol.t), date) ->
+    | Some date ->
       sprintf
         "%s selected — your alpha names the symbols"
         (Date.to_string date)
-    | None -> "select a session to continue"
+    | None -> "select a market day to continue"
   in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
       %{wizard_header ~step:0 ?profile ~on_brand ~theme ~is_dark ~toggle_theme
           ~title:"Choose a market day"
-          ~subtitle:"pick a symbol, then a session from its calendar — real \
-                     historical data, replayed"
+          ~subtitle:"one day, every bundled symbol — which names trade is \
+                     up to your alpha"
           ~back:None ()}
       <div %{Styles.s two_col}>
         <div %{Styles.card theme "padding:20px;"}>
-          <div %{picker_row}>
-            <span %{label}>Symbol</span>
-            <div %{Styles.s "display:flex;gap:4px;flex-wrap:wrap;"}>
-              *{List.map Dataset.symbols ~f:symbol_pill}
-            </div>
-            <span %{hint}>#{sprintf "%d sessions available" (List.length sessions)}</span>
+          <div %{Styles.s "display:flex;gap:12px;align-items:center;"}>
+            <span %{hint}>
+              #{sprintf "%d market days available" (List.length sessions)}
+            </span>
           </div>
           *{List.map months ~f:month_grid}
         </div>
@@ -3537,7 +3475,6 @@ let read_alpha_file ~set_alpha_text files =
 let alpha_view
   ~theme
   ~is_dark
-  ~symbol
   ~date
   ~alpha_text
   ~set_alpha_text
@@ -3547,6 +3484,13 @@ let alpha_view
   ~toggle_theme
   ~back
   =
+  (* Samples are written against a lead symbol; the first name trading this
+     date serves. Multi-symbol samples pull in the others themselves. *)
+  let symbol =
+    List.find Dataset.symbols ~f:(fun candidate ->
+      List.mem (Dataset.dates_for candidate) date ~equal:Date.equal)
+    |> Option.value ~default:(Symbol.of_string "TSLA")
+  in
   let error_style =
     Styles.s
       ("color:" ^ theme.Styles.red ^ ";font-size:12.5px;" ^ Styles.mono)
@@ -4021,7 +3965,6 @@ let preset_rows ~theme ~param_text ~set_param_text =
 let setup_view
   ~theme
   ~is_dark
-  ~symbol
   ~date
   ~alpha_text
   ~algo
@@ -4358,7 +4301,7 @@ let setup_view
           ~subtitle:(sprintf
                        "%s · %s — three separate things: the algorithm, \
                         your strategy dials, and the market's physics"
-                       (alpha_symbols_line ~fallback:symbol alpha_text)
+                       (alpha_symbols_line alpha_text)
                        (Date.to_string date))
           ~back:None ()}
       <div %{Styles.s two_col}>
@@ -5410,9 +5353,7 @@ let set_page_background =
 let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let screen, set_screen = Bonsai.state Screen.Landing graph in
   let show_help, set_show_help = Bonsai.state false graph in
-  let selection, set_selection =
-    Bonsai.state (None : (Symbol.t * Date.t) option) graph
-  in
+  let selection, set_selection = Bonsai.state (None : Date.t option) graph in
   let alpha_text, set_alpha_text =
     Bonsai.state Embedded_data.demo_alpha graph
   in
@@ -5451,11 +5392,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
      it was anchored to. *)
   let drag, set_drag = Bonsai.state (None : (float * int) option) graph in
   let is_dark, set_is_dark = Bonsai.state false graph in
-  (* The symbol whose calendar the choose-day screen is browsing; distinct
-     from [selection], which is only set once a session is clicked. *)
-  let cal_symbol, set_cal_symbol =
-    Bonsai.state (None : Symbol.t option) graph
-  in
   let advance =
     let%arr playing and replay and set_minute in
     match replay with
@@ -5492,10 +5428,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     and set_previous_run in
     match selection, Replay.parse_params param_text with
     | None, _ -> set_run_error (Some (Error.of_string "choose a day first"))
-    | Some (_ : Symbol.t * Date.t), Error error -> set_run_error (Some error)
-    (* The picked symbol only decides which calendar you were browsing; which
-       names actually trade is the alpha's business. *)
-    | Some ((_ : Symbol.t), date), Ok params ->
+    | Some (_ : Date.t), Error error -> set_run_error (Some error)
+    | Some date, Ok params ->
       let%bind.Effect result =
         Effect.of_sync_fun
           (fun () -> Replay.run ~date ~alpha_text ~algo_name:algo ~params)
@@ -5541,12 +5475,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let rerun_run =
     let%arr set_selection and set_alpha_text and set_algo and set_screen in
     fun (record : History.Run_record.t) ->
-      let%bind.Effect () =
-        set_selection
-          (match record.symbols with
-           | first :: (_ : Symbol.t list) -> Some (first, record.date)
-           | [] -> None)
-      in
+      let%bind.Effect () = set_selection (Some record.date) in
       let%bind.Effect () = set_alpha_text record.alpha_text in
       let%bind.Effect () = set_algo record.algo_name in
       set_screen Screen.Setup
@@ -5609,8 +5538,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_drag
   and is_dark
   and set_is_dark
-  and cal_symbol
-  and set_cal_symbol
   and set_minute
   and set_screen
   and start
@@ -5628,7 +5555,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     set_page_background next.Styles.page_bg
   in
   let goto s = set_screen s in
-  let select symbol date = set_selection (Some (symbol, date)) in
+  let select date = set_selection (Some date) in
   let on_brand = goto Screen.Landing in
   let open_dashboard = goto Screen.Dashboard in
   let open_my_runs = goto Screen.My_runs in
@@ -5641,25 +5568,14 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
       ~runs
       ~new_sim:(goto Screen.Choose_day)
       ~to_my_runs:open_my_runs
-      ~quick_start_with:(fun symbol ->
-        let%bind.Effect () = set_cal_symbol (Some symbol) in
-        set_screen Screen.Choose_day)
       ~profile
       ~on_brand
       ~toggle_theme
   in
   let choose_day () =
-    let browse_symbol =
-      match cal_symbol, selection with
-      | Some symbol, _ -> symbol
-      | None, Some (symbol, (_ : Date.t)) -> symbol
-      | None, None -> List.hd_exn Dataset.symbols
-    in
     choose_day_view
       ~theme
       ~is_dark
-      ~browse_symbol
-      ~set_symbol:(fun symbol -> set_cal_symbol (Some symbol))
       ~selection
       ~select
       ~continue_:(goto Screen.Alpha)
@@ -5696,11 +5612,10 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     | Dashboard, _, _ -> dashboard ()
     | Choose_day, _, _ -> choose_day ()
     | (Alpha | Setup | Sim | Results), _, None -> choose_day ()
-    | Alpha, _, Some (symbol, date) ->
+    | Alpha, _, Some date ->
       alpha_view
         ~theme
         ~is_dark
-        ~symbol
         ~date
         ~alpha_text
         ~set_alpha_text
@@ -5709,12 +5624,10 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~on_brand
         ~toggle_theme
         ~back:(goto Screen.Choose_day)
-    | Setup, _, Some (symbol, date)
-    | (Sim | Results), None, Some (symbol, date) ->
+    | Setup, _, Some date | (Sim | Results), None, Some date ->
       setup_view
         ~theme
         ~is_dark
-        ~symbol
         ~date
         ~alpha_text
         ~algo
@@ -5727,7 +5640,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~on_brand
         ~toggle_theme
         ~back:(goto Screen.Alpha)
-    | Sim, Some r, Some (_ : Symbol.t * Date.t) ->
+    | Sim, Some r, Some (_ : Date.t) ->
       sim_view
         r
         ~theme
@@ -5763,7 +5676,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~on_brand
         ~hover
         ~set_hover
-    | Results, Some r, Some (_ : Symbol.t * Date.t) ->
+    | Results, Some r, Some (_ : Date.t) ->
       results_view
         r
         ~theme
