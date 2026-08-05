@@ -2,7 +2,6 @@ open! Core
 open! Execlab_types
 
 module Position = struct
-<<<<<<< Updated upstream
   (* [shares] is signed (positive long, negative short); [basis_cents] is the
      signed cost of acquiring it, so [basis_cents / shares] is the average
      cost per share for longs and shorts alike. A position at zero shares is
@@ -12,26 +11,12 @@ module Position = struct
     ; mutable basis_cents : int
     }
   [@@deriving sexp_of]
-=======
-  (* What we hold of one stock: how many shares, and the total cash we spent
-     buying them. Total spent / shares = average price paid. *)
-  type t =
-    { mutable shares : int
-    ; mutable total_cost_cents : int
-    }
-  [@@deriving sexp_of]
-
-  
->>>>>>> Stashed changes
 end
 
 type t =
   { starting_cash_cents : int
   ; mutable cash_cents : int
-<<<<<<< Updated upstream
   ; mutable realized_pnl_cents : int
-=======
->>>>>>> Stashed changes
   ; positions : Position.t Hashtbl.M(Symbol).t
   }
 [@@deriving sexp_of]
@@ -39,46 +24,30 @@ type t =
 let create ~starting_cash_cents =
   { starting_cash_cents
   ; cash_cents = starting_cash_cents
-<<<<<<< Updated upstream
   ; realized_pnl_cents = 0
-=======
->>>>>>> Stashed changes
   ; positions = Hashtbl.create (module Symbol)
   }
 ;;
 
 let starting_cash_cents t = t.starting_cash_cents
 let cash_cents t = t.cash_cents
-<<<<<<< Updated upstream
 let realized_pnl_cents t = t.realized_pnl_cents
 
 let position t symbol =
-=======
-
-let shares t symbol =
->>>>>>> Stashed changes
   match Hashtbl.find t.positions symbol with
   | None -> 0
   | Some (position : Position.t) -> position.shares
 ;;
 
-<<<<<<< Updated upstream
 let cost_basis_cents t symbol =
   match Hashtbl.find t.positions symbol with
   | None -> 0
   | Some (position : Position.t) -> position.basis_cents
-=======
-let total_cost_cents t symbol =
-  match Hashtbl.find t.positions symbol with
-  | None -> 0
-  | Some (position : Position.t) -> position.total_cost_cents
->>>>>>> Stashed changes
 ;;
 
 let average_cost t symbol =
   match Hashtbl.find t.positions symbol with
   | None -> None
-<<<<<<< Updated upstream
   | Some { shares; basis_cents } ->
     Some (Float.of_int basis_cents /. 100. /. Float.of_int shares)
 ;;
@@ -185,22 +154,4 @@ let to_string t =
   [%string
     "cash %{dollar_string t.cash_cents}, realized %{dollar_string \
      t.realized_pnl_cents}; %{positions}"]
-=======
-  | Some { shares; total_cost_cents } ->
-    Some (Float.of_int total_cost_cents /. 100. /. Float.of_int shares)
-;;
-
-let apply_fill t (fill : Fill.t) =
-  match fill.side with
-  | Buy ->
-    let cost_cents = Fill.notional_cents fill in
-    t.cash_cents <- t.cash_cents - cost_cents;
-    let position =
-      Hashtbl.find_or_add t.positions fill.symbol ~default:(fun () ->
-        { Position.shares = 0; total_cost_cents = 0 })
-    in
-    position.shares <- position.shares + Size.to_int fill.size;
-    position.total_cost_cents <- position.total_cost_cents + cost_cents
-  | Sell ->
->>>>>>> Stashed changes
 ;;

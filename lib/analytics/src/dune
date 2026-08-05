@@ -1,10 +1,6 @@
 (library
  (name execlab_analytics)
  (public_name execlab.analytics)
-<<<<<<< Updated upstream
  (libraries core execlab_types execlab_market)
-=======
- (libraries core execlab_types)
->>>>>>> Stashed changes
  (preprocess
   (pps ppx_jane)))
