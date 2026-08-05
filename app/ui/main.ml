@@ -209,6 +209,7 @@ module Icon = struct
 
   let arrow_right ?size () = make ?size "M5 12h14M12 5l7 7-7 7"
   let arrow_left ?size () = make ?size "M19 12H5M12 19l-7-7 7-7"
+  let pause ?size () = make ?size "M10 4H6v16h4zM18 4h-4v16h4z"
 
   let search ?size () =
     make ?size "M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35"
@@ -373,6 +374,39 @@ let controls
        ^ theme.Styles.chip_bg
        ^ ";border-radius:5px;padding:2px;")
   in
+  (* Play/pause is the control people reach for first, so it gets its own
+     shape: a wide button with the matching glyph and word, not a pill that
+     looks like the speed options next to it. *)
+  let play_button =
+    let is_playing = playing && not complete in
+    let style =
+      Styles.s
+        ("display:inline-flex;align-items:center;gap:7px;background:"
+         ^ (if is_playing then theme.Styles.chip_bg else theme.Styles.blue)
+         ^ ";color:"
+         ^ (if is_playing then theme.Styles.text else theme.Styles.page_bg)
+         ^ ";border:1px solid "
+         ^ (if is_playing
+            then theme.Styles.chip_border
+            else theme.Styles.blue)
+         ^ ";border-radius:8px;padding:9px \
+            16px;cursor:pointer;font-size:13.5px;font-weight:700;min-width:104px;justify-content:center;"
+        )
+    in
+    let glyph =
+      if is_playing then Icon.pause ~size:14 () else Icon.play ~size:14 ()
+    in
+    {%html|
+      <button
+        class="btn"
+        %{style}
+        title=%{if is_playing then "Pause" else "Play"}
+        on_click=%{fun _ -> set_playing (not playing)}>
+        %{glyph}
+        #{if is_playing then "Pause" else "Play"}
+      </button>
+    |}
+  in
   let zoom_pill target label =
     pill
       ~theme
@@ -483,11 +517,7 @@ let controls
       <div %{row}>
         <button %{primary} on_click=%{fun _ -> restart}>Replay day</button>
         <div %{group}>
-          %{pill
-              ~theme
-              ~active:(playing && not complete)
-              ~on_click:(fun _ -> set_playing (not playing))
-              (if playing && not complete then "Pause" else "Play")}
+          %{play_button}
           %{pill ~theme ~active:(speed = 1)
               ~on_click:(fun _ -> set_speed 1) "1x"}
           %{pill ~theme ~active:(speed = 4)
@@ -807,6 +837,40 @@ let chart
         ]
         [ Vdom.Node.text (sprintf "vwap %.2f" day_vwap) ]
     ]
+  in
+  (* Each minute's high-low range, drawn once bars are wide enough to tell
+     apart. A fill is priced off its bar's *open* plus the spread and impact
+     toll, so it legitimately sits away from the close the blue line traces —
+     without the range behind it, a correct fill looks like a misplaced dot.
+     With it, every fill visibly lands inside the minute it belongs to. *)
+  let bar_ranges =
+    let bar_width = plot_w /. Float.of_int (Int.max 1 (z1 - z0)) in
+    if Float.( < ) bar_width 2.4
+    then []
+    else
+      List.filter_map
+        (List.init (shown_end - z0 + 1) ~f:(fun offset -> z0 + offset))
+        ~f:(fun i ->
+          if i < 0 || i >= n
+          then None
+          else (
+            let bar = bars.(i) in
+            let high = Price.to_float bar.Market_bar.high in
+            let low = Price.to_float bar.Market_bar.low in
+            Some
+              (svg
+                 "line"
+                 [ attr "x1" (fs (x i))
+                 ; attr "x2" (fs (x i))
+                 ; attr "y1" (fs (y high))
+                 ; attr "y2" (fs (y low))
+                 ; attr "stroke" theme.Styles.secondary
+                 ; attr "stroke-opacity" "0.28"
+                 ; attr
+                     "stroke-width"
+                     (fs (Float.min 3. (bar_width *. 0.34)))
+                 ]
+                 [])))
   in
   (* price line up to the playhead (within the window), with an end dot *)
   let price_line =
@@ -1133,6 +1197,7 @@ let chart
      @ arrival_lines
      @ vwap_line
      @ time_axis
+     @ bar_ranges
      @ price_line
      @ fill_dots
      @ crosshair)
@@ -1652,6 +1717,7 @@ let sim_view
   ~toggle_theme
   ~to_results
   ~back
+  ~profile
   ~hover
   ~set_hover
   =
@@ -1707,6 +1773,7 @@ let sim_view
           <span %{Styles.brand theme}>execlab</span>
           <span %{Styles.s "display:flex;gap:10px;align-items:center;"}>
             %{theme_button ~theme ~is_dark ~toggle_theme}
+            ?{profile}
           </span>
         </div>
         <div %{title_style}>#{title}</div>
@@ -2061,6 +2128,7 @@ let landing_view
   ~auth_status
   ~submit_auth
   ~sign_out
+  ~profile
   =
   let page =
     Styles.s
@@ -2255,6 +2323,7 @@ let landing_view
         <span %{Styles.s "display:flex;gap:10px;align-items:center;"}>
           *{identity}
           %{theme_button ~theme ~is_dark ~toggle_theme}
+          ?{profile}
         </span>
       </div>
       <div %{hero}>
@@ -4114,9 +4183,12 @@ let results_view
   let total_gross =
     sum (fun row -> row.Replay.grading.gross_theoretical_pnl_cents)
   in
+  let capture_ratio =
+    if total_gross > 0 then total_net // total_gross else 0.
+  in
   let capture =
     if total_gross > 0
-    then sprintf "%.1f%%" (total_net // total_gross *. 100.)
+    then sprintf "%.1f%%" (capture_ratio *. 100.)
     else "n/a"
   in
   let title =
@@ -4229,8 +4301,12 @@ let results_view
               ~color:(money_color total_net)
               (dollars_signed total_net)}
           %{tile ~label:"Alpha captured"
-              ~sub:"the share of the prediction that survived"
-              ~color:theme.Styles.text capture}
+              ~sub:(if Float.( > ) capture_ratio 1.
+                    then "over 100%: you traded better than the decision price"
+                    else "the share of the prediction that survived")
+              ~color:(if Float.( > ) capture_ratio 1.
+                      then theme.Styles.green else theme.Styles.text)
+              capture}
           %{tile ~label:"Execution bonus"
               ~sub:"vs selling/buying everything the moment it arrived"
               ~color:(money_color value_add)
@@ -5117,6 +5193,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~auth_status
         ~submit_auth
         ~sign_out
+        ~profile
     | My_runs, _, _ ->
       my_runs_view
         ~theme
@@ -5184,6 +5261,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~toggle_theme
         ~to_results:(goto Screen.Results)
         ~back:(goto Screen.Setup)
+        ~profile
         ~hover
         ~set_hover
     | Results, Some r, Some (_ : Symbol.t * Date.t) ->
