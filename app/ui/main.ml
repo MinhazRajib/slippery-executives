@@ -307,6 +307,21 @@ let pill ~theme ~active ~on_click label =
 ;;
 
 (* "TSLA", or "AAPL +2": one line's worth of what a run traded. *)
+(* What an alpha actually trades, for the wizard headers. The symbol a user
+   browsed to get here is not the run's — the file decides that — so the
+   headers read the file rather than the calendar. *)
+let alpha_symbols_line ~fallback alpha_text =
+  match Replay.parse_alpha alpha_text with
+  | Error (_ : Error.t) -> Symbol.to_string fallback
+  | Ok [] -> Symbol.to_string fallback
+  | Ok instructions ->
+    List.map instructions ~f:(fun instruction ->
+      instruction.Alpha_instruction.symbol)
+    |> List.dedup_and_sort ~compare:Symbol.compare
+    |> List.map ~f:Symbol.to_string
+    |> String.concat ~sep:" "
+;;
+
 let symbols_label symbols =
   match symbols with
   | [] -> "-"
@@ -3464,10 +3479,11 @@ let choose_day_view
          in
          let title_row =
            Styles.s
-             ("display:flex;justify-content:space-between;align-items:baseline;color:"
+             ("display:flex;justify-content:space-between;align-items:baseline;gap:14px;flex-wrap:wrap;color:"
               ^ theme.Styles.text
               ^ ";font-size:16px;font-weight:700;")
          in
+         let title_name = Styles.s "white-space:nowrap;" in
          let tiles =
            Styles.s
              "display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;"
@@ -3475,7 +3491,7 @@ let choose_day_view
          {%html|
            <div %{Styles.card theme "padding:20px;"}>
              <div %{title_row}>
-               <span>
+               <span %{title_name}>
                  #{Symbol.to_string symbol} · #{Date.to_string date}
                </span>
                <span %{hint}>1-minute closes · 09:30–15:59 · historical replay, not a forecast</span>
@@ -3494,11 +3510,8 @@ let choose_day_view
   in
   let selection_hint =
     match selection with
-    | Some (symbol, date) ->
-      sprintf
-        "%s · %s selected"
-        (Symbol.to_string symbol)
-        (Date.to_string date)
+    | Some ((_ : Symbol.t), date) ->
+      sprintf "%s selected — your alpha names the symbols" (Date.to_string date)
     | None -> "select a session to continue"
   in
   {%html|
@@ -3862,8 +3875,7 @@ let alpha_view
   let subtitle =
     sprintf
       "paste, upload, or start from a sample — timestamped parent orders \
-       for %s · %s"
-      (Symbol.to_string symbol)
+       for %s, in as many names as the day has sessions for"
       (Date.to_string date)
   in
   let samples_note =
@@ -4480,7 +4492,7 @@ let setup_view
           ~subtitle:(sprintf
                        "%s · %s — three separate things: the algorithm, \
                         your strategy dials, and the market's physics"
-                       (Symbol.to_string symbol)
+                       (alpha_symbols_line ~fallback:symbol alpha_text)
                        (Date.to_string date))
           ~back:None ()}
       <div %{Styles.s two_col}>
