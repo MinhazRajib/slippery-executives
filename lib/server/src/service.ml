@@ -103,18 +103,16 @@ let own_params (config : Run_config.t) =
    of its own score) and stores only its own grading. *)
 let grade ~data_dir ~(config : Run_config.t) ~params =
   let open Or_error.Let_syntax in
-  let%bind day =
-    Catalog.load ~data_dir ~symbol:config.symbol ~date:config.date
-  in
   let%bind parsed = Execlab_alpha.Parser.parse config.alpha_text in
+  let symbols = Catalog.symbols_of_instructions parsed.instructions in
+  let%bind universe =
+    Catalog.universe ~data_dir ~date:config.date ~symbols
+  in
   let%map outcome =
     Execlab_session.run
-      ~day
+      ~universe
       ~forecast_days:
-        (Catalog.forecast_days
-           ~data_dir
-           ~symbol:config.symbol
-           ~excluding:config.date)
+        (Catalog.forecast_days_for ~data_dir ~date:config.date ~symbols)
       ~instructions:parsed.instructions
       ~algo_name:config.algo_name
       ~params
@@ -133,11 +131,21 @@ let username_of_token ~runs_dir ~token =
     ~token
 ;;
 
-(* [config.player] is advisory on the wire and overwritten here: whoever
-   holds the token owns the run, whatever name the client typed into the
-   config. *)
+(* Both fields a client could use to file a run under someone else's name are
+   overwritten here from what the server can verify for itself: the token
+   decides who owns the run, and the alpha decides which symbols it trades.
+   Without the second, a submission could claim any [symbols] it liked and
+   land on a board of its own — the score would still be honest (the server
+   regrades), but the contest would quietly fragment, and an unopposed board
+   is not a leaderboard. An unparseable alpha is left alone; grading rejects
+   it a moment later with a better message. *)
 let owned_config ~username (config : Run_config.t) =
-  { config with player = username }
+  let symbols =
+    match Execlab_alpha.Parser.parse config.alpha_text with
+    | Error (_ : Error.t) -> config.symbols
+    | Ok parsed -> Catalog.symbols_of_instructions parsed.instructions
+  in
+  { config with player = username; symbols }
 ;;
 
 let create_account ~runs_dir (request : Create_account.Request.t) =
@@ -185,7 +193,7 @@ let submit_run ~data_dir ~runs_dir (request : Submit_run.Request.t) =
   let leaderboard =
     Store.load_board
       ~runs_dir
-      ~symbol:config.symbol
+      ~symbols:config.symbols
       ~date:config.date
       ~alpha_hash:(alpha_hash config.alpha_text)
       ~engine_name:config.engine_name
@@ -232,7 +240,7 @@ let leaderboard ~runs_dir (request : Leaderboard.Request.t) =
     { Leaderboard.Response.rows =
         Store.load_board
           ~runs_dir
-          ~symbol:request.symbol
+          ~symbols:request.symbols
           ~date:request.date
           ~alpha_hash:request.alpha_hash
           ~engine_name:request.engine_name

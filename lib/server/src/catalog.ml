@@ -37,3 +37,24 @@ let forecast_days ~data_dir ~symbol ~excluding =
   |> List.filter_map ~f:(fun date ->
     Or_error.ok (load ~data_dir ~symbol ~date))
 ;;
+
+let symbols_of_instructions instructions =
+  List.map instructions ~f:(fun instruction ->
+    instruction.Alpha_instruction.symbol)
+  |> List.dedup_and_sort ~compare:Symbol.compare
+;;
+
+let universe ~data_dir ~date ~symbols =
+  let open Or_error.Let_syntax in
+  let%bind days =
+    List.map symbols ~f:(fun symbol -> load ~data_dir ~symbol ~date)
+    |> Or_error.combine_errors
+  in
+  Universe.of_days days
+;;
+
+let forecast_days_for ~data_dir ~date ~symbols =
+  Symbol.Map.of_alist_exn
+    (List.map symbols ~f:(fun symbol ->
+       symbol, forecast_days ~data_dir ~symbol ~excluding:date))
+;;

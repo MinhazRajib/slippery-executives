@@ -7,7 +7,8 @@ open! Execlab_types
 
 module Run_record = struct
   type t =
-    { symbol : Symbol.t
+    { symbols : Symbol.t list
+        (* every name the run's alpha touched, ascending *)
     ; date : Date.t
     ; algo_name : string
     ; alpha_capture : float option
@@ -18,6 +19,33 @@ module Run_record = struct
     ; completion : float (* filled / ordered, 0 to 1 *)
     }
   [@@deriving sexp, equal]
+
+  (* History written before a run could name more than one symbol carries
+     [(symbol TSLA)]. One unreadable record would take the whole list down
+     with it — {!load} falls back to empty — so upgrade the field instead. *)
+  let t_of_sexp sexp =
+    let sexp =
+      match sexp with
+      | Sexp.Atom (_ : string) -> sexp
+      | Sexp.List fields ->
+        Sexp.List
+          (List.map fields ~f:(function
+            | Sexp.List [ Sexp.Atom "symbol"; symbol ] ->
+              Sexp.List [ Sexp.Atom "symbols"; Sexp.List [ symbol ] ]
+            | field -> field))
+    in
+    t_of_sexp sexp
+  ;;
+
+  (* "TSLA", or "AAPL +2" when the alpha spanned several names — a history
+     row has one line to say what was traded. *)
+  let symbols_label t =
+    match t.symbols with
+    | [] -> "-"
+    | [ symbol ] -> Symbol.to_string symbol
+    | first :: rest ->
+      sprintf "%s +%d" (Symbol.to_string first) (List.length rest)
+  ;;
 end
 
 let capacity = 20

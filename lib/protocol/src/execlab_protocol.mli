@@ -21,7 +21,9 @@ module Run_config : sig
       name. *)
   type t =
     { player : string
-    ; symbol : Symbol.t
+    ; symbols : Symbol.t list
+    (** every name [alpha_text] trades, ascending; derived from it, and
+        carried separately only so a board can be found without reparsing *)
     ; date : Date.t
     ; alpha_text : string
     ; algo_name : string
@@ -214,7 +216,7 @@ module Leaderboard : sig
 
   module Request : sig
     type t =
-      { symbol : Symbol.t
+      { symbols : Symbol.t list
       ; date : Date.t
       ; alpha_hash : string (** see {!alpha_hash} *)
       ; engine_name : string (** boards are per-engine *)

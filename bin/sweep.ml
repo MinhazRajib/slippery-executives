@@ -137,6 +137,53 @@ let check ~where ~name condition ~detail =
 
 (* Everything that must hold of a single graded instruction, whichever
    algorithm and engine produced it. *)
+(* Every benchmark a grade is measured against must come from the order's own
+   session. Checking the graded symbol is not enough: a run that graded every
+   order against the first session would still report the right symbol while
+   comparing TSLA's fills to AAPL's VWAP — which is precisely the way a
+   multi-symbol run fails silently. *)
+let check_benchmarks
+  ~where
+  ~universe
+  ~(instruction : Alpha_instruction.t)
+  ~graded
+  =
+  let grading = graded.Graded.grading in
+  let day = Universe.day_exn universe instruction.symbol in
+  check
+    ~where
+    ~name:"graded against its own symbol"
+    (Symbol.equal grading.symbol instruction.symbol)
+    ~detail:
+      (lazy
+        (sprintf
+           !"graded %{Symbol}, instruction says %{Symbol}"
+           grading.symbol
+           instruction.symbol));
+  check
+    ~where
+    ~name:"day vwap is this symbol's own"
+    (Float.equal grading.day_vwap (Day_stats.vwap day))
+    ~detail:
+      (lazy
+        (sprintf
+           !"graded against %.4f; %{Symbol} traded at %.4f"
+           grading.day_vwap
+           instruction.symbol
+           (Day_stats.vwap day)));
+  check
+    ~where
+    ~name:"terminal price is this symbol's own close"
+    (Price.equal grading.terminal_price (Benchmarks.terminal_price day))
+    ~detail:
+      (lazy
+        (sprintf
+           !"graded against %{Price}; %{Symbol} closed at %{Price}"
+           grading.terminal_price
+           instruction.symbol
+           (Benchmarks.terminal_price day)))
+;;
+
 let check_grading ~where ~(instruction : Alpha_instruction.t) ~fills ~graded =
   let grading = graded.Graded.grading in
   let filled = Size.to_int grading.filled in
@@ -241,18 +288,31 @@ let check_immediate ~where ~(graded : Graded.t) =
              arrival))
 ;;
 
-(* Engine A's participation cap is a per-bar budget shared by every order, so
-   no minute may trade more than its share of that bar's volume. *)
-let check_participation ~where ~(day : Trading_day.t) ~fills ~params =
+module Key = struct
+  module T = struct
+    type t = Symbol.t * Time_ns.Ofday.t [@@deriving compare, sexp_of]
+  end
+
+  include T
+  include Comparator.Make (T)
+end
+
+(* Engine A's participation cap is a per-bar budget shared by every order of
+   {e one} symbol, so no minute may trade more than its share of that
+   symbol's bar volume. Two names trading the same minute do not compete for
+   a single budget — which is what bucketing on (symbol, time) checks. *)
+let check_participation ~where ~universe ~fills ~params =
   let volume_by_time =
-    List.map day.bars ~f:(fun bar ->
-      bar.Market_bar.time, Size.to_int bar.volume)
-    |> Time_ns.Ofday.Map.of_alist_exn
+    List.concat_map (Universe.days universe) ~f:(fun (day : Trading_day.t) ->
+      List.map day.bars ~f:(fun bar ->
+        (day.symbol, bar.Market_bar.time), Size.to_int bar.volume))
+    |> Map.of_alist_exn (module Key)
   in
-  List.map fills ~f:(fun (fill : Fill.t) -> fill.time, Size.to_int fill.size)
-  |> Time_ns.Ofday.Map.of_alist_fold ~init:0 ~f:( + )
-  |> Map.iteri ~f:(fun ~key:time ~data:filled ->
-    match Map.find volume_by_time time with
+  List.map fills ~f:(fun (fill : Fill.t) ->
+    (fill.symbol, fill.time), Size.to_int fill.size)
+  |> Map.of_alist_fold (module Key) ~init:0 ~f:( + )
+  |> Map.iteri ~f:(fun ~key:(symbol, time) ~data:filled ->
+    match Map.find volume_by_time (symbol, time) with
     | None -> ()
     | Some volume ->
       let budget =
@@ -267,14 +327,20 @@ let check_participation ~where ~(day : Trading_day.t) ~fills ~params =
         ~detail:
           (lazy
             (sprintf
-               !"%{Time_ns.Ofday}: filled %d of a %d budget"
+               !"%{Symbol} %{Time_ns.Ofday}: filled %d of a %d budget"
+               symbol
                time
                filled
                budget)))
 ;;
 
-let run_one ~day ~forecast_days ~instructions ~algo_name ~params =
-  Execlab_session.run ~day ~forecast_days ~instructions ~algo_name ~params
+let run_one ~universe ~forecast_days ~instructions ~algo_name ~params =
+  Execlab_session.run
+    ~universe
+    ~forecast_days
+    ~instructions
+    ~algo_name
+    ~params
 ;;
 
 let fills_of ~(result : Driver.t) ~(parent : Parent_order.t) =
@@ -288,7 +354,7 @@ let fills_of ~(result : Driver.t) ~(parent : Parent_order.t) =
 (* One (symbol, date, scenario, engine, algorithm) cell: run it, check
    everything that must hold, and return its league-table row. *)
 let check_cell
-  ~day
+  ~universe
   ~forecast_days
   ~scenario
   ~instructions
@@ -299,14 +365,18 @@ let check_cell
   let params = { Params.default with engine } in
   let where =
     sprintf
-      !"%{Symbol} %{Date} %s %s/%s"
-      day.Trading_day.symbol
-      day.Trading_day.date
+      !"%s %{Date} %s %s/%s"
+      (String.concat
+         ~sep:","
+         (List.map (Universe.symbols universe) ~f:Symbol.to_string))
+      (Universe.date universe)
       scenario
       algo_name
       engine_name
   in
-  match run_one ~day ~forecast_days ~instructions ~algo_name ~params with
+  match
+    run_one ~universe ~forecast_days ~instructions ~algo_name ~params
+  with
   | Error error ->
     Int.incr violations;
     printf !"VIOLATION [run] %s: %{Error#hum}\n" where error;
@@ -316,13 +386,18 @@ let check_cell
     List.iter2_exn parents outcome.graded ~f:(fun parent graded ->
       let fills = fills_of ~result:outcome.algo_result ~parent in
       check_grading ~where ~instruction:parent.instruction ~fills ~graded;
+      check_benchmarks
+        ~where
+        ~universe
+        ~instruction:parent.instruction
+        ~graded;
       if String.equal algo_name "immediate"
       then check_immediate ~where ~graded);
     (match engine with
      | Engine_choice.Bar_model ->
        check_participation
          ~where
-         ~day
+         ~universe
          ~fills:outcome.algo_result.fills
          ~params
      | Synthetic { seed = (_ : int) } -> ());
@@ -335,6 +410,10 @@ let check_cell
 ;;
 
 let check_day ~day ~forecast_days =
+  let universe = Universe.of_day day in
+  let forecast_days =
+    Symbol.Map.singleton day.Trading_day.symbol forecast_days
+  in
   List.concat_map Scenario.all ~f:(fun (scenario : Scenario.t) ->
     let instructions =
       scenario.instructions ~symbol:day.Trading_day.symbol
@@ -342,7 +421,7 @@ let check_day ~day ~forecast_days =
     List.concat_map engines ~f:(fun (engine_name, engine) ->
       List.filter_map algorithms ~f:(fun algo_name ->
         check_cell
-          ~day
+          ~universe
           ~forecast_days
           ~scenario:scenario.name
           ~instructions
@@ -375,6 +454,143 @@ let sweep ~symbols =
           check_day ~day ~forecast_days))
 ;;
 
+(* A basket alpha: one instruction per name, staggered so their windows
+   overlap, which is the case where a shared budget or a shared engine would
+   show up. *)
+let basket_instructions symbols =
+  List.mapi symbols ~f:(fun index symbol ->
+    let side = if index % 2 = 0 then Side.Buy else Side.Sell in
+    let arrival = sprintf "10:%02d:00" (index * 10) in
+    let deadline = sprintf "11:%02d:00" (index * 10) in
+    Scenario.instruction
+      ~symbol
+      ~side
+      ~quantity:(4_000 + (index * 1_000))
+      ~arrival
+      ~deadline)
+;;
+
+(* The invariant that makes a basket one run rather than several: what a
+   symbol trades inside the basket must be exactly what it trades alone.
+   Anything shared by accident across names — an engine, a random stream, a
+   participation budget, a volume forecast — breaks this. *)
+let fill_shape (outcome : Outcome.t) ~symbol =
+  List.filter outcome.algo_result.fills ~f:(fun (fill : Fill.t) ->
+    Symbol.equal fill.symbol symbol)
+  |> List.map ~f:(fun (fill : Fill.t) ->
+    ( fill.time
+    , Size.to_int fill.size
+    , Price.to_int_cents fill.price
+    , fill.liquidity ))
+;;
+
+let check_basket ~date ~symbols ~forecast_days =
+  match
+    List.map symbols ~f:(fun symbol -> Map.find_exn forecast_days symbol)
+  with
+  | (_ : Trading_day.t list list) ->
+    let days =
+      List.map symbols ~f:(fun symbol ->
+        Or_error.ok_exn (Execlab_server.Catalog.load ~data_dir ~symbol ~date))
+    in
+    let universe = Or_error.ok_exn (Universe.of_days days) in
+    let instructions = basket_instructions symbols in
+    List.concat_map engines ~f:(fun (engine_name, engine) ->
+      List.filter_map algorithms ~f:(fun algo_name ->
+        let row =
+          check_cell
+            ~universe
+            ~forecast_days
+            ~scenario:"basket"
+            ~instructions
+            ~engine_name
+            ~engine
+            ~algo_name
+        in
+        let params = { Params.default with engine } in
+        (match
+           run_one ~universe ~forecast_days ~instructions ~algo_name ~params
+         with
+         | Error (_ : Error.t) -> ()
+         | Ok basket ->
+           List.iter2_exn symbols days ~f:(fun symbol day ->
+             let solo =
+               run_one
+                 ~universe:(Universe.of_day day)
+                 ~forecast_days:
+                   (Symbol.Map.singleton
+                      symbol
+                      (Map.find_exn forecast_days symbol))
+                 ~instructions:
+                   (List.filter instructions ~f:(fun instruction ->
+                      Symbol.equal
+                        instruction.Alpha_instruction.symbol
+                        symbol))
+                 ~algo_name
+                 ~params
+             in
+             match solo with
+             | Error error ->
+               check
+                 ~where:
+                   (sprintf
+                      !"%{Symbol} %{Date} basket/%s"
+                      symbol
+                      date
+                      algo_name)
+                 ~name:"solo run of a basket leg"
+                 false
+                 ~detail:(lazy (Error.to_string_hum error))
+             | Ok solo ->
+               check
+                 ~where:
+                   (sprintf
+                      !"%{Symbol} %{Date} basket/%s/%s"
+                      symbol
+                      date
+                      algo_name
+                      engine_name)
+                 ~name:"a basket leg trades exactly as it would alone"
+                 ([%equal: (Time_ns.Ofday.t * int * int * Liquidity.t) list]
+                    (fill_shape basket ~symbol)
+                    (fill_shape solo ~symbol))
+                 ~detail:
+                   (lazy
+                     (sprintf
+                        !"basket %{sexp:(Time_ns.Ofday.t * int * int * \
+                          Liquidity.t) list} vs solo \
+                          %{sexp:(Time_ns.Ofday.t * int * int * \
+                          Liquidity.t) list}"
+                        (fill_shape basket ~symbol)
+                        (fill_shape solo ~symbol)))));
+        row))
+;;
+
+(* Every date where enough names traded to make a basket, checked as one run
+   and against its own legs. *)
+let sweep_baskets ~symbols =
+  let dates =
+    List.concat_map symbols ~f:(fun symbol ->
+      Execlab_server.Catalog.dates_for ~data_dir ~symbol)
+    |> List.dedup_and_sort ~compare:Date.compare
+  in
+  List.concat_map dates ~f:(fun date ->
+    let trading =
+      List.filter symbols ~f:(fun symbol ->
+        List.mem
+          (Execlab_server.Catalog.dates_for ~data_dir ~symbol)
+          date
+          ~equal:Date.equal)
+    in
+    match List.take trading 3 with
+    | [] | [ _ ] -> []
+    | symbols ->
+      let forecast_days =
+        Execlab_server.Catalog.forecast_days_for ~data_dir ~date ~symbols
+      in
+      check_basket ~date ~symbols ~forecast_days)
+;;
+
 (* Two runs that must agree exactly: implementation shortfall at zero urgency
    is TWAP's straight line, so the fills should be identical. *)
 let check_is_reduces_to_twap ~symbols =
@@ -390,7 +606,12 @@ let check_is_reduces_to_twap ~symbols =
       in
       let run ~algo_name ~params =
         Or_error.ok_exn
-          (run_one ~day ~forecast_days:[] ~instructions ~algo_name ~params)
+          (run_one
+             ~universe:(Universe.of_day day)
+             ~forecast_days:Symbol.Map.empty
+             ~instructions
+             ~algo_name
+             ~params)
       in
       let twap = run ~algo_name:"twap" ~params:Params.default in
       let is =
@@ -416,7 +637,7 @@ let () =
       eprintf "usage: sweep.exe [SYMBOL]\n";
       exit 2
   in
-  let rows = sweep ~symbols in
+  let rows = sweep ~symbols @ sweep_baskets ~symbols in
   check_is_reduces_to_twap ~symbols;
   printf
     "\n%-26s %-10s %-10s %14s %14s\n"

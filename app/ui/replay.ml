@@ -11,6 +11,7 @@ open! Execlab_analytics
 
 type parent_replay =
   { instruction : Alpha_instruction.t
+  ; symbol : Symbol.t (* the session this order traded in *)
   ; order_ids : Order_id.Set.t
   ; arrival_minute : int
   ; deadline_minute : int
@@ -35,24 +36,19 @@ type results =
   }
 
 type t =
-  { symbol : Symbol.t
+  { symbols : Symbol.t list (* ascending; one entry for a single-name run *)
   ; date : Date.t
   ; algo_name : string
   ; alpha_text : string
   ; params : Execlab_session.Params.t
       (* what this run actually used — the submit-to-leaderboard config must
          reproduce the run exactly *)
-  ; bars : Market_bar.t array
+  ; bars_by_symbol : Market_bar.t array Symbol.Map.t
+  ; vwap_by_symbol : float array Symbol.Map.t
   ; fills : Fill.t array
   ; parents : parent_replay list
   ; events : event array (* ascending by time *)
   ; results : results
-  ; vwap_by_minute : float array
-      (* running session VWAP (typical price, volume weighted), dollars *)
-  ; target_by_minute : float array
-      (* scheduled cumulative shares across all parents (linear ramps) *)
-  ; actual_by_minute : int array (* cumulative filled shares *)
-  ; cumulative_volume : int array (* market volume traded so far *)
   }
 
 let parse_alpha text =
@@ -166,13 +162,16 @@ let minute_of_ofday ~(bars : Market_bar.t array) time =
     (Time_ns.Span.to_min (Time_ns.Ofday.diff time bars.(0).Market_bar.time))
 ;;
 
-let parents_of ~bars (result : Driver.t) =
+let parents_of ~bars_by_symbol (result : Driver.t) =
   List.map (Order_manager.parents result.manager) ~f:(fun parent ->
     let instruction = parent.Parent_order.instruction in
+    let symbol = instruction.Alpha_instruction.symbol in
+    let bars = Map.find_exn bars_by_symbol symbol in
     let arrival_minute =
       minute_of_ofday ~bars instruction.Alpha_instruction.arrival_time
     in
     { instruction
+    ; symbol
     ; order_ids =
         Order_id.Set.of_list
           (List.map parent.children ~f:(fun child -> child.Child_order.id))
@@ -188,7 +187,7 @@ let parents_of ~bars (result : Driver.t) =
     })
 ;;
 
-let events ~symbol ~(algo_result : Driver.t) parents =
+let events ~(algo_result : Driver.t) parents =
   let side_str side =
     match (side : Side.t) with Buy -> "BUY" | Sell -> "SELL"
   in
@@ -201,7 +200,7 @@ let events ~symbol ~(algo_result : Driver.t) parents =
             "ACTIVATE %s %d %s (by %s)"
             (side_str i.side)
             (Size.to_int i.quantity)
-            (Symbol.to_string symbol)
+            (Symbol.to_string parent.symbol)
             (String.prefix (Time_ns.Ofday.to_string i.deadline) 5)
       })
   in
@@ -210,9 +209,10 @@ let events ~symbol ~(algo_result : Driver.t) parents =
       { time = fill.Fill.time
       ; line =
           sprintf
-            "FILL %s %d @ %s (%s)"
+            "FILL %s %d %s @ %s (%s)"
             (side_str fill.side)
             (Size.to_int fill.size)
+            (Symbol.to_string fill.symbol)
             (Price.to_string_dollar fill.price)
             (match fill.liquidity with Taker -> "taker" | Maker -> "maker")
       })
@@ -238,69 +238,57 @@ let vwap_by_minute bars =
     if Float.( > ) !volume 0. then !dollar_volume /. !volume else typical)
 ;;
 
-(* The scheduled cumulative quantity at each minute: every parent ramps
-   linearly from activation to deadline (the TWAP ideal; also the honest
-   reference schedule for any algorithm). *)
-let target_by_minute ~bars parents =
-  Array.init (Array.length bars) ~f:(fun m ->
-    List.sum (module Float) parents ~f:(fun parent ->
-      let total =
-        Float.of_int
-          (Size.to_int parent.instruction.Alpha_instruction.quantity)
-      in
-      if m < parent.arrival_minute
-      then 0.
-      else if m >= parent.deadline_minute
-      then total
-      else (
-        let span = parent.deadline_minute - parent.arrival_minute in
-        total
-        *. Float.of_int (m - parent.arrival_minute)
-        /. Float.of_int span)))
-;;
-
-let actual_by_minute ~bars (fills : Fill.t array) =
-  let per_minute = Array.create ~len:(Array.length bars) 0 in
-  Array.iter fills ~f:(fun fill ->
-    let m = minute_of_ofday ~bars fill.time in
-    per_minute.(m) <- per_minute.(m) + Size.to_int fill.size);
-  let total = ref 0 in
-  Array.map per_minute ~f:(fun v ->
-    total := !total + v;
-    !total)
-;;
-
-let cumulative_volume bars =
-  let total = ref 0 in
-  Array.map bars ~f:(fun (bar : Market_bar.t) ->
-    total := !total + Size.to_int bar.volume;
-    !total)
-;;
-
 (* Alpha text and day selection are user input, so the whole run is an
-   [Or_error]: a bad CSV or an instruction outside the chosen day comes back
-   as a message for the setup screen, not an exception. *)
-let run ~symbol ~date ~alpha_text ~algo_name ~(params : Params.t) =
+   [Or_error]: a bad CSV, or one naming a symbol that did not trade that
+   date, comes back as a message for the setup screen rather than an
+   exception. The universe is whatever the alpha asks for — one name or six —
+   and every symbol is loaded before anything runs, so a run never silently
+   drops an order. *)
+let run ~date ~alpha_text ~algo_name ~(params : Params.t) =
   let open Or_error.Let_syntax in
-  let%bind day = Dataset.load ~symbol ~date in
   let%bind instructions = parse_alpha alpha_text in
   let%bind () =
     if List.is_empty instructions
     then Or_error.error_string "the alpha has no instructions"
     else Ok ()
   in
+  let symbols =
+    List.map instructions ~f:(fun instruction ->
+      instruction.Alpha_instruction.symbol)
+    |> List.dedup_and_sort ~compare:Symbol.compare
+  in
+  let%bind days =
+    List.map symbols ~f:(fun symbol -> Dataset.load_cached ~symbol ~date)
+    |> Or_error.combine_errors
+  in
+  let%bind universe = Universe.of_days days in
+  (* Each name's volume forecast reads every other session of that name, so a
+     basket multiplies the parsing. Memoized, so a second run of the same day
+     pays nothing. *)
   let forecast_days =
-    Dataset.dates_for symbol
-    |> List.filter ~f:(fun other -> not (Date.equal other date))
-    |> List.filter_map ~f:(fun other ->
-      Or_error.ok (Dataset.load ~symbol ~date:other))
+    Symbol.Map.of_alist_exn
+      (List.map symbols ~f:(fun symbol ->
+         ( symbol
+         , Dataset.dates_for symbol
+           |> List.filter ~f:(fun other -> not (Date.equal other date))
+           |> List.filter_map ~f:(fun other ->
+             Or_error.ok (Dataset.load_cached ~symbol ~date:other)) )))
   in
   let%map outcome =
-    Execlab_session.run ~day ~forecast_days ~instructions ~algo_name ~params
+    Execlab_session.run
+      ~universe
+      ~forecast_days
+      ~instructions
+      ~algo_name
+      ~params
   in
   let algo_result = outcome.Execlab_session.Outcome.algo_result in
-  let bars = Array.of_list day.Trading_day.bars in
-  let parents = parents_of ~bars algo_result in
+  let bars_by_symbol =
+    Symbol.Map.of_alist_exn
+      (List.map days ~f:(fun (day : Trading_day.t) ->
+         day.symbol, Array.of_list day.bars))
+  in
+  let parents = parents_of ~bars_by_symbol algo_result in
   let fills = Array.of_list algo_result.fills in
   let rows =
     List.map outcome.graded ~f:(fun graded ->
@@ -308,39 +296,53 @@ let run ~symbol ~date ~alpha_text ~algo_name ~(params : Params.t) =
       ; value_add_cents = graded.value_add_cents
       })
   in
-  { symbol
+  { symbols
   ; date
   ; algo_name
   ; alpha_text
   ; params
-  ; bars
+  ; bars_by_symbol
+  ; vwap_by_symbol = Map.map bars_by_symbol ~f:vwap_by_minute
   ; fills
   ; parents
-  ; events = events ~symbol ~algo_result parents
+  ; events = events ~algo_result parents
   ; results =
       { rows
       ; total_value_add_cents =
           Execlab_session.Outcome.value_add_cents outcome
       }
-  ; vwap_by_minute = vwap_by_minute bars
-  ; target_by_minute = target_by_minute ~bars parents
-  ; actual_by_minute = actual_by_minute ~bars fills
-  ; cumulative_volume = cumulative_volume bars
   }
 ;;
 
-(* Mark-to-market P&L of everything executed so far, against [last]: longs
-   gain as the tape rises, shorts the reverse. *)
-let open_pnl_cents ~(fills : Fill.t list) ~last =
+(* Every symbol shares the clock, so any session answers a question about
+   time; the first is as good as another. *)
+let clock_bars t = Map.find_exn t.bars_by_symbol (List.hd_exn t.symbols)
+let bars_for t symbol = Map.find_exn t.bars_by_symbol symbol
+let vwap_for t symbol = Map.find_exn t.vwap_by_symbol symbol
+
+(* Filename-safe name for the run: "TSLA", or "AAPL-MSFT-TSLA". *)
+let symbols_slug t =
+  String.concat ~sep:"-" (List.map t.symbols ~f:Symbol.to_string)
+;;
+
+let last_close t ~symbol ~minute =
+  (bars_for t symbol).(minute).Market_bar.close
+;;
+
+(* Mark-to-market P&L of everything executed so far: longs gain as the tape
+   rises, shorts the reverse. Each fill marks against its {e own} symbol's
+   last print — a multi-symbol run has no single "the price". *)
+let open_pnl_cents ~(fills : Fill.t list) ~last_for =
   List.sum (module Int) fills ~f:(fun fill ->
     Side.sign fill.side
-    * (Price.to_int_cents last - Price.to_int_cents fill.price)
+    * (Price.to_int_cents (last_for fill.Fill.symbol)
+       - Price.to_int_cents fill.price)
     * Size.to_int fill.size)
 ;;
 
-let last_minute t = Array.length t.bars - 1
-let time_at t ~minute = t.bars.(minute).Market_bar.time
-let minute_of_time t time = minute_of_ofday ~bars:t.bars time
+let last_minute t = Array.length (clock_bars t) - 1
+let time_at t ~minute = (clock_bars t).(minute).Market_bar.time
+let minute_of_time t time = minute_of_ofday ~bars:(clock_bars t) time
 
 let clock_string t ~minute =
   String.prefix (Time_ns.Ofday.to_string (time_at t ~minute)) 5
@@ -358,17 +360,6 @@ let events_upto t ~minute =
   Array.filter t.events ~f:(fun event ->
     Time_ns.Ofday.( <= ) event.time cutoff)
   |> Array.to_list
-;;
-
-(* Percent ahead (+) or behind (-) the scheduled quantity; None before
-   anything is scheduled. *)
-let schedule_delta_pct t ~minute =
-  let target = t.target_by_minute.(minute) in
-  if Float.( <= ) target 1.
-  then None
-  else (
-    let actual = Float.of_int t.actual_by_minute.(minute) in
-    Some ((actual -. target) /. target *. 100.))
 ;;
 
 type parent_row =
@@ -466,7 +457,7 @@ let results_csv t =
           ~sep:","
           [ Int.to_string (index + 1)
           ; (match grading.side with Buy -> "BUY" | Sell -> "SELL")
-          ; Symbol.to_string t.symbol
+          ; Symbol.to_string grading.symbol
           ; Date.to_string t.date
           ; t.algo_name
           ; Int.to_string (Size.to_int grading.quantity)
@@ -509,7 +500,7 @@ let results_csv t =
 (* Every fill of the graded run — the raw material behind the per-order
    numbers, tagged with its owning order. *)
 let fills_csv t =
-  let header = "fill_id,time,order,side,size,price,liquidity" in
+  let header = "fill_id,time,order,symbol,side,size,price,liquidity" in
   let rows =
     Array.to_list t.fills
     |> List.map ~f:(fun (fill : Fill.t) ->
@@ -518,6 +509,7 @@ let fills_csv t =
         [ Int.to_string fill.fill_id
         ; String.prefix (Time_ns.Ofday.to_string fill.time) 8
         ; Int.to_string (parent_index_of_order t fill.order_id + 1)
+        ; Symbol.to_string fill.symbol
         ; (match fill.side with Buy -> "BUY" | Sell -> "SELL")
         ; Int.to_string (Size.to_int fill.size)
         ; sprintf "%.2f" (Price.to_float fill.price)

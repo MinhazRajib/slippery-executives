@@ -49,8 +49,8 @@ let%expect_test "twap on a flat day: all spread, no impact, no drift" =
   let outcome =
     Or_error.ok_exn
       (run
-         ~day
-         ~forecast_days:[]
+         ~universe:(Universe.of_day day)
+         ~forecast_days:Symbol.Map.empty
          ~instructions
          ~algo_name:"twap"
          ~params:Params.default)
@@ -84,8 +84,8 @@ let%expect_test "an unknown algorithm is an error, not an exception" =
     [%sexp
       (Or_error.ignore_m
          (run
-            ~day
-            ~forecast_days:[]
+            ~universe:(Universe.of_day day)
+            ~forecast_days:Symbol.Map.empty
             ~instructions
             ~algo_name:"guerrilla"
             ~params:Params.default)
@@ -104,8 +104,8 @@ let%expect_test "a synthetic run attributes no configured spread: the \
   let outcome =
     Or_error.ok_exn
       (run
-         ~day
-         ~forecast_days:[]
+         ~universe:(Universe.of_day day)
+         ~forecast_days:Symbol.Map.empty
          ~instructions
          ~algo_name:"twap"
          ~params:
@@ -147,8 +147,8 @@ let%expect_test "instructions for another symbol are rejected, whichever \
     [%sexp
       (Or_error.ignore_m
          (run
-            ~day
-            ~forecast_days:[]
+            ~universe:(Universe.of_day day)
+            ~forecast_days:Symbol.Map.empty
             ~instructions:foreign
             ~algo_name:"twap"
             ~params:Params.default)
@@ -156,10 +156,7 @@ let%expect_test "instructions for another symbol are rejected, whichever \
   [%expect
     {|
     (Error
-     ("instruction symbol does not match the day"
-      (instruction
-       ((arrival_time 10:05:00.000000000) (symbol TSLA) (side Buy) (quantity 100)
-        (deadline 11:00:00.000000000)))
-      (day NVDA)))
+     ("the alpha names a symbol this run has no session for" (symbol TSLA)
+      (loaded (NVDA))))
     |}]
 ;;
