@@ -118,7 +118,7 @@ module Scenario = struct
   ;;
 end
 
-let algorithms = [ "twap"; "vwap"; "pov"; "is"; "immediate" ]
+let algorithms = [ "twap"; "vwap"; "pov"; "is"; "adaptive"; "immediate" ]
 
 let engines =
   [ "bar", Engine_choice.Bar_model
@@ -401,12 +401,21 @@ let check_cell
          ~fills:outcome.algo_result.fills
          ~params
      | Synthetic { seed = (_ : int) } -> ());
+    (* Maker share says whether an algorithm's passive path is real: every
+       algorithm here except Adaptive is a pure taker, so anything above zero
+       is an order that rested and was traded into rather than crossed for. *)
+    let shares f =
+      List.sum (module Int) outcome.algo_result.fills ~f:(fun fill ->
+        if f fill.Fill.liquidity then Size.to_int fill.size else 0)
+    in
     Some
       ( scenario
       , algo_name
       , engine_name
       , Outcome.value_add_cents outcome
-      , Outcome.shortfall_cents outcome )
+      , Outcome.shortfall_cents outcome
+      , shares (function Liquidity.Maker -> true | Taker -> false)
+      , shares (fun (_ : Liquidity.t) -> true) )
 ;;
 
 let check_day ~day ~forecast_days =
@@ -591,9 +600,9 @@ let sweep_baskets ~symbols =
       check_basket ~date ~symbols ~forecast_days)
 ;;
 
-(* Two runs that must agree exactly: implementation shortfall at zero urgency
-   is TWAP's straight line, so the fills should be identical. *)
-let check_is_reduces_to_twap ~symbols =
+(* Runs that must agree exactly: implementation shortfall at zero urgency is
+   TWAP's straight line, so the fills should be identical. *)
+let check_limiting_cases ~symbols =
   List.iter symbols ~f:(fun symbol ->
     match Execlab_server.Catalog.dates_for ~data_dir ~symbol with
     | [] -> ()
@@ -617,15 +626,29 @@ let check_is_reduces_to_twap ~symbols =
       let is =
         run ~algo_name:"is" ~params:{ Params.default with is_urgency = 0. }
       in
+      (* Adaptive's other limiting case: no patience is a drift budget of
+         zero at every minute, so nothing ever rests and every bar crosses
+         for what the schedule owes — Twap, share for share. *)
+      let adaptive =
+        run
+          ~algo_name:"adaptive"
+          ~params:{ Params.default with patience = 0. }
+      in
       let prices (outcome : Outcome.t) =
         List.map outcome.algo_result.fills ~f:(fun (fill : Fill.t) ->
           Size.to_int fill.size, Price.to_int_cents fill.price)
       in
+      let where = sprintf !"%{Symbol} %{Date}" symbol date in
       check
-        ~where:(sprintf !"%{Symbol} %{Date}" symbol date)
+        ~where
         ~name:"zero urgency is exactly twap"
         ([%equal: (int * int) list] (prices twap) (prices is))
-        ~detail:(lazy "is at urgency 0 diverged from twap"))
+        ~detail:(lazy "is at urgency 0 diverged from twap");
+      check
+        ~where
+        ~name:"zero patience is exactly twap"
+        ([%equal: (int * int) list] (prices twap) (prices adaptive))
+        ~detail:(lazy "adaptive at patience 0 diverged from twap"))
 ;;
 
 let () =
@@ -638,29 +661,40 @@ let () =
       exit 2
   in
   let rows = sweep ~symbols @ sweep_baskets ~symbols in
-  check_is_reduces_to_twap ~symbols;
+  check_limiting_cases ~symbols;
   printf
-    "\n%-26s %-10s %-10s %14s %14s\n"
+    "\n%-26s %-10s %-10s %14s %14s %9s\n"
     "scenario"
     "algo"
     "engine"
     "avg value add"
-    "avg shortfall";
+    "avg shortfall"
+    "maker";
   List.sort rows ~compare:Poly.compare
-  |> List.group ~break:(fun (s1, a1, e1, _, _) (s2, a2, e2, _, _) ->
-    not (String.equal s1 s2 && String.equal a1 a2 && String.equal e1 e2))
+  |> List.group
+       ~break:(fun (s1, a1, e1, _, _, _, _) (s2, a2, e2, _, _, _, _) ->
+         not (String.equal s1 s2 && String.equal a1 a2 && String.equal e1 e2))
   |> List.iter ~f:(fun group ->
-    let scenario, algo, engine, (_ : int), (_ : int) = List.hd_exn group in
+    let scenario, algo, engine, (_ : int), (_ : int), (_ : int), (_ : int) =
+      List.hd_exn group
+    in
     let mean f =
       List.sum (module Int) group ~f // List.length group /. 100.
     in
+    let maker =
+      List.sum (module Int) group ~f:(fun (_, _, _, _, _, m, _) -> m)
+    in
+    let traded =
+      List.sum (module Int) group ~f:(fun (_, _, _, _, _, _, t) -> t)
+    in
     printf
-      "%-26s %-10s %-10s %14.2f %14.2f\n"
+      "%-26s %-10s %-10s %14.2f %14.2f %8.1f%%\n"
       scenario
       algo
       engine
-      (mean (fun (_, _, _, value_add, _) -> value_add))
-      (mean (fun (_, _, _, _, shortfall) -> shortfall)));
+      (mean (fun (_, _, _, value_add, _, _, _) -> value_add))
+      (mean (fun (_, _, _, _, shortfall, _, _) -> shortfall))
+      (if traded = 0 then 0. else maker // traded *. 100.));
   printf
     "\nruns checked: %d, violations: %d\n"
     (List.length rows)

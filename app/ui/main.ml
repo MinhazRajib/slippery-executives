@@ -3956,6 +3956,19 @@ let algorithm_cards =
       ]
     , [ "Very quiet markets, where the urgency premium is wasted" ]
     , "Anyone with a short-lived signal to capture." )
+  ; ( "adaptive"
+    , "Adaptive"
+    , "Rests when it can, crosses when it must"
+    , [ "The spread is worth more than the wait"
+      ; "You have time and want to be paid for it"
+      ; "Liquidity comes to you if you let it"
+      ]
+    , [ "A market running away from you — patience gets repriced into \
+         crossing anyway"
+      ; "Very short windows, where there is no time to be patient"
+      ]
+    , "The only one here that posts rather than pays; the rest are pure \
+       takers." )
   ; ( "immediate"
     , "Immediate"
     , "Everything at once, right now"
@@ -5799,6 +5812,7 @@ let config_of (replay : Replay.t) ~player =
   ; impact_coefficient_cents = Price.to_int_cents fill.impact_coefficient
   ; pov_rate = replay.params.pov_rate
   ; is_urgency = replay.params.is_urgency
+  ; patience = replay.params.patience
   ; engine_name =
       (match replay.params.engine with
        | Execlab_session.Engine_choice.Bar_model -> "bar"
@@ -6034,6 +6048,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
             }
         ; pov_rate = config.pov_rate
         ; is_urgency = config.is_urgency
+        ; patience = config.patience
         ; engine =
             (match config.engine_name with
              | "synthetic" ->

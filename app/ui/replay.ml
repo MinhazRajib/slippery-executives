@@ -67,6 +67,7 @@ module Param_text = struct
     ; impact : string (** dollars at 100% participation *)
     ; pov_rate : string (** fraction of tape volume *)
     ; urgency : string (** IS front-loading, [0.] = TWAP *)
+    ; patience : string (** Adaptive's appetite for resting, [0.] = TWAP *)
     ; engine : string (** ["bar"] or ["synthetic"] *)
     ; seed : string (** the synthetic engine's seed *)
     }
@@ -79,6 +80,7 @@ module Param_text = struct
     ; impact = sprintf "%.2f" (Price.to_float config.impact_coefficient)
     ; pov_rate = sprintf "%.4f" Params.default.pov_rate
     ; urgency = sprintf "%.1f" Params.default.is_urgency
+    ; patience = sprintf "%.2f" Params.default.patience
     ; engine = "bar"
     ; seed = "1"
     }
@@ -132,6 +134,13 @@ let parse_params (text : Param_text.t) : Params.t Or_error.t =
       ~check:(fun v -> Float.( >= ) v 0. && Float.( <= ) v 10_000.)
       ~message:"at least 0 (0 = TWAP)"
   in
+  let%bind patience =
+    field
+      "patience"
+      text.patience
+      ~check:(fun v -> Float.( >= ) v 0. && Float.( <= ) v 1.)
+      ~message:"a fraction in [0, 1] (0 = TWAP)"
+  in
   let%map engine =
     match text.engine with
     | "bar" -> Ok Execlab_session.Engine_choice.Bar_model
@@ -153,6 +162,7 @@ let parse_params (text : Param_text.t) : Params.t Or_error.t =
       }
   ; pov_rate
   ; is_urgency
+  ; patience
   ; engine
   }
 ;;

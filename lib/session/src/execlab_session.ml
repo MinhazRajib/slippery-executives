@@ -17,6 +17,7 @@ module Params = struct
     { fill_config : Fill_model.Config.t
     ; pov_rate : float
     ; is_urgency : float
+    ; patience : float
     ; engine : Engine_choice.t
     }
 
@@ -24,6 +25,7 @@ module Params = struct
     { fill_config = Fill_model.Config.default
     ; pov_rate = 0.0015
     ; is_urgency = 2.0
+    ; patience = 0.5
     ; engine = Engine_choice.Bar_model
     }
   ;;
@@ -82,12 +84,13 @@ let algorithm_named ~universe ~forecast_days ~(params : Params.t) = function
   | "pov" -> Ok (Pov.create ~participation_rate:params.pov_rate ())
   | "is" ->
     Ok (Implementation_shortfall.create ~urgency:params.is_urgency ())
+  | "adaptive" -> Ok (Adaptive.create ~patience:params.patience ())
   | other ->
     Or_error.error_s
       [%message
         "unknown algorithm"
           (other : string)
-          ~known:"twap, vwap, pov, is, immediate"]
+          ~known:"twap, vwap, pov, is, adaptive, immediate"]
 ;;
 
 module Graded = struct

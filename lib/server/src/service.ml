@@ -27,16 +27,24 @@ let params_of_config ~fill_config (config : Run_config.t) =
       ~check:(fun v -> Float.( > ) v 0. && Float.( <= ) v 1.)
       ~message:"a fraction in (0, 1]"
   in
-  let%map is_urgency =
+  let%bind is_urgency =
     finite
       "is_urgency"
       config.is_urgency
       ~check:(fun v -> Float.( >= ) v 0. && Float.( <= ) v 10_000.)
       ~message:"in [0, 10000]"
   in
+  let%map patience =
+    finite
+      "patience"
+      config.patience
+      ~check:(fun v -> Float.( >= ) v 0. && Float.( <= ) v 1.)
+      ~message:"in [0, 1]"
+  in
   { Execlab_session.Params.fill_config
   ; pov_rate
   ; is_urgency
+  ; patience
   ; engine =
       (match config.engine_name with
        | "synthetic" ->

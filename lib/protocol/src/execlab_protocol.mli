@@ -33,6 +33,7 @@ module Run_config : sig
     ; impact_coefficient_cents : int
     ; pov_rate : float
     ; is_urgency : float
+    ; patience : float (** Adaptive's appetite for resting; [0.] is TWAP *)
     ; engine_name : string (** ["bar" | "synthetic"] *)
     ; engine_seed : int (** meaningful for ["synthetic"] only *)
     }

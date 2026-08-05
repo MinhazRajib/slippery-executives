@@ -7,6 +7,7 @@
     invariants. Re-export each new module here so the whole library is
     reachable through the top-level {!Execlab_execution} module. *)
 
+module Adaptive = Adaptive
 module Algorithm_intf = Algorithm_intf
 module Cancel_reason = Cancel_reason
 module Child_order = Child_order

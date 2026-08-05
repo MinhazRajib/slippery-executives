@@ -144,30 +144,55 @@ let run
           List.fold actions ~init ~f:(fun (manager, engines, fills) action ->
             match (action : Algorithm_intf.Action.t) with
             | Submit request ->
-              let manager, child =
-                Order_manager.submit_exn manager ~parent_index ~request ~now
+              (* Algorithms decide before the bar trades, so a resting order
+                 can fill between the decision and the submission and leave
+                 less room than the algorithm counted on — or none. Clamping
+                 to what the parent can still take is the same race the
+                 cancel path below resolves: the market got there first. *)
+              let room =
+                Size.to_int
+                  (Parent_order.remaining
+                     (Order_manager.parent_exn manager parent_index))
               in
-              let symbol = symbol_of child in
-              let engine, new_fills =
-                Engine_intf.child_order (Map.find_exn engines symbol) child
+              let wanted =
+                Size.to_int request.Child_order.Request.quantity
               in
-              let engines = Map.set engines ~key:symbol ~data:engine in
-              let manager = apply_fills manager new_fills in
-              let manager =
-                if not (never_rests child.request)
-                then manager
-                else (
-                  match
-                    find_child manager ~parent_index ~order_id:child.id
-                  with
-                  | Some child when Child_order.is_live child ->
-                    Order_manager.cancel_exn
-                      manager
-                      ~order_id:child.id
-                      ~reason:Ioc_remainder
-                  | Some _ | None -> manager)
-              in
-              manager, engines, fills @ new_fills
+              if room <= 0
+              then manager, engines, fills
+              else (
+                let request =
+                  if wanted <= room
+                  then request
+                  else { request with quantity = Size.of_int room }
+                in
+                let manager, child =
+                  Order_manager.submit_exn
+                    manager
+                    ~parent_index
+                    ~request
+                    ~now
+                in
+                let symbol = symbol_of child in
+                let engine, new_fills =
+                  Engine_intf.child_order (Map.find_exn engines symbol) child
+                in
+                let engines = Map.set engines ~key:symbol ~data:engine in
+                let manager = apply_fills manager new_fills in
+                let manager =
+                  if not (never_rests child.request)
+                  then manager
+                  else (
+                    match
+                      find_child manager ~parent_index ~order_id:child.id
+                    with
+                    | Some child when Child_order.is_live child ->
+                      Order_manager.cancel_exn
+                        manager
+                        ~order_id:child.id
+                        ~reason:Ioc_remainder
+                    | Some _ | None -> manager)
+                in
+                manager, engines, fills @ new_fills)
             | Cancel order_id ->
               (* The order may have died this very bar; canceling a dead
                  order is the race resolving in the market's favor, not a

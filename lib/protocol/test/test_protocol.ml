@@ -30,6 +30,7 @@ let%expect_test "run config round-trips through its sexp" =
     ; impact_coefficient_cents = 25
     ; pov_rate = 0.0015
     ; is_urgency = 2.0
+    ; patience = 0.5
     ; engine_name = "synthetic"
     ; engine_seed = 7
     }
@@ -51,7 +52,7 @@ let%expect_test "a config written with the old single [symbol] field reads \
          (alpha_text "10:00:00,TSLA,BUY,5000,11:00:00\n") (algo_name is)
          (half_spread_cents 2) (max_participation 0.1)
          (impact_coefficient_cents 25) (pov_rate 0.0015) (is_urgency 2)
-         (engine_name synthetic) (engine_seed 7))|}
+         (patience 0.5) (engine_name synthetic) (engine_seed 7))|}
   in
   let config = Run_config.t_of_sexp legacy in
   printf !"symbols: %{sexp: Symbol.t list}\n" config.symbols;

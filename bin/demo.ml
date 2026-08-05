@@ -31,7 +31,16 @@ module Config = struct
     ; alpha : string option (* overrides the demo's, to vary the order *)
     }
 
-  let make ?pov_rate ?urgency ?engine ?participation ?alpha label algo =
+  let make
+    ?pov_rate
+    ?urgency
+    ?patience
+    ?engine
+    ?participation
+    ?alpha
+    label
+    algo
+    =
     let default = Params.default in
     { label
     ; algo
@@ -43,6 +52,7 @@ module Config = struct
                { default.fill_config with max_participation })
         ; pov_rate = Option.value pov_rate ~default:default.pov_rate
         ; is_urgency = Option.value urgency ~default:default.is_urgency
+        ; patience = Option.value patience ~default:default.patience
         ; engine = Option.value engine ~default:default.engine
         }
     ; alpha
