@@ -2242,131 +2242,6 @@ let run_record (replay : Replay.t) =
   }
 ;;
 
-(* ---------- "what changed?" ---------- *)
-
-(* A single before/after readout. [better] decides the color and arrow, so
-   each metric declares its own direction: capture and completion are better
-   when they rise, shortfall when it falls. *)
-let delta_tile ~theme ~label ~value ~delta ~better ~unit_ =
-  let color =
-    match better with
-    | `Better -> theme.Styles.green
-    | `Worse -> theme.Styles.red
-    | `Same -> theme.Styles.faint
-  in
-  let arrow =
-    match better with
-    | `Better -> "\u{2191}"
-    | `Worse -> "\u{2193}"
-    | `Same -> "\u{2192}"
-  in
-  let tile =
-    Styles.s
-      ("display:flex;flex-direction:column;gap:3px;background:"
-       ^ theme.Styles.chip_bg
-       ^ ";border:1px solid "
-       ^ theme.Styles.chip_border
-       ^ ";border-radius:3px;padding:14px 16px;")
-  in
-  let value_style =
-    Styles.s
-      ("color:"
-       ^ theme.Styles.text
-       ^ ";font-size:24px;font-weight:800;"
-       ^ Styles.mono)
-  in
-  let delta_style =
-    Styles.s
-      ("color:" ^ color ^ ";font-size:13px;font-weight:700;" ^ Styles.mono)
-  in
-  {%html|
-    <div %{tile}>
-      <span %{Styles.s (Styles.label theme)}>#{label}</span>
-      <span %{value_style}>#{value}</span>
-      <span %{delta_style}>#{arrow} #{delta} #{unit_}</span>
-    </div>
-  |}
-;;
-
-let what_changed ~theme ~(current : History.Run_record.t) ~previous =
-  match (previous : History.Run_record.t option) with
-  | None -> []
-  | Some previous ->
-    let direction ~higher_is_better ~now ~before =
-      let epsilon = 1e-9 in
-      if Float.( < ) (Float.abs (now -. before)) epsilon
-      then `Same
-      else if Bool.equal (Float.( > ) now before) higher_is_better
-      then `Better
-      else `Worse
-    in
-    let capture_of (record : History.Run_record.t) =
-      Option.value record.alpha_capture ~default:0. *. 100.
-    in
-    let capture_now = capture_of current
-    and capture_before = capture_of previous in
-    let completion_now = current.completion *. 100.
-    and completion_before = previous.completion *. 100. in
-    let grid =
-      Styles.s
-        "display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;"
-    in
-    let heading =
-      Styles.s
-        ("color:"
-         ^ theme.Styles.text
-         ^ ";font-size:15px;font-weight:700;margin-bottom:3px;")
-    in
-    let sub =
-      Styles.s
-        ("color:"
-         ^ theme.Styles.faint
-         ^ ";font-size:12.5px;margin-bottom:14px;")
-    in
-    [ {%html|
-        <div %{Styles.card theme "padding:20px;"}>
-          <div %{heading}>What changed?</div>
-          <div %{sub}>
-            #{sprintf "versus your previous run — %s %s, %s"
-                (History.Run_record.symbols_label previous)
-                (Date.to_string previous.date)
-                (String.uppercase previous.algo_name)}
-          </div>
-          <div %{grid}>
-            %{delta_tile ~theme ~label:"Alpha captured"
-                ~value:(sprintf "%.1f%%" capture_now)
-                ~delta:(sprintf "%+.1f" (capture_now -. capture_before))
-                ~better:(direction ~higher_is_better:true ~now:capture_now
-                           ~before:capture_before)
-                ~unit_:"pts"}
-            %{delta_tile ~theme ~label:"Implementation shortfall"
-                ~value:(sprintf "%.1f bp" current.shortfall_bps)
-                ~delta:(sprintf "%+.1f"
-                          (current.shortfall_bps -. previous.shortfall_bps))
-                ~better:(direction ~higher_is_better:false
-                           ~now:current.shortfall_bps
-                           ~before:previous.shortfall_bps)
-                ~unit_:"bp"}
-            %{delta_tile ~theme ~label:"Completion"
-                ~value:(sprintf "%.0f%%" completion_now)
-                ~delta:(sprintf "%+.0f" (completion_now -. completion_before))
-                ~better:(direction ~higher_is_better:true ~now:completion_now
-                           ~before:completion_before)
-                ~unit_:"pts"}
-            %{delta_tile ~theme ~label:"Execution bonus"
-                ~value:(dollars_signed current.value_add_cents)
-                ~delta:(dollars_signed
-                          (current.value_add_cents - previous.value_add_cents))
-                ~better:(direction ~higher_is_better:true
-                           ~now:(Float.of_int current.value_add_cents)
-                           ~before:(Float.of_int previous.value_add_cents))
-                ~unit_:""}
-          </div>
-        </div>
-      |}
-    ]
-;;
-
 (* ---------- my runs: the execution notebook ---------- *)
 
 let my_runs_view
@@ -3556,65 +3431,162 @@ let others_trading ~symbol ~date =
     && List.mem (Dataset.dates_for other) date ~equal:Date.equal)
 ;;
 
+(* Gross alpha for one leg is exactly
+   [side * quantity * (close - arrival price)], so the sign of a name's move
+   from the order's arrival to the close is what decides whether a sample's
+   prediction was right. Reading it off the real session lets a sample stand
+   in for a model that called that day correctly (or, deliberately, one that
+   did not) — which is the point: the platform grades execution, and a sample
+   whose paper alpha is roughly zero grades it against nothing. *)
+let move_to_close ~symbol ~date ~at =
+  match Dataset.load_cached ~symbol ~date with
+  | Error (_ : Error.t) -> 0.
+  | Ok day ->
+    (match
+       List.find day.Trading_day.bars ~f:(fun bar ->
+         Time_ns.Ofday.( >= ) bar.Market_bar.time at)
+     with
+     | None -> 0.
+     | Some bar ->
+       Price.to_float (List.last_exn day.Trading_day.bars).Market_bar.close
+       -. Price.to_float bar.Market_bar.open_)
+;;
+
+let price_at ~symbol ~date ~at =
+  match Dataset.load_cached ~symbol ~date with
+  | Error (_ : Error.t) -> 0.
+  | Ok day ->
+    (match
+       List.find day.Trading_day.bars ~f:(fun bar ->
+         Time_ns.Ofday.( >= ) bar.Market_bar.time at)
+     with
+     | None -> 0.
+     | Some bar -> Price.to_float bar.Market_bar.open_)
+;;
+
+let ofday = Time_ns.Ofday.of_string
+let buy_if positive = if positive then "BUY" else "SELL"
+
+(* A sample is either a model that read the day right or one that read it
+   backwards. Every leg of a sample takes the same view, so its legs never
+   cancel: gross alpha is the sum of [quantity * |move|] with one sign, which
+   keeps the paper alpha decisively large and the capture ratio meaningful.
+   Mixing the two within a sample is what produces the near-zero denominators
+   that make capture read in the thousands of percent. *)
+type view =
+  | Right
+  | Wrong
+
+let side_for view ~symbol ~date ~at =
+  let move = move_to_close ~symbol ~date ~at in
+  match view with
+  | Right -> buy_if (Float.( >= ) move 0.)
+  | Wrong -> buy_if (Float.( < ) move 0.)
+;;
+
 let sample_alphas ~symbol ~date =
   let s = Symbol.to_string symbol in
-  let csv rows =
+  (* [view] fixes whether this sample's model was right; each leg's side then
+     follows that name's own move to the close. *)
+  let csv view rows =
     String.concat
       ~sep:"\n"
-      (List.map rows ~f:(fun (a, side, q, d) ->
-         sprintf "%s,%s,%s,%d,%s" a s side q d))
+      (List.map rows ~f:(fun (arrival, quantity, deadline) ->
+         sprintf
+           "%s,%s,%s,%d,%s"
+           arrival
+           s
+           (side_for view ~symbol ~date ~at:(ofday arrival))
+           quantity
+           deadline))
     ^ "\n"
   in
+  (* A round trip is the one shape whose second leg must oppose the first —
+     it is closing the position, not taking another view. Its gross alpha is
+     [quantity * (price out - price in)], so the direction that makes the
+     trip profitable is the direction the name actually moved between the two
+     times. *)
+  let round_trip ~quantity ~in_at ~in_by ~out_at ~out_by =
+    let rose =
+      Float.( >= )
+        (price_at ~symbol ~date ~at:(ofday out_at))
+        (price_at ~symbol ~date ~at:(ofday in_at))
+    in
+    let first = buy_if rose in
+    let second = buy_if (not rose) in
+    sprintf
+      "%s,%s,%s,%d,%s\n%s,%s,%s,%d,%s\n"
+      in_at
+      s
+      first
+      quantity
+      in_by
+      out_at
+      s
+      second
+      quantity
+      out_by
+  in
   [ ( "A typical day"
-    , "Buy in the morning, sell around noon, buy again after lunch. Start \
-       here."
+    , "Three orders through the session — one view, read off what the name \
+       actually did. Start here."
     , csv
-        [ "10:00:00", "BUY", 5000, "11:00:00"
-        ; "11:30:00", "SELL", 3000, "13:00:00"
-        ; "14:00:00", "BUY", 2000, "14:30:00"
+        Right
+        [ "10:00:00", 5000, "11:00:00"
+        ; "11:30:00", 3000, "13:00:00"
+        ; "14:00:00", 2000, "14:30:00"
         ] )
-  ; ( "A morning of buying"
-    , "8,000 shares to buy as three overlapping orders, all done by 12:30."
+  ; ( "A working morning"
+    , "8,000 shares as three overlapping orders, all finished by 12:30."
     , csv
-        [ "09:45:00", "BUY", 3000, "11:00:00"
-        ; "10:15:00", "BUY", 3000, "12:00:00"
-        ; "11:00:00", "BUY", 2000, "12:30:00"
+        Right
+        [ "09:45:00", 3000, "11:00:00"
+        ; "10:15:00", 3000, "12:00:00"
+        ; "11:00:00", 2000, "12:30:00"
         ] )
-  ; ( "Buy now, sell later"
-    , "Buy 6,000 shares in the morning, then sell them all back in the \
-       afternoon."
+  ; ( "Round trip"
+    , "In at 10:00, back out at 13:00 — the same 6,000 shares, so the paper \
+       profit is just the move between the two."
+    , round_trip
+        ~quantity:6000
+        ~in_at:"10:00:00"
+        ~in_by:"11:30:00"
+        ~out_at:"13:00:00"
+        ~out_by:"15:30:00" )
+  ; ( "Into the close"
+    , "8,000 shares finishing at 15:55 — and a model that read the day \
+       backwards, so you can see what negative alpha costs."
     , csv
-        [ "10:00:00", "BUY", 6000, "11:30:00"
-        ; "13:00:00", "SELL", 6000, "15:30:00"
-        ] )
-  ; ( "Selling into the close"
-    , "8,000 shares to sell as three orders, the last ending at 15:55."
-    , csv
-        [ "13:00:00", "SELL", 2500, "14:30:00"
-        ; "13:45:00", "SELL", 2500, "15:00:00"
-        ; "14:30:00", "SELL", 3000, "15:55:00"
+        Wrong
+        [ "13:00:00", 2500, "14:30:00"
+        ; "13:45:00", 2500, "15:00:00"
+        ; "14:30:00", 3000, "15:55:00"
         ] )
   ; ( "Busy day, six orders"
-    , "Six orders alternating buy, sell, buy, sell — 09:40 through 15:45."
+    , "Six orders from 09:40 to 15:45 — the crowded end of what one name \
+       can carry."
     , csv
-        [ "09:40:00", "BUY", 1500, "10:30:00"
-        ; "10:20:00", "SELL", 1000, "11:15:00"
-        ; "11:00:00", "BUY", 2000, "12:30:00"
-        ; "12:15:00", "SELL", 1500, "13:45:00"
-        ; "13:30:00", "BUY", 1000, "14:30:00"
-        ; "14:45:00", "SELL", 2000, "15:45:00"
+        Right
+        [ "09:40:00", 1500, "10:30:00"
+        ; "10:20:00", 1000, "11:15:00"
+        ; "11:00:00", 2000, "12:30:00"
+        ; "12:15:00", 1500, "13:45:00"
+        ; "13:30:00", 1000, "14:30:00"
+        ; "14:45:00", 2000, "15:45:00"
         ] )
   ; ( "Three at once"
-    , "Two buys and a sell all live together from 11:15 to 12:00."
+    , "Three orders live together from 11:15 to 12:00 — overlapping windows \
+       in one book."
     , csv
-        [ "10:30:00", "BUY", 3000, "12:30:00"
-        ; "11:00:00", "SELL", 2000, "12:00:00"
-        ; "11:15:00", "BUY", 2500, "13:00:00"
+        Right
+        [ "10:30:00", 3000, "12:30:00"
+        ; "11:00:00", 2000, "12:00:00"
+        ; "11:15:00", 2500, "13:00:00"
         ] )
   ]
   @
   (* Only offered when the day actually has other names to trade: a sample
-     that names a symbol with no session for this date would fail on the
+     that named a symbol with no session for this date would fail on the
      first run, which is a poor introduction. *)
   match others_trading ~symbol ~date with
   | [] -> []
@@ -3622,24 +3594,25 @@ let sample_alphas ~symbol ~date =
     let names = symbol :: List.take others 2 in
     let rows =
       List.mapi names ~f:(fun index name ->
-        let arrival, side, quantity, deadline =
+        let arrival, quantity, deadline =
           match index with
-          | 0 -> "10:00:00", "BUY", 5000, "11:30:00"
-          | 1 -> "10:15:00", "SELL", 4000, "12:00:00"
-          | (_ : int) -> "10:45:00", "BUY", 3000, "12:30:00"
+          | 0 -> "10:00:00", 5000, "11:30:00"
+          | 1 -> "10:15:00", 4000, "12:00:00"
+          | (_ : int) -> "10:45:00", 3000, "12:30:00"
         in
         sprintf
           "%s,%s,%s,%d,%s"
           arrival
           (Symbol.to_string name)
-          side
+          (side_for Right ~symbol:name ~date ~at:(ofday arrival))
           quantity
           deadline)
     in
     [ ( sprintf "%d names at once" (List.length names)
       , sprintf
-          "One basket across %s. Each name gets its own book and its own \
-           benchmarks; the chart has a tab per symbol."
+          "One basket across %s, each name called the way it actually went. \
+           Every name gets its own book and its own benchmarks; the chart \
+           has a tab per symbol."
           (String.concat ~sep:", " (List.map names ~f:Symbol.to_string))
       , String.concat ~sep:"\n" rows ^ "\n" )
     ]
@@ -3900,7 +3873,8 @@ let alpha_view
             <span %{Styles.s (Styles.label theme)}>
               Samples — written for #{Symbol.to_string symbol}
             </span>
-            <span %{samples_note}>a run trades what the file names</span>
+            <span %{samples_note}>sides read off this session — a stand-in
+              for a model that called it</span>
           </div>
           <div %{Styles.s "display:flex;flex-direction:column;gap:6px;"}>
             *{List.map (sample_alphas ~symbol ~date) ~f:sample_row}
@@ -4557,7 +4531,6 @@ let results_view
   ~theme
   ~is_dark
   ~open_help
-  ~previous_run
   ~profile
   ~on_brand
   ~to_sim
@@ -5125,7 +5098,6 @@ let results_view
                      + impact, plus opportunity on unfilled shares"
           ~back:(Some ("← Replay", to_sim)) ()}
       %{summary}
-      *{what_changed ~theme ~current:(run_record replay) ~previous:previous_run}
       <div %{Styles.card theme "padding-bottom:4px;overflow-x:auto;"}>
         <div
           %{Styles.s
@@ -5867,11 +5839,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     Bonsai.state (None : Error.t option) graph
   in
   let runs, set_runs = Bonsai.state (History.load ()) graph in
-  (* The run that was on top of the notebook when this one started — the
-     baseline the results screen diffs against. *)
-  let previous_run, set_previous_run =
-    Bonsai.state (None : History.Run_record.t option) graph
-  in
   let session, set_session =
     Bonsai.state (load_session () : Session.t option) graph
   in
@@ -5954,7 +5921,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     and set_playing
     and set_board
     and session
-    and set_previous_run
     and set_my_runs
     and set_submit_status in
     match selection, Replay.parse_params param_text with
@@ -5980,7 +5946,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
          let%bind.Effect () = set_replay (Some r) in
          let%bind.Effect () = set_minute (fun (_ : int) -> 0) in
          let%bind.Effect () = set_playing true in
-         let%bind.Effect () = set_previous_run (List.hd runs) in
          let%bind.Effect () = set_runs (History.add (run_record r) runs) in
          (* Signed-in users get an execution notebook: every completed run is
             recorded server-side, privately, the moment it finishes. The
@@ -6106,7 +6071,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     and set_confirm_reset
     and set_my_runs
     and set_runs
-    and set_previous_run
     and set_submit_status in
     match session with
     | None -> Effect.Ignore
@@ -6119,7 +6083,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         in
         let%bind.Effect () = set_confirm_reset false in
         let%bind.Effect () = set_my_runs (Some []) in
-        let%bind.Effect () = set_previous_run None in
         let%bind.Effect () = set_submit_status None in
         let%bind.Effect () =
           Effect.of_sync_fun (fun () -> History.save []) ()
@@ -6208,7 +6171,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_param_text
   and run_error
   and runs
-  and previous_run
   and replay
   and minute
   and playing
@@ -6444,7 +6406,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~theme
         ~is_dark
         ~open_help:(set_show_help true)
-        ~previous_run
         ~profile
         ~on_brand
         ~to_sim:(goto Screen.Sim)
