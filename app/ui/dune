@@ -10,6 +10,7 @@
   bonsai.extra
   bonsai_web
   virtual_dom
+  bonsai_web_components.feather_icon
   execlab_types
   execlab_market
   execlab_execution

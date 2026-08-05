@@ -94,6 +94,27 @@ let money_stat ~theme ~label:text value_cents =
   |}
 ;;
 
+(* A small labelled icon button for secondary table actions. *)
+let icon_action ~theme ~glyph ~label ~on_click =
+  let style =
+    Styles.s
+      ("display:inline-flex;align-items:center;gap:6px;background:"
+       ^ theme.Styles.chip_bg
+       ^ ";color:"
+       ^ theme.Styles.secondary
+       ^ ";border:1px solid "
+       ^ theme.Styles.chip_border
+       ^ ";border-radius:7px;padding:6px \
+          11px;cursor:pointer;font-size:12px;font-weight:700;")
+  in
+  {%html|
+    <button class="btn" %{style} on_click=%{on_click}>
+      %{glyph}
+      #{label}
+    </button>
+  |}
+;;
+
 (* The account chip: identity plus a way into your own runs, in the same
    corner on every screen. Guests get a way to sign in instead. *)
 let profile_button ~theme ~session ~on_click =
@@ -160,60 +181,35 @@ let theme_button ~theme ~is_dark ~toggle_theme =
   |}
 ;;
 
+(* Icons come from Bonsai's own component library rather than hand-rolled SVG
+   paths: same glyph set the rest of the Bonsai ecosystem uses, and the
+   stroke follows [currentColor] so a chip's own text color drives it. *)
 module Icon = struct
-  let make ?(size = 15) path_d =
-    let attr = Vdom.Attr.create in
-    Vdom.Node.create_svg
-      "svg"
-      ~attrs:
-        [ attr "width" (Int.to_string size)
-        ; attr "height" (Int.to_string size)
-        ; attr "viewBox" "0 0 24 24"
-        ; attr "fill" "none"
-        ; attr "stroke" "currentColor"
-        ; attr "stroke-width" "2.2"
-        ; attr "stroke-linecap" "round"
-        ; attr "stroke-linejoin" "round"
-        ; Styles.s "flex-shrink:0;vertical-align:-2px;"
-        ]
-      [ Vdom.Node.create_svg "path" ~attrs:[ attr "d" path_d ] [] ]
+  let make ?(size = 15) (icon : Feather_icon.t) =
+    Feather_icon.svg
+      ~size:(`Px size)
+      ~stroke:(`Name "currentColor")
+      ~stroke_width:(`Px_float 2.2)
+      ~extra_attrs:[ Styles.s "flex-shrink:0;vertical-align:-2px;" ]
+      icon
   ;;
 
-  let check = make "M20 6L9 17l-5-5"
-
-  let calendar ?size () =
-    make
-      ?size
-      "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 \
-       0 1-2-2V6a2 2 0 0 1 2-2z"
-  ;;
-
-  let file ?size () =
-    make
-      ?size
-      "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6"
-  ;;
-
-  let sliders ?size () =
-    make ?size "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"
-  ;;
-
-  let play ?size () = make ?size "M6 3l14 9-14 9V3z"
-  let flag ?size () = make ?size "M4 22V4c5-3 9 3 16 0v12c-7 3-11-3-16 0"
-
-  let upload ?size () =
-    make
-      ?size
-      "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"
-  ;;
-
-  let arrow_right ?size () = make ?size "M5 12h14M12 5l7 7-7 7"
-  let arrow_left ?size () = make ?size "M19 12H5M12 19l-7-7 7-7"
-  let pause ?size () = make ?size "M10 4H6v16h4zM18 4h-4v16h4z"
-
-  let search ?size () =
-    make ?size "M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM21 21l-4.35-4.35"
-  ;;
+  let check = make Check
+  let calendar ?size () = make ?size Calendar
+  let file ?size () = make ?size File
+  let sliders ?size () = make ?size Sliders
+  let play ?size () = make ?size Play
+  let pause ?size () = make ?size Pause
+  let flag ?size () = make ?size Flag
+  let upload ?size () = make ?size Upload
+  let arrow_right ?size () = make ?size Arrow_right
+  let arrow_left ?size () = make ?size Arrow_left
+  let search ?size () = make ?size Search
+  let zoom_in ?size () = make ?size Zoom_in
+  let zoom_out ?size () = make ?size Zoom_out
+  let refresh ?size () = make ?size Refresh_cw
+  let log_out ?size () = make ?size Log_out
+  let user ?size () = make ?size User
 end
 
 let wizard_steps =
@@ -450,41 +446,18 @@ let controls
          ^ ";font-size:12px;white-space:nowrap;"
          ^ Styles.mono)
     in
-    let reset =
-      let style =
-        Styles.s
-          ("background:none;border:none;color:"
-           ^ theme.Styles.blue
-           ^ ";font-size:12px;font-weight:700;cursor:pointer;padding:4px \
-              6px;")
-      in
-      match (chart_view : Chart_view.t) with
-      | Follow None -> {%html|<span></span>|}
-      | Follow (Some _) | Manual _ ->
-        {%html|
-          <button
-            class="btn"
-            %{style}
-            on_click=%{fun _ -> set_chart_view (Chart_view.Follow None)}>
-            reset
-          </button>
-        |}
-    in
     {%html|
-      <span %{Styles.s "display:flex;gap:4px;align-items:center;"}>
-        <span %{range_style}>
-          #{sprintf "%s–%s · %d min"
-              (Replay.clock_string replay ~minute:z0)
-              (Replay.clock_string replay ~minute:z1)
-              (z1 - z0)}
-        </span>
-        %{reset}
+      <span %{range_style}>
+        #{sprintf "%s–%s · %d min"
+            (Replay.clock_string replay ~minute:z0)
+            (Replay.clock_string replay ~minute:z1)
+            (z1 - z0)}
       </span>
     |}
   in
   let slider_style =
     Styles.s
-      ("flex:1;accent-color:" ^ theme.Styles.brown ^ ";min-width:160px;")
+      ("flex:3;accent-color:" ^ theme.Styles.brown ^ ";min-width:280px;")
   in
   let clock_style =
     Styles.s
@@ -492,6 +465,77 @@ let controls
        ^ theme.Styles.text
        ^ ";font-size:15px;font-weight:700;"
        ^ Styles.mono)
+  in
+  (* Buttons for people who would rather not discover a scroll gesture: step
+     in and out around the middle of the current window. *)
+  let step_zoom factor =
+    let span = z1 - z0 in
+    let mid = z0 + (span / 2) in
+    let new_span = Float.iround_nearest_exn (Float.of_int span *. factor) in
+    let n = Array.length replay.bars in
+    let z0, z1 = clamp_window ~n ~z0:(mid - (new_span / 2)) ~span:new_span in
+    set_chart_view (Chart_view.Manual { z0; z1 })
+  in
+  let icon_button ~title_ ~glyph ~on_click =
+    let style =
+      Styles.s
+        ("display:inline-flex;align-items:center;justify-content:center;background:"
+         ^ theme.Styles.chip_bg
+         ^ ";color:"
+         ^ theme.Styles.secondary
+         ^ ";border:1px solid "
+         ^ theme.Styles.chip_border
+         ^ ";border-radius:7px;width:32px;height:32px;cursor:pointer;")
+    in
+    {%html|
+      <button class="btn" %{style} title=%{title_} on_click=%{on_click}>
+        %{glyph}
+      </button>
+    |}
+  in
+  (* Everything about looking at the chart in one group: turn zoom on, step
+     in and out, read the window, put it back. *)
+  let zoom_cluster =
+    let is_default = Chart_view.equal chart_view (Chart_view.Follow None) in
+    let reset_button =
+      let style =
+        Styles.s
+          ("background:"
+           ^ theme.Styles.chip_bg
+           ^ ";color:"
+           ^ (if is_default then theme.Styles.faint else theme.Styles.blue)
+           ^ ";border:1px solid "
+           ^ theme.Styles.chip_border
+           ^ ";border-radius:7px;padding:8px \
+              11px;font-size:12px;font-weight:700;cursor:pointer;")
+      in
+      let disabled =
+        if is_default then Vdom.Attr.disabled else Vdom.Attr.empty
+      in
+      {%html|
+        <button
+          class="btn"
+          %{style}
+          %{disabled}
+          title="Show the whole session"
+          on_click=%{fun _ -> set_chart_view (Chart_view.Follow None)}>
+          Reset
+        </button>
+      |}
+    in
+    {%html|
+      <span %{Styles.s "display:flex;gap:6px;align-items:center;"}>
+        %{magnifier}
+        %{icon_button ~title_:"Zoom in"
+            ~glyph:(Icon.zoom_in ~size:15 ())
+            ~on_click:(fun _ -> step_zoom 0.6)}
+        %{icon_button ~title_:"Zoom out"
+            ~glyph:(Icon.zoom_out ~size:15 ())
+            ~on_click:(fun _ -> step_zoom 1.7)}
+        %{reset_button}
+        %{range_readout}
+      </span>
+    |}
   in
   let status_text =
     if complete
@@ -532,8 +576,7 @@ let controls
           %{zoom_pill (Chart_view.Follow (Some 30)) "30m"}
           %{zoom_pill (Chart_view.Follow (Some 15)) "15m"}
         </div>
-        %{magnifier}
-        %{range_readout}
+        %{zoom_cluster}
         <input
           type="range"
           min=%{0.}
@@ -838,40 +881,6 @@ let chart
         [ Vdom.Node.text (sprintf "vwap %.2f" day_vwap) ]
     ]
   in
-  (* Each minute's high-low range, drawn once bars are wide enough to tell
-     apart. A fill is priced off its bar's *open* plus the spread and impact
-     toll, so it legitimately sits away from the close the blue line traces —
-     without the range behind it, a correct fill looks like a misplaced dot.
-     With it, every fill visibly lands inside the minute it belongs to. *)
-  let bar_ranges =
-    let bar_width = plot_w /. Float.of_int (Int.max 1 (z1 - z0)) in
-    if Float.( < ) bar_width 2.4
-    then []
-    else
-      List.filter_map
-        (List.init (shown_end - z0 + 1) ~f:(fun offset -> z0 + offset))
-        ~f:(fun i ->
-          if i < 0 || i >= n
-          then None
-          else (
-            let bar = bars.(i) in
-            let high = Price.to_float bar.Market_bar.high in
-            let low = Price.to_float bar.Market_bar.low in
-            Some
-              (svg
-                 "line"
-                 [ attr "x1" (fs (x i))
-                 ; attr "x2" (fs (x i))
-                 ; attr "y1" (fs (y high))
-                 ; attr "y2" (fs (y low))
-                 ; attr "stroke" theme.Styles.secondary
-                 ; attr "stroke-opacity" "0.28"
-                 ; attr
-                     "stroke-width"
-                     (fs (Float.min 3. (bar_width *. 0.34)))
-                 ]
-                 [])))
-  in
   (* price line up to the playhead (within the window), with an end dot *)
   let price_line =
     if shown_end < z0
@@ -986,17 +995,27 @@ let chart
                 "stroke-width"
                 (if Float.( > ) radius 3. then "1.1" else "0.7")
             ]
-            [ tooltip
-                (sprintf
-                   "%s · order %d · %s %d @ %s (%s)"
-                   (hhmm fill.time)
-                   (index + 1)
-                   (side_str fill.side)
-                   (Size.to_int fill.size)
-                   (Price.to_string_dollar fill.price)
-                   (match fill.liquidity with
-                    | Taker -> "taker"
-                    | Maker -> "maker"))
+            [ (let bar = bars.(m) in
+               let fill_price = Price.to_float fill.price in
+               let bar_open = Price.to_float bar.Market_bar.open_ in
+               let bar_close = Price.to_float bar.Market_bar.close in
+               tooltip
+                 (sprintf
+                    "%s · order %d · %s %d @ $%.4f\n\
+                     bar open $%.2f (%+.4f) · close $%.2f (%+.4f)\n\
+                     %s fill"
+                    (hhmm fill.time)
+                    (index + 1)
+                    (side_str fill.side)
+                    (Size.to_int fill.size)
+                    fill_price
+                    bar_open
+                    (fill_price -. bar_open)
+                    bar_close
+                    (fill_price -. bar_close)
+                    (match fill.liquidity with
+                     | Taker -> "taker"
+                     | Maker -> "maker")))
             ])))
   in
   (* The Google-Finance-style crosshair: a dashed vertical at the hovered
@@ -1197,7 +1216,6 @@ let chart
      @ arrival_lines
      @ vwap_line
      @ time_axis
-     @ bar_ranges
      @ price_line
      @ fill_dots
      @ crosshair)
@@ -1940,12 +1958,7 @@ let two_col =
 
 (* ---------- landing page ---------- *)
 
-let landing_stats =
-  [ "66", "real trading sessions"
-  ; "25,740", "minutes of price and volume"
-  ; "5", "execution algorithms"
-  ]
-;;
+let landing_stats = [ "5", "execution algorithms to compare" ]
 
 let landing_sections =
   [ ( "How a run works"
@@ -2254,14 +2267,6 @@ let landing_view
       </div>
     |}
   in
-  let closing =
-    Styles.s
-      ("color:"
-       ^ theme.Styles.secondary
-       ^ ";font-size:15px;line-height:1.6;border-top:1px solid "
-       ^ theme.Styles.hairline
-       ^ ";padding-top:22px;")
-  in
   (* Signed in, the hero is a way back into the lab; signed out, it is the
      account choice. Either way the page below it is identical. *)
   let identity =
@@ -2338,11 +2343,6 @@ let landing_view
       </div>
       <div %{stat_grid}>*{List.map landing_stats ~f:stat}</div>
       *{List.map landing_sections ~f:section}
-      <div %{closing}>
-        The market data is real. The spread, the queue and the other traders
-        are modeled — so treat the comparison between runs as the answer,
-        not the absolute dollar cost.
-      </div>
     </div>
   |}
 ;;
@@ -2715,9 +2715,24 @@ let my_runs_view
       %{wizard_header ?profile ~theme ~is_dark ~toggle_theme ~title:"My runs"
           ~subtitle:("your execution notebook — " ^ who)
           ~back:(Some ("← Dashboard", back)) ()}
-      <div %{Styles.card theme "padding-bottom:4px;"}>*{body}</div>
+      <div %{Styles.card theme "padding-bottom:4px;"}>
+        <div
+          %{Styles.s
+              "display:flex;justify-content:space-between;align-items:center;padding:14px 16px 4px 16px;"}>
+          <span
+            %{Styles.s
+                ("color:"
+                 ^ theme.Styles.text
+                 ^ ";font-size:14px;font-weight:700;")}>
+            Saved runs
+          </span>
+          %{icon_action ~theme ~glyph:(Icon.refresh ~size:14 ())
+              ~label:"Refresh" ~on_click:(fun _ -> refresh)}
+        </div>
+        *{body}
+      </div>
       %{nav_footer ~theme
-          ~back:("Refresh", refresh)
+          ~back:("Dashboard", back)
           ~next:("New simulation", new_sim, true) ()}
     </div>
   |}
@@ -2899,6 +2914,9 @@ let dashboard_view
   ~is_dark
   ~runs
   ~new_sim
+  ~session
+  ~sign_out
+  ~to_sign_in
   ~to_my_runs
   ~quick_start_with
   ~profile
@@ -2972,6 +2990,25 @@ let dashboard_view
               (Comparable.reverse Int.compare)
               ~f:(fun (run : History.Run_record.t) -> run.value_add_cents))
     |> fun sorted -> List.take sorted 5
+  in
+  (* Signing out belongs where the account lives, not buried on the front
+     page; guests get the way in instead. *)
+  let session_action =
+    match (session : Session.t option) with
+    | Some (_ : Session.t) ->
+      [ secondary_button
+          ~icon:(Icon.log_out ~size:14 ())
+          ~theme
+          ~on_click:(fun _ -> sign_out)
+          "Sign out"
+      ]
+    | None ->
+      [ secondary_button
+          ~icon:(Icon.user ~size:14 ())
+          ~theme
+          ~on_click:(fun _ -> to_sign_in)
+          "Sign in"
+      ]
   in
   (* A dashboard should answer "how am I doing" before it offers a button.
      These four come straight from the local run history. *)
@@ -3085,11 +3122,12 @@ let dashboard_view
           ~subtitle:"pick a day, bring an alpha, and see what execution \
                      costs you" ~back:None ()}
       %{stat_tiles}
-      <div %{Styles.s "display:flex;gap:12px;flex-wrap:wrap;"}>
+      <div %{Styles.s "display:flex;gap:12px;flex-wrap:wrap;align-items:center;"}>
         %{primary_button ~icon:(Icon.arrow_right ~size:15 ()) ~theme
             ~on_click:(fun _ -> new_sim) "New simulation"}
         %{secondary_button ~theme ~on_click:(fun _ -> to_my_runs)
             "My runs"}
+        *{session_action}
       </div>
       %{quick_start}
       <div %{Styles.s two_col}>
@@ -4004,6 +4042,13 @@ let setup_view
     |}
   in
   let params_card =
+    let knob_note =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.faint
+         ^ ";font-size:11.5px;line-height:1.6;margin-bottom:10px;max-width:78ch;"
+        )
+    in
     let update f value = set_param_text (f param_text value) in
     let fill_fields =
       [ param_field
@@ -4071,15 +4116,33 @@ let setup_view
     {%html|
       <div %{Styles.card theme "padding:20px;"}>
         %{preset_row ~theme ~param_text ~set_param_text}
-        <div %{Styles.s (Styles.label theme ^ "margin:18px 0 8px 0;")}>
+        <div %{Styles.s (Styles.label theme ^ "margin:18px 0 4px 0;")}>
           Market friction
+        </div>
+        <div %{knob_note}>
+          These describe the market you are trading against, not your
+          strategy. <b>Half spread</b> is the toll for demanding an
+          immediate fill. <b>Participation cap</b> is the most of one
+          minute's volume any single order may take. <b>Impact coeff</b>
+          scales how far your own buying pushes the price when you take a
+          large share of that minute.
         </div>
         <div %{Styles.s "display:flex;gap:14px;flex-wrap:wrap;"}>
           *{fill_fields}
           *{algo_fields}
         </div>
-        <div %{Styles.s (Styles.label theme ^ "margin:14px 0 8px 0;")}>
+        <div %{Styles.s (Styles.label theme ^ "margin:14px 0 4px 0;")}>
           Fill engine
+        </div>
+        <div %{knob_note}>
+          <b>Bar model</b> prices each fill by formula: the minute's opening
+          price, plus the half spread, plus an impact penalty that grows
+          with your share of that minute's volume. <b>Synthetic exchange</b>
+          runs a real limit order book instead — background traders post
+          bids and offers around the historical price, and your orders match
+          against them by price-time priority, so impact and queueing
+          emerge from the matching rather than from a formula. It is
+          slower, seeded, and reproducible.
         </div>
         <div %{Styles.s "display:flex;gap:14px;flex-wrap:wrap;"}>
           *{engine_pills}
@@ -4202,20 +4265,39 @@ let results_view
      the technical term demoted to a footnote. *)
   let summary =
     let value_add = replay.results.total_value_add_cents in
+    let shortfall_bps =
+      (run_record replay).History.Run_record.shortfall_bps
+    in
+    (* The headline is execution quality, not profit: P&L mostly measures
+       whether the alpha was right, while slippage against the decision price
+       — and against the same orders traded instantly — measures the only
+       thing the algorithm controlled. *)
     let verdict =
-      if value_add > 0
-      then
-        sprintf
-          "Patient execution kept %s more of your alpha than dumping every \
-           order instantly."
-          (dollars_signed value_add)
-      else if value_add < 0
-      then
-        sprintf
-          "On this day, instant execution would have done better — patience \
-           cost %s."
-          (dollars_signed (-value_add))
-      else "Execution matched the instant-trading baseline exactly."
+      let against_benchmark =
+        if Float.( < ) shortfall_bps 0.
+        then
+          sprintf
+            "You beat your decision price by %.1f bps"
+            (Float.abs shortfall_bps)
+        else
+          sprintf
+            "Execution cost you %.1f bps against your decision price"
+            shortfall_bps
+      in
+      let against_control =
+        if value_add > 0
+        then
+          sprintf
+            ", and %s better than trading it all instantly."
+            (dollars_signed value_add)
+        else if value_add < 0
+        then
+          sprintf
+            ", but %s worse than trading it all instantly."
+            (dollars_signed (-value_add))
+        else ", matching instant execution exactly."
+      in
+      against_benchmark ^ against_control
     in
     let money_color cents =
       if cents > 0
@@ -4292,14 +4374,16 @@ let results_view
           %{help_button}
         </div>
         <div %{tiles}>
-          %{tile ~label:"Your alpha predicted"
-              ~sub:"profit if every order filled instantly and free"
-              ~color:(money_color total_gross)
-              (dollars_signed total_gross)}
-          %{tile ~label:"You actually kept"
-              ~sub:"net P&L after realistic trading costs"
-              ~color:(money_color total_net)
-              (dollars_signed total_net)}
+          %{tile ~label:"Slippage vs decision price"
+              ~sub:"how far your average fill drifted from the price when \
+                    you decided — the algorithm's own score"
+              ~color:(if Float.( <= ) shortfall_bps 0.
+                      then theme.Styles.green else theme.Styles.red)
+              (sprintf "%+.1f bps" shortfall_bps)}
+          %{tile ~label:"Execution bonus"
+              ~sub:"vs the same orders traded the moment they arrived"
+              ~color:(money_color value_add)
+              (dollars_signed value_add)}
           %{tile ~label:"Alpha captured"
               ~sub:(if Float.( > ) capture_ratio 1.
                     then "over 100%: you traded better than the decision price"
@@ -4307,10 +4391,11 @@ let results_view
               ~color:(if Float.( > ) capture_ratio 1.
                       then theme.Styles.green else theme.Styles.text)
               capture}
-          %{tile ~label:"Execution bonus"
-              ~sub:"vs selling/buying everything the moment it arrived"
-              ~color:(money_color value_add)
-              (dollars_signed value_add)}
+          %{tile ~label:"You actually kept"
+              ~sub:"net P&L — mostly a verdict on the alpha, not the \
+                    execution"
+              ~color:(money_color total_net)
+              (dollars_signed total_net)}
         </div>
       </div>
     |}
@@ -5139,7 +5224,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
          ~session
          ~on_click:
            (match session with
-            | Some (_ : Session.t) -> goto Screen.My_runs
+            | Some (_ : Session.t) -> goto Screen.Dashboard
             | None -> goto Screen.Landing))
   in
   let dashboard () =
@@ -5148,6 +5233,9 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
       ~is_dark
       ~runs
       ~new_sim:(goto Screen.Choose_day)
+      ~session
+      ~sign_out
+      ~to_sign_in:(goto Screen.Landing)
       ~to_my_runs:(goto Screen.My_runs)
       ~quick_start_with:(fun symbol ->
         let%bind.Effect () = set_cal_symbol (Some symbol) in
