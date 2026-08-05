@@ -131,11 +131,21 @@ let username_of_token ~runs_dir ~token =
     ~token
 ;;
 
-(* [config.player] is advisory on the wire and overwritten here: whoever
-   holds the token owns the run, whatever name the client typed into the
-   config. *)
+(* Both fields a client could use to file a run under someone else's name are
+   overwritten here from what the server can verify for itself: the token
+   decides who owns the run, and the alpha decides which symbols it trades.
+   Without the second, a submission could claim any [symbols] it liked and
+   land on a board of its own — the score would still be honest (the server
+   regrades), but the contest would quietly fragment, and an unopposed board
+   is not a leaderboard. An unparseable alpha is left alone; grading rejects
+   it a moment later with a better message. *)
 let owned_config ~username (config : Run_config.t) =
-  { config with player = username }
+  let symbols =
+    match Execlab_alpha.Parser.parse config.alpha_text with
+    | Error (_ : Error.t) -> config.symbols
+    | Ok parsed -> Catalog.symbols_of_instructions parsed.instructions
+  in
+  { config with player = username; symbols }
 ;;
 
 let create_account ~runs_dir (request : Create_account.Request.t) =

@@ -137,6 +137,53 @@ let check ~where ~name condition ~detail =
 
 (* Everything that must hold of a single graded instruction, whichever
    algorithm and engine produced it. *)
+(* Every benchmark a grade is measured against must come from the order's own
+   session. Checking the graded symbol is not enough: a run that graded every
+   order against the first session would still report the right symbol while
+   comparing TSLA's fills to AAPL's VWAP — which is precisely the way a
+   multi-symbol run fails silently. *)
+let check_benchmarks
+  ~where
+  ~universe
+  ~(instruction : Alpha_instruction.t)
+  ~graded
+  =
+  let grading = graded.Graded.grading in
+  let day = Universe.day_exn universe instruction.symbol in
+  check
+    ~where
+    ~name:"graded against its own symbol"
+    (Symbol.equal grading.symbol instruction.symbol)
+    ~detail:
+      (lazy
+        (sprintf
+           !"graded %{Symbol}, instruction says %{Symbol}"
+           grading.symbol
+           instruction.symbol));
+  check
+    ~where
+    ~name:"day vwap is this symbol's own"
+    (Float.equal grading.day_vwap (Day_stats.vwap day))
+    ~detail:
+      (lazy
+        (sprintf
+           !"graded against %.4f; %{Symbol} traded at %.4f"
+           grading.day_vwap
+           instruction.symbol
+           (Day_stats.vwap day)));
+  check
+    ~where
+    ~name:"terminal price is this symbol's own close"
+    (Price.equal grading.terminal_price (Benchmarks.terminal_price day))
+    ~detail:
+      (lazy
+        (sprintf
+           !"graded against %{Price}; %{Symbol} closed at %{Price}"
+           grading.terminal_price
+           instruction.symbol
+           (Benchmarks.terminal_price day)))
+;;
+
 let check_grading ~where ~(instruction : Alpha_instruction.t) ~fills ~graded =
   let grading = graded.Graded.grading in
   let filled = Size.to_int grading.filled in
@@ -339,6 +386,11 @@ let check_cell
     List.iter2_exn parents outcome.graded ~f:(fun parent graded ->
       let fills = fills_of ~result:outcome.algo_result ~parent in
       check_grading ~where ~instruction:parent.instruction ~fills ~graded;
+      check_benchmarks
+        ~where
+        ~universe
+        ~instruction:parent.instruction
+        ~graded;
       if String.equal algo_name "immediate"
       then check_immediate ~where ~graded);
     (match engine with

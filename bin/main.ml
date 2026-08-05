@@ -101,11 +101,15 @@ let run_report ~alpha_file ?only_symbol ~date ~algo_name ~engine () =
      with
      | None -> run_report ~alpha_file ~date ~algo_name ~engine
      | Some instruction ->
-       raise_s
+       (* A mismatch here is a typo in an argument, not a bug: report it the
+          way a rejected alpha file is reported. *)
+       print_s
          [%message
            "alpha names a symbol other than the one asked for"
              ~asked_for:(only : Symbol.t)
-             (instruction : Alpha_instruction.t)])
+             (instruction : Alpha_instruction.t)
+             ~hint:"drop the symbol argument to run every name it trades"];
+       exit 1)
 ;;
 
 let is_date text =

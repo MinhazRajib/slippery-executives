@@ -21,9 +21,9 @@ module Screen = struct
   [@@deriving sexp, equal]
 end
 
-(* Which form the landing page is showing. [None] means the three-way choice;
-   signing in and creating an account share one form and differ only in which
-   endpoint they call. *)
+(* The landing card is one form with two exits: signing in and creating an
+   account share the handle/passcode fields and differ only in which endpoint
+   the clicked button calls. *)
 module Auth_mode = struct
   type t =
     | Sign_in
@@ -118,35 +118,24 @@ let icon_action ~theme ~glyph ~label ~on_click =
 (* The account chip: identity plus a way into your own runs, in the same
    corner on every screen. Guests get a way to sign in instead. *)
 let profile_button ~theme ~session ~on_click =
-  let label, bg, fg =
+  (* The mockup's header identity: "signed in as qomer", a quiet mono line
+     that is also the way into your own runs. Guests get "guest". *)
+  let prefix, name =
     match (session : Session.t option) with
     | Some { Session.username; token = (_ : string) } ->
-      username, theme.Styles.blue_soft, theme.Styles.blue
-    | None -> "Guest", theme.Styles.chip_bg, theme.Styles.secondary
+      "signed in as ", username
+    | None -> "", "guest"
   in
   let style =
     Styles.s
-      ("display:inline-flex;align-items:center;gap:7px;background:"
-       ^ bg
-       ^ ";color:"
-       ^ fg
-       ^ ";border:1px solid "
-       ^ theme.Styles.chip_border
-       ^ ";border-radius:999px;padding:5px 12px 5px \
-          6px;cursor:pointer;font-size:12.5px;font-weight:700;white-space:nowrap;"
-      )
+      ("display:inline-flex;align-items:baseline;gap:5px;background:transparent;color:"
+       ^ theme.Styles.faint
+       ^ ";border:none;padding:4px \
+          2px;cursor:pointer;font-size:11.5px;white-space:nowrap;"
+       ^ Styles.mono)
   in
-  let avatar =
-    let initial = String.prefix (String.uppercase label) 1 in
-    let dot =
-      Styles.s
-        ("display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:999px;background:"
-         ^ fg
-         ^ ";color:"
-         ^ theme.Styles.page_bg
-         ^ ";font-size:11px;font-weight:800;")
-    in
-    {%html|<span %{dot}>#{initial}</span>|}
+  let name_style =
+    Styles.s ("color:" ^ theme.Styles.text ^ ";font-weight:700;")
   in
   {%html|
     <button
@@ -154,8 +143,8 @@ let profile_button ~theme ~session ~on_click =
       %{style}
       title="Your runs"
       on_click=%{fun _ -> on_click}>
-      %{avatar}
-      #{label}
+      #{prefix}
+      <span %{name_style}>#{name}</span>
     </button>
   |}
 ;;
@@ -164,20 +153,42 @@ let profile_button ~theme ~session ~on_click =
 let theme_button ~theme ~is_dark ~toggle_theme =
   let style =
     Styles.s
-      ("background:"
-       ^ theme.Styles.chip_bg
-       ^ ";color:"
+      ("background:transparent;color:"
        ^ theme.Styles.secondary
        ^ ";border:1px solid "
        ^ theme.Styles.chip_border
-       ^ ";border-radius:4px;padding:4px \
-          10px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;"
-      )
+       ^ ";border-radius:3px;padding:4px \
+          10px;cursor:pointer;font-size:11.5px;font-weight:600;white-space:nowrap;"
+       ^ Styles.mono)
   in
   {%html|
     <button %{style} on_click=%{fun _ -> toggle_theme}>
-      #{if is_dark then "☀ light" else "☾ dark"}
+      #{if is_dark then "◑ light" else "◐ dark"}
     </button>
+  |}
+;;
+
+(* The brand lockup from the mockup: a bold wordmark with a small-caps mono
+   suffix, the same on every screen. *)
+let wordmark ~theme =
+  let name =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.text
+       ^ ";font-size:15.5px;font-weight:800;letter-spacing:-0.01em;")
+  in
+  let suffix =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.faint
+       ^ ";font-size:9.5px;font-weight:600;letter-spacing:0.18em;text-transform:uppercase;"
+       ^ Styles.mono)
+  in
+  {%html|
+    <span %{Styles.s "display:inline-flex;align-items:baseline;gap:9px;white-space:nowrap;"}>
+      <span %{name}>ExecLab</span>
+      <span %{suffix}>execution research</span>
+    </span>
   |}
 ;;
 
@@ -194,13 +205,9 @@ module Icon = struct
       icon
   ;;
 
-  let check = make Check
   let calendar ?size () = make ?size Calendar
-  let file ?size () = make ?size File
-  let sliders ?size () = make ?size Sliders
   let play ?size () = make ?size Play
   let pause ?size () = make ?size Pause
-  let flag ?size () = make ?size Flag
   let upload ?size () = make ?size Upload
   let arrow_right ?size () = make ?size Arrow_right
   let arrow_left ?size () = make ?size Arrow_left
@@ -212,17 +219,13 @@ module Icon = struct
   let user ?size () = make ?size User
 end
 
-let wizard_steps =
-  [ "Day", Icon.calendar ~size:13 ()
-  ; "Alpha", Icon.file ~size:13 ()
-  ; "Setup", Icon.sliders ~size:13 ()
-  ; "Simulate", Icon.play ~size:13 ()
-  ; "Results", Icon.flag ~size:13 ()
-  ]
-;;
+let wizard_steps = [ "Day"; "Alpha"; "Setup"; "Replay"; "Results" ]
 
+(* The mockup's numbered progress rail: "✓ 01 Day ─── 02 Alpha ───", hairline
+   connectors stretching between stations, the active station in blue with an
+   underline, completed stations checked off. *)
 let step_progress ~theme ~current =
-  let station index (name, icon) =
+  let station index name =
     let state =
       if index < current
       then `Done
@@ -230,42 +233,56 @@ let step_progress ~theme ~current =
       then `Active
       else `Upcoming
     in
-    let bg, color, weight =
+    let color =
       match state with
-      | `Done -> theme.Styles.blue_soft, theme.Styles.blue, "600"
-      | `Active -> theme.Styles.blue, theme.Styles.page_bg, "700"
-      | `Upcoming -> "transparent", theme.Styles.faint, "600"
+      | `Done -> theme.Styles.secondary
+      | `Active -> theme.Styles.blue
+      | `Upcoming -> theme.Styles.faint
+    in
+    let underline =
+      match state with
+      | `Active -> "border-bottom:2px solid " ^ theme.Styles.blue ^ ";"
+      | `Done | `Upcoming -> "border-bottom:2px solid transparent;"
     in
     let chip =
       Styles.s
-        ("display:inline-flex;align-items:center;gap:6px;background:"
-         ^ bg
-         ^ ";color:"
+        ("display:inline-flex;align-items:center;gap:6px;color:"
          ^ color
-         ^ ";border-radius:999px;padding:5px \
-            12px;font-size:12px;font-weight:"
-         ^ weight
-         ^ ";white-space:nowrap;")
+         ^ ";padding:2px 1px \
+            4px;font-size:11px;font-weight:600;letter-spacing:0.08em;white-space:nowrap;"
+         ^ underline
+         ^ Styles.mono)
     in
-    let glyph =
-      match state with `Done -> Icon.check | `Active | `Upcoming -> icon
+    let check =
+      match state with
+      | `Done -> [ {%html|<span>✓</span>|} ]
+      | `Active | `Upcoming -> []
     in
-    {%html|<span %{chip}>%{glyph} #{name}</span>|}
+    {%html|
+      <span %{chip}>
+        *{check}
+        <span>#{sprintf "%02d" (index + 1)}</span>
+        <span>#{name}</span>
+      </span>
+    |}
   in
-  let sep =
-    Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:11px;margin:0 2px;")
+  let connector =
+    Styles.s
+      ("flex:1;height:1px;background:"
+       ^ theme.Styles.hairline
+       ^ ";min-width:16px;")
   in
   let stations =
     List.concat_mapi wizard_steps ~f:(fun index step ->
       let chip = station index step in
       if index = 0
       then [ chip ]
-      else [ {%html|<span %{sep}>—</span>|}; chip ])
+      else [ {%html|<span %{connector}></span>|}; chip ])
   in
   {%html|
     <div
       %{Styles.s
-          "display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-top:10px;"}>
+          "display:flex;align-items:center;gap:12px;margin-top:14px;width:100%;"}>
       *{stations}
     </div>
   |}
@@ -274,18 +291,17 @@ let step_progress ~theme ~current =
 (* ---------- controls ---------- *)
 
 let pill ~theme ~active ~on_click label =
-  let bg = if active then theme.Styles.text else "transparent" in
-  let color =
-    if active then theme.Styles.page_bg else theme.Styles.secondary
-  in
+  let bg = if active then theme.Styles.blue else "transparent" in
+  let color = if active then "#ffffff" else theme.Styles.secondary in
   let style =
     Styles.s
       ("background:"
        ^ bg
        ^ ";color:"
        ^ color
-       ^ ";border:none;border-radius:4px;padding:5px \
-          12px;cursor:pointer;font-size:13px;font-weight:600;")
+       ^ ";border:none;border-radius:3px;padding:5px \
+          11px;cursor:pointer;font-size:12px;font-weight:600;"
+       ^ Styles.mono)
   in
   {%html|<button %{style} on_click=%{on_click}>#{label}</button>|}
 ;;
@@ -371,7 +387,7 @@ let controls
     Styles.s
       ("background:"
        ^ theme.Styles.brown
-       ^ ";color:#ffffff;border:none;border-radius:5px;padding:8px \
+       ^ ";color:#ffffff;border:none;border-radius:3px;padding:8px \
           16px;cursor:pointer;font-size:13px;font-weight:700;white-space:nowrap;"
       )
   in
@@ -564,9 +580,18 @@ let controls
     then "replaying"
     else "paused"
   in
+  (* The mockup's "14:22 REPLAYING" readout: small caps, amber while the tape
+     runs, green once the session completes. *)
   let status_style =
     Styles.s
-      ("color:" ^ theme.Styles.faint ^ ";font-size:13px;white-space:nowrap;")
+      ("color:"
+       ^ (if complete
+          then theme.Styles.green
+          else if playing
+          then theme.Styles.brown
+          else theme.Styles.faint)
+       ^ ";font-size:10.5px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;white-space:nowrap;"
+       ^ Styles.mono)
   in
   let row =
     Styles.s "display:flex;align-items:center;gap:14px;padding:12px 16px;"
@@ -579,7 +604,7 @@ let controls
   {%html|
     <div %{Styles.card theme ""}>
       <div %{row}>
-        <button %{primary} on_click=%{fun _ -> restart}>Replay day</button>
+        <button %{primary} on_click=%{fun _ -> restart}>↻ Replay day</button>
         <div %{group}>
           %{play_button}
           %{pill ~theme ~active:(speed = 1)
@@ -1358,7 +1383,7 @@ let legend
       Styles.s "margin-left:auto;display:flex;gap:16px;align-items:center;"
     in
     (* The benefit vs immediate is a whole-day number; revealing it
-       mid-replay would spoil the ending. *)
+       mid-replay would spoil the ending — the mockup says so out loud. *)
     let benefit =
       if minute >= Replay.last_minute replay
       then
@@ -1367,7 +1392,13 @@ let legend
             ~label:"Execution benefit"
             replay.results.total_value_add_cents
         ]
-      else []
+      else (
+        let style =
+          Styles.s
+            ("color:" ^ theme.Styles.faint ^ ";font-size:11px;" ^ Styles.mono)
+        in
+        [ {%html|<span %{style}>execution benefit — withheld until close</span>|}
+        ])
     in
     {%html|
       <span %{stats_style}>
@@ -1733,7 +1764,7 @@ let event_log (replay : Replay.t) ~theme ~fills ~minute =
   in
   let scroll =
     Styles.s
-      "max-height:280px;overflow-y:auto;scrollbar-width:thin;display:flex;flex-direction:column-reverse;padding:8px \
+      "max-height:430px;overflow-y:auto;scrollbar-width:thin;display:flex;flex-direction:column-reverse;padding:8px \
        0;"
   in
   let header =
@@ -1742,7 +1773,7 @@ let event_log (replay : Replay.t) ~theme ~fills ~minute =
        ^ theme.Styles.hairline
        ^ ";")
   in
-  let count = sprintf " · %d events" (List.length events) in
+  let count = sprintf " · %d events · newest first" (List.length events) in
   {%html|
     <div %{Styles.card theme ""}>
       <div %{header}>
@@ -1756,18 +1787,18 @@ let event_log (replay : Replay.t) ~theme ~fills ~minute =
 
 (* ---------- screens ---------- *)
 
+(* Buttons follow the mockup: compact rectangles with a 3px radius. Primary
+   is the royal blue; secondary is a bordered paper button. *)
 let primary_button ?(enabled = true) ?icon ~theme ~on_click label =
   let style =
     Styles.s
       ("display:inline-flex;align-items:center;gap:8px;background:"
        ^ theme.Styles.blue
-       ^ ";color:"
-       ^ theme.Styles.page_bg
-       ^ ";border:none;border-radius:10px;padding:15px \
-          30px;cursor:pointer;font-size:16px;font-weight:700;align-self:flex-start;box-shadow:0 \
-          2px 10px "
+       ^ ";color:#ffffff;border:1px solid "
        ^ theme.Styles.blue
-       ^ "44;")
+       ^ ";border-radius:3px;padding:9px \
+          18px;cursor:pointer;font-size:13.5px;font-weight:700;align-self:flex-start;white-space:nowrap;"
+      )
   in
   let disabled = if enabled then Vdom.Attr.empty else Vdom.Attr.disabled in
   let glyph = match icon with None -> [] | Some icon -> [ icon ] in
@@ -1783,13 +1814,14 @@ let secondary_button ?icon ~theme ~on_click label =
   let style =
     Styles.s
       ("display:inline-flex;align-items:center;gap:8px;background:"
-       ^ theme.Styles.chip_bg
+       ^ theme.Styles.card_bg
        ^ ";color:"
        ^ theme.Styles.text
        ^ ";border:1px solid "
        ^ theme.Styles.chip_border
-       ^ ";border-radius:10px;padding:14px \
-          24px;cursor:pointer;font-size:15px;font-weight:600;")
+       ^ ";border-radius:3px;padding:8px \
+          16px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;"
+      )
   in
   let glyph = match icon with None -> [] | Some icon -> [ icon ] in
   {%html|
@@ -1803,14 +1835,14 @@ let secondary_button ?icon ~theme ~on_click label =
 (* The wizard's fixed navigation bar: Back bottom-left, Continue
    bottom-right, in the same place on every step. Sticky so the actions stay
    reachable on long screens. *)
-let nav_footer ?back ?next ~theme () =
+let nav_footer ?back ?next ?status ~theme () =
   let bar =
     Styles.s
       ("position:sticky;bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;background:"
        ^ theme.Styles.card_bg
        ^ ";border:"
        ^ theme.Styles.border
-       ^ ";border-radius:10px;padding:12px 16px;"
+       ^ ";border-radius:4px;padding:10px 14px;"
        ^ theme.Styles.shadow)
   in
   let back_node =
@@ -1822,6 +1854,17 @@ let nav_footer ?back ?next ~theme () =
         ~on_click:(fun _ -> effect)
         label
     | None -> {%html|<span></span>|}
+  in
+  (* The mockup's quiet center readout: "AAPL · 2026-07-09 selected". *)
+  let status_node =
+    match status with
+    | None -> {%html|<span></span>|}
+    | Some text ->
+      let style =
+        Styles.s
+          ("color:" ^ theme.Styles.faint ^ ";font-size:12px;" ^ Styles.mono)
+      in
+      {%html|<span %{style}>#{text}</span>|}
   in
   let next_node =
     match next with
@@ -1837,6 +1880,7 @@ let nav_footer ?back ?next ~theme () =
   {%html|
     <div %{bar}>
       %{back_node}
+      %{status_node}
       %{next_node}
     </div>
   |}
@@ -1893,7 +1937,8 @@ let sim_view
     Styles.s
       ("color:"
        ^ theme.Styles.text
-       ^ ";font-size:20px;font-weight:700;margin:4px 0;")
+       ^ ";font-size:21px;font-weight:700;margin:12px 0 4px;"
+       ^ Styles.serif)
   in
   let sub_style =
     Styles.s
@@ -1901,7 +1946,10 @@ let sim_view
   in
   let head_row =
     Styles.s
-      "display:flex;align-items:baseline;justify-content:space-between;"
+      ("display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-bottom:12px;border-bottom:2px \
+        solid "
+       ^ theme.Styles.text
+       ^ ";")
   in
   let title =
     sprintf
@@ -1922,17 +1970,17 @@ let sim_view
     <div class="page fade" %{page}>
       <div>
         <div %{head_row}>
-          <span %{Styles.brand theme}>execlab</span>
-          <span %{Styles.s "display:flex;gap:10px;align-items:center;"}>
-            %{theme_button ~theme ~is_dark ~toggle_theme}
+          %{wordmark ~theme}
+          <span %{Styles.s "display:flex;gap:12px;align-items:center;"}>
             ?{profile}
+            %{theme_button ~theme ~is_dark ~toggle_theme}
           </span>
         </div>
+        %{step_progress ~theme ~current:3}
         <div %{title_style}>#{title}</div>
         <div %{sub_style}>
           source: <span %{Styles.code_chip theme}>#{command}</span>
         </div>
-        %{step_progress ~theme ~current:3}
       </div>
       %{controls replay ~theme ~minute ~playing ~speed ~chart_view
           ~set_chart_view ~zoom_mode ~set_zoom_mode ~zoom_tool
@@ -1947,8 +1995,14 @@ let sim_view
             ~set_view:(fun (z0, z1) ->
               set_chart_view (Chart_view.Manual { z0; z1 }))}
       </div>
-      %{orders_table replay ~theme ~fills ~minute}
-      %{event_log replay ~theme ~fills ~minute}
+      <div
+        %{Styles.s
+            "display:grid;grid-template-columns:minmax(0,2.2fr) minmax(300px,1fr);gap:16px;align-items:start;"}>
+        <div %{Styles.s "overflow-x:auto;min-width:0;"}>
+          %{orders_table replay ~theme ~fills ~minute}
+        </div>
+        %{event_log replay ~theme ~fills ~minute}
+      </div>
       %{nav_footer ~theme
           ~back:("New simulation", back)
           ~next:("Results", to_results, true) ()}
@@ -1956,55 +2010,48 @@ let sim_view
   |}
 ;;
 
-(* Small inline SVG glyphs (Lucide outlines), stroke = currentColor so they
-   inherit the surrounding text color in either theme. *)
-let algo_pill ~theme ~selected ~on_click label =
-  let bg = if selected then theme.Styles.blue else theme.Styles.chip_bg in
-  let color =
-    if selected then theme.Styles.page_bg else theme.Styles.secondary
-  in
-  let ring =
-    if selected
-    then "box-shadow:0 2px 8px " ^ theme.Styles.blue ^ "55;"
-    else ""
-  in
-  let style =
-    Styles.s
-      ("display:inline-flex;align-items:center;gap:7px;background:"
-       ^ bg
-       ^ ";color:"
-       ^ color
-       ^ ";border:none;border-radius:10px;padding:12px \
-          24px;cursor:pointer;font-size:15px;font-weight:700;"
-       ^ ring)
-  in
-  let mark = if selected then [ Icon.check ] else [] in
+(* The parsed-alpha table shared by the alpha and setup screens: mono rows
+   under small-caps column heads, sides colored the mockup's way — buys blue,
+   sells red. *)
+let instructions_columns = "52px 76px 64px 1fr"
+
+let instructions_header ~theme =
   {%html|
-    <button class="btn" %{style} on_click=%{on_click}>
-      *{mark}
-      #{label}
-    </button>
+    <div
+      %{Styles.s
+          ("display:grid;grid-template-columns:"
+           ^ instructions_columns
+           ^ ";column-gap:14px;padding:8px 0 6px;border-bottom:1px solid "
+           ^ theme.Styles.hairline
+           ^ ";"
+           ^ Styles.table_label theme)}>
+      <span>side</span>
+      <span>qty</span>
+      <span>sym</span>
+      <span>arrival → deadline</span>
+    </div>
   |}
 ;;
 
 let instruction_row ~theme (instruction : Alpha_instruction.t) =
   let row =
     Styles.s
-      ("display:flex;gap:16px;padding:8px 0;border-bottom:1px solid "
+      ("display:grid;grid-template-columns:"
+       ^ instructions_columns
+       ^ ";column-gap:14px;padding:7px 0;border-bottom:1px solid "
        ^ theme.Styles.hairline
-       ^ ";font-size:13px;color:"
+       ^ ";font-size:12.5px;color:"
        ^ theme.Styles.text
        ^ ";"
        ^ Styles.mono)
   in
-  let side_style = Styles.s "font-weight:700;width:44px;" in
-  let dim = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
-  let qty =
-    sprintf
-      "%s %s"
-      (Int.to_string_hum ~delimiter:',' (Size.to_int instruction.quantity))
-      (Symbol.to_string instruction.symbol)
+  let side_color =
+    match instruction.Alpha_instruction.side with
+    | Buy -> theme.Styles.blue
+    | Sell -> theme.Styles.red
   in
+  let side_style = Styles.s ("font-weight:700;color:" ^ side_color ^ ";") in
+  let dim = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
   let window =
     sprintf
       "%s → %s"
@@ -2014,7 +2061,8 @@ let instruction_row ~theme (instruction : Alpha_instruction.t) =
   {%html|
     <div %{row}>
       <span %{side_style}>#{side_str instruction.side}</span>
-      <span>#{qty}</span>
+      <span>#{Int.to_string_hum ~delimiter:',' (Size.to_int instruction.quantity)}</span>
+      <span>#{Symbol.to_string instruction.symbol}</span>
       <span %{dim}>#{window}</span>
     </div>
   |}
@@ -2027,6 +2075,7 @@ let instruction_row ~theme (instruction : Alpha_instruction.t) =
 let wizard_header
   ?step
   ?profile
+  ?kicker
   ~theme
   ~is_dark
   ~toggle_theme
@@ -2035,20 +2084,39 @@ let wizard_header
   ~back
   ()
   =
+  (* Mockup chrome: a rule-bounded top bar carrying the wordmark and the
+     header actions, then a serif title block, then the numbered rail. *)
+  let bar =
+    Styles.s
+      ("display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:2px \
+        0 12px;border-bottom:2px solid "
+       ^ theme.Styles.text
+       ^ ";")
+  in
   let title_style =
     Styles.s
       ("color:"
        ^ theme.Styles.text
-       ^ ";font-size:26px;font-weight:800;margin:4px 0;letter-spacing:0;")
+       ^ ";font-size:27px;font-weight:700;margin:14px 0 \
+          4px;letter-spacing:-0.01em;"
+       ^ Styles.serif)
   in
   let sub_style =
-    Styles.s ("color:" ^ theme.Styles.secondary ^ ";font-size:14px;")
+    Styles.s ("color:" ^ theme.Styles.secondary ^ ";font-size:13.5px;")
+  in
+  let kicker_node =
+    match kicker with
+    | None -> []
+    | Some text ->
+      [ {%html|<div %{Styles.s (Styles.kicker theme ^ "margin-top:16px;")}>#{text}</div>|}
+      ]
   in
   let back_style =
     Styles.s
       ("background:none;border:none;color:"
        ^ theme.Styles.blue
-       ^ ";cursor:pointer;font-size:13px;font-weight:600;padding:6px 8px;")
+       ^ ";cursor:pointer;font-size:12.5px;font-weight:600;padding:6px 8px;"
+      )
   in
   let back_button =
     match back with
@@ -2063,20 +2131,19 @@ let wizard_header
     | Some current -> [ step_progress ~theme ~current ]
   in
   {%html|
-    <div
-      %{Styles.s
-          "display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;"}>
-      <div>
-        <span %{Styles.brand theme}>execlab</span>
-        <div %{title_style}>#{title}</div>
-        <div %{sub_style}>#{subtitle}</div>
-        *{progress}
+    <div>
+      <div %{bar}>
+        %{wordmark ~theme}
+        <span %{Styles.s "display:flex;gap:12px;align-items:center;"}>
+          *{back_button}
+          ?{profile}
+          %{theme_button ~theme ~is_dark ~toggle_theme}
+        </span>
       </div>
-      <span %{Styles.s "display:flex;gap:10px;align-items:center;"}>
-        *{back_button}
-        %{theme_button ~theme ~is_dark ~toggle_theme}
-        ?{profile}
-      </span>
+      *{progress}
+      *{kicker_node}
+      <div %{title_style}>#{title}</div>
+      <div %{sub_style}>#{subtitle}</div>
     </div>
   |}
 ;;
@@ -2089,399 +2156,6 @@ let narrow_page =
 (* Side-by-side halves for the wizard screens; collapses on narrow windows. *)
 let two_col =
   "display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px;align-items:start;"
-;;
-
-(* ---------- dashboard ---------- *)
-
-(* ---------- landing page ---------- *)
-
-let landing_stats = [ "5", "execution algorithms to compare" ]
-
-let landing_sections =
-  [ ( "How a run works"
-    , "Five steps. Bring a CSV of trade instructions, pick a day and an \
-       algorithm, and watch the fills land against that day's real prices."
-    , [ ( "1. Pick a day"
-        , "One symbol, one real session from the bundled data." )
-      ; ( "2. Load your alpha"
-        , "A CSV of time, symbol, side, quantity, deadline — or a built-in \
-           sample." )
-      ; "3. Choose an algorithm", "TWAP, VWAP, POV, IS, or Immediate."
-      ; ( "4. Watch it trade"
-        , "The session replays minute by minute, with every fill on the \
-           chart." )
-      ; ( "5. Get graded"
-        , "Scored against trading everything the moment it arrived." )
-      ] )
-  ; ( "What gets measured"
-    , "The headline is alpha captured: what you kept divided by what the \
-       idea was worth on paper. The rest explains the gap."
-    , [ ( "Implementation shortfall"
-        , "Your average fill price against the price when you decided." )
-      ; ( "Cost split"
-        , "Timing, spread and impact — the three things that made up that \
-           gap." )
-      ; ( "Opportunity cost"
-        , "What the shares you never filled would have been worth." )
-      ; ( "Value added"
-        , "Your result minus the same orders traded all at once." )
-      ] )
-  ]
-;;
-
-(* Shared field styling for the tiny auth form. *)
-let text_field ~theme ~kind ~value ~placeholder ~on_input =
-  let style =
-    Styles.s
-      ("background:"
-       ^ theme.Styles.page_bg
-       ^ ";color:"
-       ^ theme.Styles.text
-       ^ ";border:1px solid "
-       ^ theme.Styles.chip_border
-       ^ ";border-radius:8px;padding:11px 13px;font-size:14px;width:100%;")
-  in
-  {%html|
-    <input
-      type=%{kind}
-      %{style}
-      placeholder=%{placeholder}
-      %{Vdom.Attr.string_property "value" value}
-      on_input=%{fun (_ : _) text -> on_input text} />
-  |}
-;;
-
-let auth_panel
-  ~theme
-  ~auth_mode
-  ~set_auth_mode
-  ~username
-  ~set_username
-  ~passcode
-  ~set_passcode
-  ~status
-  ~submit_auth
-  ~enter_as_guest
-  =
-  let card = Styles.card theme "padding:22px;max-width:420px;width:100%;" in
-  let title_style =
-    Styles.s
-      ("color:" ^ theme.Styles.text ^ ";font-size:17px;font-weight:800;")
-  in
-  let note_style =
-    Styles.s
-      ("color:"
-       ^ theme.Styles.faint
-       ^ ";font-size:12px;line-height:1.55;margin-top:2px;")
-  in
-  let status_node =
-    match status with
-    | None -> []
-    | Some text ->
-      let style =
-        Styles.s
-          ("color:" ^ theme.Styles.red ^ ";font-size:12.5px;line-height:1.5;")
-      in
-      [ {%html|<div %{style}>#{text}</div>|} ]
-  in
-  let stack = Styles.s "display:flex;flex-direction:column;gap:10px;" in
-  match (auth_mode : Auth_mode.t option) with
-  | None ->
-    {%html|
-      <div %{card}>
-        <div %{stack}>
-          <span %{title_style}>Start a session</span>
-          <span %{note_style}>
-            An account keeps a notebook of every run you execute and lets you
-            publish to a leaderboard. Guests can use the whole lab; only
-            publishing needs a name.
-          </span>
-          %{primary_button ~icon:(Icon.arrow_right ~size:15 ()) ~theme
-              ~on_click:(fun _ -> set_auth_mode (Some Auth_mode.Sign_in))
-              "Sign in"}
-          %{secondary_button ~theme
-              ~on_click:(fun _ ->
-                set_auth_mode (Some Auth_mode.Create_account))
-              "Create account"}
-          %{secondary_button ~theme ~on_click:(fun _ -> enter_as_guest)
-              "Continue as guest"}
-        </div>
-      </div>
-    |}
-  | Some mode ->
-    let heading =
-      match mode with
-      | Auth_mode.Sign_in -> "Sign in"
-      | Create_account -> "Create an account"
-    in
-    let switch_label =
-      match mode with
-      | Auth_mode.Sign_in -> "Create an account instead"
-      | Create_account -> "I already have an account"
-    in
-    let other =
-      match mode with
-      | Auth_mode.Sign_in -> Auth_mode.Create_account
-      | Create_account -> Sign_in
-    in
-    let link_style =
-      Styles.s
-        ("background:none;border:none;padding:4px 0;color:"
-         ^ theme.Styles.blue
-         ^ ";font-size:12.5px;font-weight:600;cursor:pointer;text-align:left;"
-        )
-    in
-    {%html|
-      <div %{card}>
-        <div %{stack}>
-          <span %{title_style}>#{heading}</span>
-          <span %{note_style}>
-            A username and a passcode, nothing else — no email, no recovery.
-          </span>
-          %{text_field ~theme ~kind:"text" ~value:username
-              ~placeholder:"username" ~on_input:set_username}
-          %{text_field ~theme ~kind:"password" ~value:passcode
-              ~placeholder:"passcode" ~on_input:set_passcode}
-          *{status_node}
-          %{primary_button ~icon:(Icon.arrow_right ~size:15 ()) ~theme
-              ~on_click:(fun _ -> submit_auth) heading}
-          <button
-            class="btn"
-            %{link_style}
-            on_click=%{fun _ -> set_auth_mode (Some other)}>
-            #{switch_label}
-          </button>
-          <button
-            class="btn"
-            %{link_style}
-            on_click=%{fun _ -> enter_as_guest}>
-            Continue as guest
-          </button>
-        </div>
-      </div>
-    |}
-;;
-
-let landing_view
-  ~theme
-  ~is_dark
-  ~toggle_theme
-  ~enter
-  ~to_dashboard
-  ~session
-  ~auth_mode
-  ~set_auth_mode
-  ~auth_username
-  ~set_auth_username
-  ~auth_passcode
-  ~set_auth_passcode
-  ~auth_status
-  ~submit_auth
-  ~sign_out
-  ~profile
-  =
-  let page =
-    Styles.s
-      "display:flex;flex-direction:column;gap:28px;max-width:1240px;margin:0 \
-       auto;padding:36px 20px 60px;"
-  in
-  let brand_row =
-    Styles.s "display:flex;justify-content:space-between;align-items:center;"
-  in
-  let wordmark =
-    Styles.s
-      ("color:"
-       ^ theme.Styles.text
-       ^ ";font-size:17px;font-weight:800;letter-spacing:0.01em;")
-  in
-  let hero =
-    Styles.s
-      "display:flex;flex-direction:column;gap:16px;padding:28px 0 8px;"
-  in
-  let headline =
-    Styles.s
-      ("color:"
-       ^ theme.Styles.text
-       ^ ";font-size:clamp(30px,4.6vw,52px);font-weight:800;line-height:1.08;max-width:16ch;margin:0;"
-      )
-  in
-  let subhead =
-    Styles.s
-      ("color:"
-       ^ theme.Styles.secondary
-       ^ ";font-size:16.5px;line-height:1.65;max-width:64ch;")
-  in
-  let accent =
-    Styles.s ("color:" ^ theme.Styles.blue ^ ";font-weight:700;")
-  in
-  let cta_row =
-    Styles.s "display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;"
-  in
-  let stat_grid =
-    Styles.s
-      "display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;"
-  in
-  let stat (value, label) =
-    let tile =
-      Styles.s
-        ("display:flex;flex-direction:column;gap:4px;background:"
-         ^ theme.Styles.chip_bg
-         ^ ";border:1px solid "
-         ^ theme.Styles.chip_border
-         ^ ";border-radius:10px;padding:16px 18px;")
-    in
-    let value_style =
-      Styles.s
-        ("color:"
-         ^ theme.Styles.blue
-         ^ ";font-size:27px;font-weight:800;"
-         ^ Styles.mono)
-    in
-    let label_style =
-      Styles.s
-        ("color:"
-         ^ theme.Styles.secondary
-         ^ ";font-size:12.5px;line-height:1.5;")
-    in
-    {%html|
-      <div class="raise card-lift" %{tile}>
-        <span %{value_style}>#{value}</span>
-        <span %{label_style}>#{label}</span>
-      </div>
-    |}
-  in
-  let section (title, body, items) =
-    let title_style =
-      Styles.s
-        ("color:"
-         ^ theme.Styles.text
-         ^ ";font-size:21px;font-weight:800;margin-bottom:6px;")
-    in
-    let body_style =
-      Styles.s
-        ("color:"
-         ^ theme.Styles.secondary
-         ^ ";font-size:14px;line-height:1.65;max-width:70ch;margin-bottom:14px;"
-        )
-    in
-    let grid =
-      Styles.s
-        "display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;"
-    in
-    let item (name, blurb) =
-      let card =
-        Styles.s
-          ("display:flex;flex-direction:column;gap:5px;background:"
-           ^ theme.Styles.card_bg
-           ^ ";border:"
-           ^ theme.Styles.border
-           ^ ";border-radius:10px;padding:16px 18px;height:100%;")
-      in
-      let name_style =
-        Styles.s
-          ("color:"
-           ^ theme.Styles.text
-           ^ ";font-size:13.5px;font-weight:700;")
-      in
-      let blurb_style =
-        Styles.s
-          ("color:"
-           ^ theme.Styles.secondary
-           ^ ";font-size:12.5px;line-height:1.6;")
-      in
-      {%html|
-        <div class="raise card-lift" %{card}>
-          <span %{name_style}>#{name}</span>
-          <span %{blurb_style}>#{blurb}</span>
-        </div>
-      |}
-    in
-    {%html|
-      <div>
-        <div %{title_style}>#{title}</div>
-        <div %{body_style}>#{body}</div>
-        <div %{grid}>*{List.map items ~f:item}</div>
-      </div>
-    |}
-  in
-  (* Signed in, the hero is a way back into the lab; signed out, it is the
-     account choice. Either way the page below it is identical. *)
-  let identity =
-    match (session : Session.t option) with
-    | None -> []
-    | Some { Session.username; token = (_ : string) } ->
-      let chip =
-        Styles.s
-          ("display:inline-flex;align-items:center;gap:7px;background:"
-           ^ theme.Styles.blue_soft
-           ^ ";color:"
-           ^ theme.Styles.blue
-           ^ ";border-radius:999px;padding:5px \
-              12px;font-size:12.5px;font-weight:700;")
-      in
-      let link =
-        Styles.s
-          ("background:none;border:none;color:"
-           ^ theme.Styles.secondary
-           ^ ";font-size:12.5px;font-weight:600;cursor:pointer;padding:4px \
-              6px;")
-      in
-      [ {%html|<span %{chip}>#{username}</span>|}
-      ; {%html|
-          <button class="btn" %{link} on_click=%{fun _ -> sign_out}>
-            Sign out
-          </button>
-        |}
-      ]
-  in
-  let entry =
-    match (session : Session.t option) with
-    | Some (_ : Session.t) ->
-      [ primary_button
-          ~icon:(Icon.arrow_right ~size:15 ())
-          ~theme
-          ~on_click:(fun _ -> enter)
-          "Run a simulation"
-      ; secondary_button ~theme ~on_click:(fun _ -> to_dashboard) "My runs"
-      ]
-    | None ->
-      [ auth_panel
-          ~theme
-          ~auth_mode
-          ~set_auth_mode
-          ~username:auth_username
-          ~set_username:set_auth_username
-          ~passcode:auth_passcode
-          ~set_passcode:set_auth_passcode
-          ~status:auth_status
-          ~submit_auth
-          ~enter_as_guest:enter
-      ]
-  in
-  {%html|
-    <div class="page fade" %{page}>
-      <div %{brand_row}>
-        <span %{wordmark}>ExecLabs</span>
-        <span %{Styles.s "display:flex;gap:10px;align-items:center;"}>
-          *{identity}
-          %{theme_button ~theme ~is_dark ~toggle_theme}
-          ?{profile}
-        </span>
-      </div>
-      <div %{hero}>
-        <h1 %{headline}>Test how much your strategy costs to trade.</h1>
-        <div %{subhead}>
-          A strategy that says "buy 50,000 shares by 11:00" does not get the
-          price on the chart. ExecLabs runs those orders through a real
-          historical trading day and shows
-          <span %{accent}>how much of the profit is left afterwards</span>.
-        </div>
-        <div %{cta_row}>*{entry}</div>
-      </div>
-      <div %{stat_grid}>*{List.map landing_stats ~f:stat}</div>
-      *{List.map landing_sections ~f:section}
-    </div>
-  |}
 ;;
 
 let pnl_cell_int63 ~theme cents =
@@ -2569,7 +2243,7 @@ let delta_tile ~theme ~label ~value ~delta ~better ~unit_ =
        ^ theme.Styles.chip_bg
        ^ ";border:1px solid "
        ^ theme.Styles.chip_border
-       ^ ";border-radius:10px;padding:14px 16px;")
+       ^ ";border-radius:3px;padding:14px 16px;")
   in
   let value_style =
     Styles.s
@@ -2686,34 +2360,29 @@ let my_runs_view
   ~new_sim
   ~back
   =
-  let columns = "150px 92px 84px 1fr 130px 120px 96px" in
+  let columns = "128px 72px 66px 58px 1fr 118px 118px 70px 90px 64px" in
   let head =
     Styles.s
       ("display:grid;grid-template-columns:"
        ^ columns
-       ^ ";column-gap:12px;white-space:nowrap;padding:10px 16px 8px \
-          16px;border-bottom:1px solid "
+       ^ ";column-gap:12px;white-space:nowrap;padding:10px 16px \
+          8px;border-bottom:1px solid "
        ^ theme.Styles.hairline
        ^ ";"
        ^ Styles.table_label theme)
   in
   let dim = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
   let faint_style =
-    Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:12.5px;")
+    Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:12px;")
   in
   (* The knobs that actually shaped this run, so a notebook entry is
      reproducible by reading it. Only the algorithm's own parameter is shown
      — the fill-model numbers live in the tooltip. *)
   let params_of (config : Run_config.t) =
-    let engine =
-      match config.engine_name with
-      | "synthetic" -> "synthetic book"
-      | (_ : string) -> "bar model"
-    in
     match config.algo_name with
-    | "pov" -> sprintf "%s · rate %.4f" engine config.pov_rate
-    | "is" -> sprintf "%s · urgency %.1f" engine config.is_urgency
-    | (_ : string) -> engine
+    | "pov" -> sprintf "rate %.4f" config.pov_rate
+    | "is" -> sprintf "urgency %.1f" config.is_urgency
+    | (_ : string) -> "—"
   in
   let full_params (config : Run_config.t) =
     sprintf
@@ -2731,7 +2400,7 @@ let my_runs_view
         ("display:grid;grid-template-columns:"
          ^ columns
          ^ ";column-gap:12px;white-space:nowrap;align-items:center;padding:9px \
-            16px;font-size:12.5px;color:"
+            16px;font-size:12px;color:"
          ^ theme.Styles.text
          ^ ";border-bottom:1px solid "
          ^ theme.Styles.hairline
@@ -2743,66 +2412,59 @@ let my_runs_view
       | None -> "—"
       | Some capture -> sprintf "%.1f%%" (capture *. 100.)
     in
-    let badge =
+    let state =
       if run.published
       then (
-        let chip =
+        let style =
           Styles.s
-            ("background:"
-             ^ theme.Styles.blue_soft
-             ^ ";color:"
-             ^ theme.Styles.blue
-             ^ ";border-radius:999px;padding:2px \
-                8px;font-size:10.5px;font-weight:700;")
+            ("color:"
+             ^ theme.Styles.green
+             ^ ";font-weight:600;font-size:11.5px;")
         in
-        {%html|<span %{chip}>published</span>|})
-      else {%html|<span %{faint_style}>private</span>|}
+        {%html|<span %{style}>published</span>|})
+      else (
+        let style =
+          Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:11.5px;")
+        in
+        {%html|<span %{style}>private</span>|})
     in
-    let open_button =
-      let button_style =
+    let open_link =
+      let style =
         Styles.s
-          ("background:"
-           ^ theme.Styles.chip_bg
-           ^ ";color:"
-           ^ theme.Styles.text
-           ^ ";border:1px solid "
-           ^ theme.Styles.chip_border
-           ^ ";border-radius:6px;padding:5px \
-              10px;cursor:pointer;font-size:11.5px;font-weight:700;")
+          ("background:none;border:none;padding:2px 0;color:"
+           ^ theme.Styles.blue
+           ^ ";cursor:pointer;font-size:12px;font-weight:600;text-align:left;"
+           ^ Styles.mono)
       in
       {%html|
-        <button
-          class="btn"
-          %{button_style}
-          on_click=%{fun _ -> open_run run}>
-          Open
+        <button class="btn" %{style} on_click=%{fun _ -> open_run run}>
+          open →
         </button>
       |}
     in
+    let saved_at =
+      String.map (String.prefix run.ran_at 16) ~f:(fun c ->
+        if Char.equal c 'T' then ' ' else c)
+    in
+    let engine =
+      match run.config.engine_name with
+      | "synthetic" -> "synth"
+      | (_ : string) -> "bar"
+    in
     {%html|
-      <div>
       <div %{style} title=%{full_params run.config}>
-        <span %{dim}>#{String.prefix run.ran_at 16}</span>
+        <span %{dim}>#{saved_at}</span>
         <span>#{symbols_label run.config.symbols}</span>
         <span>#{String.uppercase run.config.algo_name}</span>
+        <span %{dim}>#{engine}</span>
         <span %{dim}>
           #{Date.to_string run.config.date} · #{params_of run.config}
         </span>
-        <span>%{pnl_cell_int63 ~theme run.summary.value_add_cents}</span>
         <span>%{pnl_cell_int63 ~theme run.summary.net_cents}</span>
-        <span %{Styles.s "display:flex;gap:8px;align-items:center;"}>
-          #{capture}
-        </span>
-      </div>
-      <div
-        %{Styles.s
-            ("display:flex;gap:10px;align-items:center;padding:0 16px 9px \
-              16px;border-bottom:1px solid "
-             ^ theme.Styles.hairline
-             ^ ";")}>
-        %{badge}
-        %{open_button}
-      </div>
+        <span>%{pnl_cell_int63 ~theme run.summary.value_add_cents}</span>
+        <span %{dim}>#{capture}</span>
+        %{state}
+        %{open_link}
       </div>
     |}
   in
@@ -2832,16 +2494,90 @@ let my_runs_view
     | Some runs ->
       {%html|
         <div %{head}>
-          <span>ran at</span>
-          <span>symbol</span>
-          <span>algorithm</span>
+          <span>saved</span>
+          <span>sym</span>
+          <span>algo</span>
+          <span>engine</span>
           <span>day · settings</span>
-          <span>vs immediate</span>
           <span>net P&L</span>
+          <span>vs immediate</span>
           <span>capture</span>
+          <span>state</span>
+          <span>actions</span>
         </div>
       |}
       :: List.map runs ~f:run_row
+  in
+  (* The mockup's slim stats line: "14 saved | 5 published | 6 symbols | best
+     vs Immediate +$1,072.25". *)
+  let stats_line =
+    match (my_runs : Saved_run.t list option) with
+    | None | Some [] -> []
+    | Some runs ->
+      let published =
+        List.count runs ~f:(fun (run : Saved_run.t) -> run.published)
+      in
+      let symbols =
+        List.concat_map runs ~f:(fun (run : Saved_run.t) ->
+          run.config.symbols)
+        |> List.dedup_and_sort ~compare:Symbol.compare
+        |> List.length
+      in
+      let best =
+        List.map runs ~f:(fun (run : Saved_run.t) ->
+          run.summary.value_add_cents)
+        |> List.max_elt ~compare:Int63.compare
+      in
+      let sep =
+        Styles.s
+          ("color:"
+           ^ theme.Styles.hairline
+           ^ ";align-self:stretch;border-left:1px solid "
+           ^ theme.Styles.hairline
+           ^ ";")
+      in
+      let piece text =
+        let style =
+          Styles.s
+            ("color:"
+             ^ theme.Styles.secondary
+             ^ ";font-size:12px;"
+             ^ Styles.mono)
+        in
+        {%html|<span %{style}>#{text}</span>|}
+      in
+      let best_piece =
+        match best with
+        | None -> []
+        | Some v ->
+          [ {%html|<span %{sep}></span>|}
+          ; {%html|
+              <span
+                %{Styles.s
+                    ("color:"
+                     ^ theme.Styles.secondary
+                     ^ ";font-size:12px;display:inline-flex;gap:6px;align-items:baseline;"
+                     ^ Styles.mono)}>
+                best vs Immediate %{pnl_cell_int63 ~theme v}
+              </span>
+            |}
+          ]
+      in
+      [ {%html|
+          <div
+            %{Styles.s
+                ("display:flex;gap:14px;align-items:baseline;padding:10px 16px;border-bottom:1px solid "
+                 ^ theme.Styles.hairline
+                 ^ ";")}>
+            %{piece (sprintf "%d saved" (List.length runs))}
+            <span %{sep}></span>
+            %{piece (sprintf "%d published" published)}
+            <span %{sep}></span>
+            %{piece (sprintf "%d symbols" symbols)}
+            *{best_piece}
+          </div>
+        |}
+      ]
   in
   (* Destructive, so it asks twice: the first click arms it and turns it red,
      the second actually erases. *)
@@ -2849,14 +2585,14 @@ let my_runs_view
     let style =
       Styles.s
         ("display:inline-flex;align-items:center;gap:6px;background:"
-         ^ (if confirm_reset then theme.Styles.red else theme.Styles.chip_bg)
+         ^ (if confirm_reset then theme.Styles.red else "transparent")
          ^ ";color:"
          ^ (if confirm_reset then "#ffffff" else theme.Styles.red)
          ^ ";border:1px solid "
          ^ (if confirm_reset
             then theme.Styles.red
             else theme.Styles.chip_border)
-         ^ ";border-radius:7px;padding:6px \
+         ^ ";border-radius:3px;padding:6px \
             11px;cursor:pointer;font-size:12px;font-weight:700;")
     in
     {%html|
@@ -2873,20 +2609,27 @@ let my_runs_view
     | Some { Session.username; token = (_ : string) } ->
       sprintf "signed in as %s" username
   in
+  let footer_note =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.faint
+       ^ ";font-size:11.5px;line-height:1.6;padding:10px 16px 14px;")
+  in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
       %{wizard_header ?profile ~theme ~is_dark ~toggle_theme ~title:"My runs"
-          ~subtitle:("your execution notebook — " ^ who)
+          ~subtitle:("your server-side research notebook — every saved run, \
+                      reopenable and reproducible — " ^ who)
           ~back:(Some ("← Dashboard", back)) ()}
       <div %{Styles.card theme "padding-bottom:4px;"}>
         <div
           %{Styles.s
-              "display:flex;justify-content:space-between;align-items:center;padding:14px 16px 4px 16px;"}>
+              "display:flex;justify-content:space-between;align-items:center;padding:12px 16px;"}>
           <span
             %{Styles.s
                 ("color:"
                  ^ theme.Styles.text
-                 ^ ";font-size:14px;font-weight:700;")}>
+                 ^ ";font-size:14.5px;font-weight:700;")}>
             Saved runs
           </span>
           <span %{Styles.s "display:flex;gap:8px;align-items:center;"}>
@@ -2895,7 +2638,17 @@ let my_runs_view
             %{reset_button}
           </span>
         </div>
-        *{body}
+        *{stats_line}
+        <div %{Styles.s "overflow-x:auto;"}>
+          <div %{Styles.s "min-width:980px;"}>
+            *{body}
+          </div>
+        </div>
+        <div %{footer_note}>
+          Published runs appear on the day's leaderboard after server-side
+          re-scoring under house physics. Reopening a run restores its exact
+          configuration and results.
+        </div>
       </div>
       %{nav_footer ~theme
           ~back:("Dashboard", back)
@@ -3011,7 +2764,7 @@ let help_modal ~theme ~close =
        ^ theme.Styles.card_bg
        ^ ";border:"
        ^ theme.Styles.border
-       ^ ";border-radius:12px;max-width:760px;width:100%;padding:24px;"
+       ^ ";border-radius:4px;max-width:760px;width:100%;padding:24px;"
        ^ theme.Styles.shadow)
   in
   let head =
@@ -3088,18 +2841,55 @@ let dashboard_view
   ~profile
   ~toggle_theme
   =
-  let section_label = Styles.s (Styles.label theme ^ "margin-bottom:8px;") in
   let empty_style =
-    Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:13px;")
+    Styles.s
+      ("color:" ^ theme.Styles.faint ^ ";font-size:12.5px;padding:12px 16px;")
+  in
+  (* Money in table cells: colored by sign, mono, no inline label — the
+     column header already names it. *)
+  let money_cell cents =
+    let color =
+      if cents > 0
+      then theme.Styles.green
+      else if cents < 0
+      then theme.Styles.red
+      else theme.Styles.faint
+    in
+    let style =
+      Styles.s
+        ("color:"
+         ^ color
+         ^ ";font-size:12.5px;font-weight:600;"
+         ^ Styles.mono)
+    in
+    {%html|<span %{style}>#{dollars_signed cents}</span>|}
+  in
+  let section_head ~title ~aside =
+    let title_style =
+      Styles.s
+        ("color:" ^ theme.Styles.text ^ ";font-size:14.5px;font-weight:700;")
+    in
+    let aside_style =
+      Styles.s
+        ("color:" ^ theme.Styles.faint ^ ";font-size:10.5px;" ^ Styles.mono)
+    in
+    {%html|
+      <div
+        %{Styles.s
+            "display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:14px 16px 10px;"}>
+        <span %{title_style}>#{title}</span>
+        <span %{aside_style}>#{aside}</span>
+      </div>
+    |}
   in
   let row_base =
-    "display:grid;grid-template-columns:150px 90px 1fr 1fr \
+    "display:grid;grid-template-columns:150px 80px 1fr 1fr \
      70px;column-gap:10px;align-items:baseline;"
   in
   let head_row =
     Styles.s
       (row_base
-       ^ "padding:8px 0 6px 0;border-bottom:1px solid "
+       ^ "padding:8px 16px 6px;border-bottom:1px solid "
        ^ theme.Styles.hairline
        ^ ";"
        ^ Styles.table_label theme)
@@ -3108,7 +2898,7 @@ let dashboard_view
     let style =
       Styles.s
         (row_base
-         ^ "padding:7px 0;font-size:13px;color:"
+         ^ "padding:8px 16px;font-size:12.5px;color:"
          ^ theme.Styles.text
          ^ ";border-bottom:1px solid "
          ^ theme.Styles.hairline
@@ -3118,15 +2908,15 @@ let dashboard_view
     let dim = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
     let capture =
       match run.alpha_capture with
-      | None -> "n/a"
+      | None -> "—"
       | Some c -> sprintf "%.1f%%" (c *. 100.)
     in
     {%html|
       <div %{style}>
         <span>#{History.Run_record.symbols_label run} · #{Date.to_string run.date}</span>
         <span %{dim}>#{String.uppercase run.algo_name}</span>
-        <span>%{money_stat ~theme ~label:"value add" run.value_add_cents}</span>
-        <span>%{money_stat ~theme ~label:"net" run.net_cents}</span>
+        <span>%{money_cell run.value_add_cents}</span>
+        <span>%{money_cell run.net_cents}</span>
         <span %{dim}>#{capture}</span>
       </div>
     |}
@@ -3157,6 +2947,43 @@ let dashboard_view
               ~f:(fun (run : History.Run_record.t) -> run.value_add_cents))
     |> fun sorted -> List.take sorted 5
   in
+  (* The ranked sidebar: an amber rank, the run's identity, its value added. *)
+  let best_list =
+    match best with
+    | [] -> [ {%html|<div %{empty_style}>Nothing ranked yet.</div>|} ]
+    | rows ->
+      List.mapi rows ~f:(fun index (run : History.Run_record.t) ->
+        let row =
+          Styles.s
+            ("display:flex;gap:10px;align-items:baseline;padding:8px \
+              16px;border-bottom:1px solid "
+             ^ theme.Styles.hairline
+             ^ ";font-size:12.5px;"
+             ^ Styles.mono)
+        in
+        let rank =
+          Styles.s
+            ("color:" ^ theme.Styles.brown ^ ";font-weight:700;width:16px;")
+        in
+        let name = Styles.s ("color:" ^ theme.Styles.text ^ ";flex:1;") in
+        {%html|
+          <div %{row}>
+            <span %{rank}>#{Int.to_string (index + 1)}</span>
+            <span %{name}>
+              #{History.Run_record.symbols_label run}
+              · #{Date.to_string run.date}
+              · #{String.uppercase run.algo_name}
+            </span>
+            <span>%{money_cell run.value_add_cents}</span>
+          </div>
+        |})
+  in
+  let best_note =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.faint
+       ^ ";font-size:11.5px;line-height:1.6;padding:10px 16px 14px;")
+  in
   (* Signing out belongs where the account lives, not buried on the front
      page; guests get the way in instead. *)
   let session_action =
@@ -3176,75 +3003,87 @@ let dashboard_view
           "Sign in"
       ]
   in
-  (* A dashboard should answer "how am I doing" before it offers a button.
-     These four come straight from the local run history. *)
-  let stat_tiles =
+  (* The mockup's stats strip: one bordered band, hairline-divided cells,
+     label over value. All four come straight from the local run history. *)
+  let stats_band =
     let count = List.length runs in
-    let beat =
-      List.count runs ~f:(fun (run : History.Run_record.t) ->
-        run.value_add_cents > 0)
+    let best_value =
+      List.map runs ~f:(fun (run : History.Run_record.t) ->
+        run.value_add_cents)
+      |> List.max_elt ~compare:Int.compare
     in
-    let best_capture =
-      List.filter_map runs ~f:(fun (run : History.Run_record.t) ->
-        run.alpha_capture)
-      |> List.max_elt ~compare:Float.compare
+    let median_capture =
+      let captures =
+        List.filter_map runs ~f:(fun (run : History.Run_record.t) ->
+          run.alpha_capture)
+        |> List.sort ~compare:Float.compare
+      in
+      let n = List.length captures in
+      if n = 0
+      then None
+      else if n % 2 = 1
+      then List.nth captures (n / 2)
+      else (
+        match List.nth captures ((n / 2) - 1), List.nth captures (n / 2) with
+        | Some a, Some b -> Some ((a +. b) /. 2.)
+        | (_ : float option), (_ : float option) -> None)
     in
-    let algos =
-      List.map runs ~f:(fun (run : History.Run_record.t) -> run.algo_name)
-      |> List.dedup_and_sort ~compare:String.compare
-      |> List.length
+    let latest =
+      match List.hd runs with
+      | None -> "—"
+      | Some (run : History.Run_record.t) ->
+        sprintf
+          "%s · %s · %s"
+          (History.Run_record.symbols_label run)
+          (Date.to_string run.date)
+          (String.uppercase run.algo_name)
     in
-    let tile ~label ~value ~sub ~accent =
-      let card =
+    let cell index ~label:label_text ~color value =
+      let style =
         Styles.s
-          ("display:flex;flex-direction:column;gap:3px;background:"
-           ^ theme.Styles.card_bg
-           ^ ";border:"
-           ^ theme.Styles.border
-           ^ ";border-radius:12px;padding:16px 18px;"
-           ^ theme.Styles.shadow)
+          ("display:flex;flex-direction:column;gap:6px;padding:14px 18px;"
+           ^
+           if index = 0
+           then ""
+           else "border-left:1px solid " ^ theme.Styles.hairline ^ ";")
       in
       let value_style =
         Styles.s
           ("color:"
-           ^ accent
-           ^ ";font-size:26px;font-weight:800;"
+           ^ color
+           ^ ";font-size:20px;font-weight:700;white-space:nowrap;"
            ^ Styles.mono)
       in
       {%html|
-        <div class="card-lift" %{card}>
-          <span %{Styles.s (Styles.label theme)}>#{label}</span>
+        <div %{style}>
+          <span %{Styles.s (Styles.label theme)}>#{label_text}</span>
           <span %{value_style}>#{value}</span>
-          <span
-            %{Styles.s
-                ("color:" ^ theme.Styles.faint ^ ";font-size:11.5px;")}>
-            #{sub}
-          </span>
         </div>
       |}
     in
+    let best_color =
+      match best_value with
+      | Some v when v > 0 -> theme.Styles.green
+      | Some v when v < 0 -> theme.Styles.red
+      | Some (_ : int) | None -> theme.Styles.faint
+    in
     {%html|
-      <div
-        %{Styles.s
-            "display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;"}>
-        %{tile ~label:"Runs" ~value:(Int.to_string count)
-            ~sub:"simulations in this browser"
-            ~accent:theme.Styles.text}
-        %{tile ~label:"Beat the baseline"
-            ~value:(if count = 0 then "—"
-                    else sprintf "%d of %d" beat count)
-            ~sub:"runs that outperformed Immediate"
-            ~accent:(if beat > 0 then theme.Styles.green else theme.Styles.faint)}
-        %{tile ~label:"Best capture"
-            ~value:(match best_capture with
-                    | None -> "—"
-                    | Some c -> sprintf "%.1f%%" (c *. 100.))
-            ~sub:"most alpha kept in one run"
-            ~accent:theme.Styles.blue}
-        %{tile ~label:"Algorithms tried"
-            ~value:(sprintf "%d of 5" algos)
-            ~sub:"TWAP, VWAP, POV, IS, Immediate"
-            ~accent:theme.Styles.text}
+      <div %{Styles.card theme ""}>
+        <div
+          %{Styles.s
+              "display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));"}>
+          %{cell 0 ~label:"saved runs" ~color:theme.Styles.text
+              (Int.to_string count)}
+          %{cell 1 ~label:"best value-add vs immediate" ~color:best_color
+              (match best_value with
+               | None -> "—"
+               | Some v -> dollars_signed v)}
+          %{cell 2 ~label:"median capture" ~color:theme.Styles.text
+              (match median_capture with
+               | None -> "—"
+               | Some c -> sprintf "%.1f%%" (c *. 100.))}
+          %{cell 3 ~label:"latest run" ~color:theme.Styles.secondary latest}
+        </div>
       </div>
     |}
   in
@@ -3254,13 +3093,13 @@ let dashboard_view
       let style =
         Styles.s
           ("background:"
-           ^ theme.Styles.chip_bg
+           ^ theme.Styles.card_bg
            ^ ";color:"
            ^ theme.Styles.text
            ^ ";border:1px solid "
            ^ theme.Styles.chip_border
-           ^ ";border-radius:8px;padding:9px \
-              14px;cursor:pointer;font-size:13px;font-weight:700;"
+           ^ ";border-radius:3px;padding:8px \
+              14px;cursor:pointer;font-size:12.5px;font-weight:700;"
            ^ Styles.mono)
       in
       {%html|
@@ -3273,8 +3112,10 @@ let dashboard_view
       |}
     in
     {%html|
-      <div %{Styles.card theme "padding:20px;"}>
-        <div %{section_label}>Start with a symbol</div>
+      <div>
+        <div %{Styles.s (Styles.label theme ^ "margin-bottom:8px;")}>
+          Start with a symbol
+        </div>
         <div %{Styles.s "display:flex;gap:8px;flex-wrap:wrap;"}>
           *{List.map Dataset.symbols ~f:chip}
         </div>
@@ -3284,26 +3125,32 @@ let dashboard_view
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
       %{wizard_header ?profile ~theme ~is_dark ~toggle_theme
-          ~title:"Your execution lab"
-          ~subtitle:"pick a day, bring an alpha, and see what execution \
-                     costs you" ~back:None ()}
-      %{stat_tiles}
-      <div %{Styles.s "display:flex;gap:12px;flex-wrap:wrap;align-items:center;"}>
+          ~title:"Historical execution laboratory"
+          ~subtitle:"upload an alpha, pick a day, and see how much survives \
+                     execution" ~back:None ()}
+      <div %{Styles.s "display:flex;gap:10px;flex-wrap:wrap;align-items:center;"}>
         %{primary_button ~icon:(Icon.arrow_right ~size:15 ()) ~theme
             ~on_click:(fun _ -> new_sim) "New simulation"}
         %{secondary_button ~theme ~on_click:(fun _ -> to_my_runs)
             "My runs"}
         *{session_action}
       </div>
+      %{stats_band}
       %{quick_start}
       <div %{Styles.s two_col}>
-        <div %{Styles.card theme "padding:20px;"}>
-          <div %{section_label}>Recent runs</div>
+        <div %{Styles.card theme "padding-bottom:4px;"}>
+          %{section_head ~title:"Recent runs" ~aside:"newest first"}
           *{table runs}
         </div>
-        <div %{Styles.card theme "padding:20px;"}>
-          <div %{section_label}>Best runs — by value added vs immediate</div>
-          *{table best}
+        <div %{Styles.card theme "padding-bottom:4px;"}>
+          %{section_head ~title:"Best runs"
+              ~aside:"by value added vs Immediate"}
+          *{best_list}
+          <div %{best_note}>
+            Value added is net P&L minus what an Immediate execution of the
+            same instructions would have kept — the cleanest read on
+            execution skill.
+          </div>
         </div>
       </div>
     </div>
@@ -3368,33 +3215,33 @@ let choose_day_view
   =
   let sessions = Dataset.dates_for browse_symbol in
   let session_set = Date.Set.of_list sessions in
-  let select_style =
-    Styles.s
-      ("background:"
-       ^ theme.Styles.chip_bg
-       ^ ";color:"
-       ^ theme.Styles.text
-       ^ ";border:1px solid "
-       ^ theme.Styles.chip_border
-       ^ ";border-radius:5px;padding:6px \
-          10px;font-size:13px;font-weight:600;cursor:pointer;"
-       ^ Styles.mono)
-  in
-  let symbol_option symbol =
-    let name = Symbol.to_string symbol in
-    let selected_prop =
-      if Symbol.equal symbol browse_symbol
-      then Vdom.Attr.bool_property "selected" true
-      else Vdom.Attr.empty
+  (* The mockup's segmented symbol row: one pill per bundled name. *)
+  let symbol_pill symbol =
+    let selected = Symbol.equal symbol browse_symbol in
+    let style =
+      Styles.s
+        ("border:1px solid "
+         ^ (if selected then theme.Styles.blue else theme.Styles.chip_border)
+         ^ ";background:"
+         ^ (if selected then theme.Styles.blue else theme.Styles.card_bg)
+         ^ ";color:"
+         ^ (if selected then "#ffffff" else theme.Styles.secondary)
+         ^ ";border-radius:3px;padding:6px \
+            12px;font-size:12px;font-weight:700;cursor:pointer;"
+         ^ Styles.mono)
     in
-    {%html|<option value=%{name} %{selected_prop}>#{name}</option>|}
+    {%html|
+      <button class="btn" %{style} on_click=%{fun _ -> set_symbol symbol}>
+        #{Symbol.to_string symbol}
+      </button>
+    |}
   in
   let hint =
     Styles.s
       ("color:" ^ theme.Styles.faint ^ ";font-size:12px;" ^ Styles.mono)
   in
   let cell_base =
-    "width:56px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:8px;font-size:13.5px;"
+    "width:56px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:3px;font-size:13.5px;"
     ^ Styles.mono
   in
   let cell date_opt =
@@ -3596,9 +3443,10 @@ let choose_day_view
          let stat ~label:text value =
            let tile =
              Styles.s
-               ("display:flex;flex-direction:column;gap:2px;background:"
-                ^ theme.Styles.chip_bg
-                ^ ";border-radius:8px;padding:10px 14px;")
+               ("display:flex;flex-direction:column;gap:3px;border-top:1px \
+                 solid "
+                ^ theme.Styles.hairline
+                ^ ";padding:10px 2px 2px;")
            in
            let value_style =
              Styles.s
@@ -3630,7 +3478,7 @@ let choose_day_view
                <span>
                  #{Symbol.to_string symbol} · #{Date.to_string date}
                </span>
-               <span %{hint}>1-minute closes, 09:30–15:59</span>
+               <span %{hint}>1-minute closes · 09:30–15:59 · historical replay, not a forecast</span>
              </div>
              %{sparkline}
              <div %{tiles}>
@@ -3647,36 +3495,35 @@ let choose_day_view
   let selection_hint =
     match selection with
     | Some (symbol, date) ->
-      sprintf "%s · %s" (Symbol.to_string symbol) (Date.to_string date)
+      sprintf
+        "%s · %s selected"
+        (Symbol.to_string symbol)
+        (Date.to_string date)
     | None -> "select a session to continue"
   in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
       %{wizard_header ~step:0 ?profile ~theme ~is_dark ~toggle_theme
           ~title:"Choose a market day"
-          ~subtitle:"pick a symbol, then a session from its calendar"
+          ~subtitle:"pick a symbol, then a session from its calendar — real \
+                     historical data, replayed"
           ~back:None ()}
       <div %{Styles.s two_col}>
         <div %{Styles.card theme "padding:20px;"}>
           <div %{picker_row}>
             <span %{label}>Symbol</span>
-            <select
-              class="btn"
-              %{select_style}
-              on_change=%{fun (_ : _) value -> set_symbol (Symbol.of_string value)}>
-              *{List.map Dataset.symbols ~f:symbol_option}
-            </select>
+            <div %{Styles.s "display:flex;gap:4px;flex-wrap:wrap;"}>
+              *{List.map Dataset.symbols ~f:symbol_pill}
+            </div>
             <span %{hint}>#{sprintf "%d sessions available" (List.length sessions)}</span>
           </div>
           *{List.map months ~f:month_grid}
         </div>
         %{day_preview}
       </div>
-      <div %{Styles.s ("display:flex;justify-content:flex-end;" ^ Styles.label theme)}>
-        #{selection_hint}
-      </div>
       %{nav_footer ~theme
           ~back:("Dashboard", back)
+          ~status:selection_hint
           ~next:("Continue", continue_, Option.is_some selection) ()}
     </div>
   |}
@@ -3822,10 +3669,9 @@ let alpha_view
   ~toggle_theme
   ~back
   =
-  let section_label = Styles.s (Styles.label theme ^ "margin-bottom:8px;") in
-  let hint =
+  let error_style =
     Styles.s
-      ("color:" ^ theme.Styles.faint ^ ";font-size:12px;" ^ Styles.mono)
+      ("color:" ^ theme.Styles.red ^ ";font-size:12.5px;" ^ Styles.mono)
   in
   let textarea_style =
     Styles.s
@@ -3835,85 +3681,197 @@ let alpha_view
        ^ theme.Styles.text
        ^ ";border:1px solid "
        ^ theme.Styles.chip_border
-       ^ ";border-radius:5px;padding:10px;font-size:13px;resize:vertical;"
+       ^ ";border-radius:3px;padding:10px;font-size:13px;resize:vertical;line-height:1.6;"
        ^ Styles.mono)
   in
-  let error_style =
-    Styles.s
-      ("color:" ^ theme.Styles.red ^ ";font-size:12.5px;" ^ Styles.mono)
-  in
   let parsed = Replay.parse_alpha alpha_text in
-  let preview =
+  (* "3 rows parsed · 0 errors", green when clean, red when not. *)
+  let parse_status =
     match parsed with
     | Ok instructions ->
-      [ {%html|
-          <div %{Styles.card theme "padding:20px;"}>
-            <div %{section_label}>Parsed instructions</div>
-            *{List.map instructions ~f:(instruction_row ~theme)}
-          </div>
-        |}
-      ]
-    | Error error ->
-      [ {%html|
-          <div %{Styles.card theme "padding:20px;"}>
-            <div %{section_label}>Parse errors</div>
-            <div %{error_style}>#{Error.to_string_hum error}</div>
-          </div>
-        |}
-      ]
+      let style =
+        Styles.s
+          ("color:"
+           ^ theme.Styles.green
+           ^ ";font-size:11.5px;font-weight:600;"
+           ^ Styles.mono)
+      in
+      {%html|
+        <span %{style}>
+          #{sprintf "%d rows parsed · 0 errors" (List.length instructions)}
+        </span>
+      |}
+    | Error (_ : Error.t) ->
+      let style =
+        Styles.s
+          ("color:"
+           ^ theme.Styles.red
+           ^ ";font-size:11.5px;font-weight:600;"
+           ^ Styles.mono)
+      in
+      {%html|<span %{style}>parse errors — details on the right</span>|}
   in
-  let sample_card (name, description, csv) =
+  (* The right-hand panel: the parsed orders as a table, or the errors. *)
+  let preview =
+    let validity =
+      match parsed with
+      | Ok (_ : Alpha_instruction.t list) ->
+        let style =
+          Styles.s
+            ("color:"
+             ^ theme.Styles.green
+             ^ ";font-size:11px;font-weight:700;"
+             ^ Styles.mono)
+        in
+        {%html|<span %{style}>✓ valid</span>|}
+      | Error (_ : Error.t) ->
+        let style =
+          Styles.s
+            ("color:"
+             ^ theme.Styles.red
+             ^ ";font-size:11px;font-weight:700;"
+             ^ Styles.mono)
+        in
+        {%html|<span %{style}>✗ invalid</span>|}
+    in
+    let head =
+      {%html|
+        <div
+          %{Styles.s
+              "display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:6px;"}>
+          <span %{Styles.s (Styles.label theme)}>Parsed instructions</span>
+          %{validity}
+        </div>
+      |}
+    in
+    let body =
+      match parsed with
+      | Ok instructions ->
+        instructions_header ~theme
+        :: List.map instructions ~f:(instruction_row ~theme)
+      | Error error ->
+        [ {%html|<div %{error_style}>#{Error.to_string_hum error}</div>|} ]
+    in
+    let explain =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.faint
+         ^ ";font-size:11.5px;line-height:1.6;margin-top:10px;")
+    in
+    let note_box =
+      Styles.s
+        ("border:1px solid "
+         ^ theme.Styles.chip_border
+         ^ ";border-radius:3px;padding:10px 12px;margin-top:12px;color:"
+         ^ theme.Styles.secondary
+         ^ ";font-size:11.5px;line-height:1.6;")
+    in
+    let note_term =
+      Styles.s
+        ("color:" ^ theme.Styles.brown ^ ";font-weight:700;" ^ Styles.mono)
+    in
+    {%html|
+      <div %{Styles.card theme "padding:20px;"}>
+        %{head}
+        *{body}
+        <div %{explain}>
+          Each instruction is a parent order: arrive at a time, finish by a
+          deadline. Malformed rows are flagged with their line number.
+        </div>
+        <div %{note_box}>
+          <span %{note_term}>note</span>
+          — an alpha names its own symbols per line, so one file may trade
+          any name this date has a session for. Each symbol gets its own
+          book and benchmarks; the chart grows a tab per name.
+        </div>
+      </div>
+    |}
+  in
+  (* Samples as the mockup's list: name and description on the left, the
+     order count on the right, the selected one inked in blue. *)
+  let sample_row (name, description, csv) =
     let selected = String.equal alpha_text csv in
+    let orders =
+      List.count (String.split_lines csv) ~f:(fun line ->
+        not (String.is_empty (String.strip line)))
+    in
     let style =
       Styles.s
-        ("display:flex;flex-direction:column;gap:3px;text-align:left;background:"
-         ^ (if selected then theme.Styles.blue_soft else theme.Styles.chip_bg)
-         ^ ";color:"
-         ^ theme.Styles.text
+        ("display:flex;justify-content:space-between;align-items:flex-start;gap:12px;text-align:left;width:100%;background:"
+         ^ (if selected then theme.Styles.blue_soft else "transparent")
          ^ ";border:1px solid "
          ^ (if selected then theme.Styles.blue else theme.Styles.chip_border)
-         ^ ";border-radius:8px;padding:10px 12px;cursor:pointer;")
+         ^ ";border-left:3px solid "
+         ^ (if selected then theme.Styles.blue else theme.Styles.chip_border)
+         ^ ";border-radius:3px;padding:9px 12px;cursor:pointer;")
     in
     let name_style =
       Styles.s
-        ("font-size:13px;font-weight:700;color:"
+        ("font-size:12.5px;font-weight:700;color:"
          ^ (if selected then theme.Styles.blue else theme.Styles.text)
          ^ ";")
     in
     let desc_style =
-      Styles.s ("font-size:11.5px;color:" ^ theme.Styles.secondary ^ ";")
+      Styles.s
+        ("font-size:11.5px;line-height:1.5;color:"
+         ^ theme.Styles.secondary
+         ^ ";")
     in
-    let mark = if selected then [ Icon.check ] else [] in
+    let count_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.faint
+         ^ ";font-size:11px;white-space:nowrap;"
+         ^ Styles.mono)
+    in
     {%html|
       <button class="btn" %{style} on_click=%{fun _ -> set_alpha_text csv}>
-        <span %{Styles.s "display:flex;align-items:center;gap:6px;"}>
-          *{mark}
+        <span %{Styles.s "display:flex;flex-direction:column;gap:2px;"}>
           <span %{name_style}>#{name}</span>
+          <span %{desc_style}>#{description}</span>
         </span>
-        <span %{desc_style}>#{description}</span>
+        <span %{count_style}>#{sprintf "%d orders" orders}</span>
       </button>
     |}
-  in
-  let samples_row =
-    Styles.s
-      "display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:12px;"
   in
   let upload_label =
     Styles.s
       ("display:inline-flex;align-items:center;gap:8px;background:"
-       ^ theme.Styles.chip_bg
+       ^ theme.Styles.card_bg
        ^ ";color:"
        ^ theme.Styles.text
        ^ ";border:1px solid "
        ^ theme.Styles.chip_border
-       ^ ";border-radius:5px;padding:6px \
-          12px;cursor:pointer;font-size:12.5px;font-weight:600;margin-top:10px;"
-      )
+       ^ ";border-radius:3px;padding:6px \
+          12px;cursor:pointer;font-size:12.5px;font-weight:600;")
+  in
+  let editor_head =
+    let hint =
+      Styles.s
+        ("color:" ^ theme.Styles.brown ^ ";font-size:11px;" ^ Styles.mono)
+    in
+    {%html|
+      <div
+        %{Styles.s
+            "display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:16px 0 6px;"}>
+        <span %{Styles.s (Styles.label theme)}>Alpha CSV</span>
+        <span %{hint}>arrival_time,symbol,side,quantity,deadline</span>
+      </div>
+    |}
   in
   let subtitle =
     sprintf
-      "%s — paste, upload, or start from a sample"
+      "paste, upload, or start from a sample — timestamped parent orders \
+       for %s · %s"
+      (Symbol.to_string symbol)
       (Date.to_string date)
+  in
+  let samples_note =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.faint
+       ^ ";font-size:11px;margin-bottom:8px;"
+       ^ Styles.mono)
   in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
@@ -3922,40 +3880,42 @@ let alpha_view
           ~back:None ()}
       <div %{Styles.s two_col}>
         <div %{Styles.card theme "padding:20px;"}>
-          <div %{section_label}>Samples</div>
           <div
             %{Styles.s
-                ("color:"
-                 ^ theme.Styles.faint
-                 ^ ";font-size:11.5px;margin-bottom:8px;")}>
-            written for #{Symbol.to_string symbol} — the symbol you
-            browsed. An alpha names its own symbols per line, so a file may
-            trade as many as this date has sessions for.
+                "display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:8px;"}>
+            <span %{Styles.s (Styles.label theme)}>
+              Samples — written for #{Symbol.to_string symbol}
+            </span>
+            <span %{samples_note}>a run trades what the file names</span>
           </div>
-          <div %{samples_row}>
-            *{List.map (sample_alphas ~symbol ~date) ~f:sample_card}
+          <div %{Styles.s "display:flex;flex-direction:column;gap:6px;"}>
+            *{List.map (sample_alphas ~symbol ~date) ~f:sample_row}
           </div>
-          <div %{section_label}>Alpha CSV</div>
+          %{editor_head}
           <textarea
             rows=%{14}
             %{Vdom.Attr.create "spellcheck" "false"}
             %{Vdom.Attr.string_property "value" alpha_text}
             %{textarea_style}
             on_input=%{fun (_ : _) text -> set_alpha_text text}></textarea>
-          <div %{hint}>arrival_time,symbol,side,quantity,deadline</div>
-          <label class="btn" %{upload_label}>
-            %{Icon.upload ~size:14 ()}
-            Upload CSV file…
-            <input
-              type="file"
-              %{Vdom.Attr.create "accept" ".csv,text/csv"}
-              %{Styles.s "display:none;"}
-              %{Vdom.Attr.on_file_input (fun (_ : _) files ->
-                  read_alpha_file ~set_alpha_text files)} />
-          </label>
+          <div
+            %{Styles.s
+                "display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap;"}>
+            <label class="btn" %{upload_label}>
+              %{Icon.upload ~size:14 ()}
+              Upload CSV file…
+              <input
+                type="file"
+                %{Vdom.Attr.create "accept" ".csv,text/csv"}
+                %{Styles.s "display:none;"}
+                %{Vdom.Attr.on_file_input (fun (_ : _) files ->
+                    read_alpha_file ~set_alpha_text files)} />
+            </label>
+            %{parse_status}
+          </div>
         </div>
         <div %{Styles.s "display:flex;flex-direction:column;gap:16px;"}>
-          *{preview}
+          %{preview}
         </div>
       </div>
       %{nav_footer ~theme
@@ -4029,7 +3989,7 @@ let algorithm_detail ~theme ~algo =
     let bullet ~color ~mark text =
       let row =
         Styles.s
-          "display:flex;gap:8px;align-items:flex-start;font-size:12.5px;line-height:1.55;"
+          "display:flex;gap:7px;align-items:flex-start;font-size:12px;line-height:1.55;"
       in
       let mark_style =
         Styles.s ("color:" ^ color ^ ";font-weight:800;flex-shrink:0;")
@@ -4042,10 +4002,13 @@ let algorithm_detail ~theme ~algo =
         </div>
       |}
     in
-    let group ~heading ~color ~mark items =
+    let group ~heading ~head_color ~color ~mark items =
+      let head =
+        Styles.s (Styles.label theme ^ "color:" ^ head_color ^ ";")
+      in
       {%html|
-        <div %{Styles.s "display:flex;flex-direction:column;gap:5px;"}>
-          <span %{Styles.s (Styles.label theme)}>#{heading}</span>
+        <div %{Styles.s "display:flex;flex-direction:column;gap:6px;"}>
+          <span %{head}>#{heading}</span>
           *{List.map items ~f:(bullet ~color ~mark)}
         </div>
       |}
@@ -4054,18 +4017,18 @@ let algorithm_detail ~theme ~algo =
       Styles.s
         ("color:"
          ^ theme.Styles.blue
-         ^ ";font-size:16px;font-weight:800;"
+         ^ ";font-size:15px;font-weight:800;"
          ^ Styles.mono)
     in
     let tagline_style =
       Styles.s
-        ("color:" ^ theme.Styles.text ^ ";font-size:13.5px;font-weight:600;")
+        ("color:" ^ theme.Styles.text ^ ";font-size:13px;font-weight:600;")
     in
     let typical_style =
       Styles.s
         ("color:"
          ^ theme.Styles.faint
-         ^ ";font-size:12.5px;line-height:1.55;border-top:1px solid "
+         ^ ";font-size:12px;line-height:1.55;border-top:1px solid "
          ^ theme.Styles.hairline
          ^ ";padding-top:10px;")
     in
@@ -4073,19 +4036,22 @@ let algorithm_detail ~theme ~algo =
         <div
           class="fade"
           %{Styles.s
-              ("display:flex;flex-direction:column;gap:12px;background:"
-               ^ theme.Styles.chip_bg
-               ^ ";border:1px solid "
-               ^ theme.Styles.chip_border
-               ^ ";border-radius:10px;padding:16px;margin-top:14px;")}>
-          <div>
-            <div %{name_style}>#{name}</div>
-            <div %{tagline_style}>#{tagline}</div>
+              ("display:flex;flex-direction:column;gap:12px;border-top:1px \
+                solid "
+               ^ theme.Styles.hairline
+               ^ ";padding-top:14px;margin-top:14px;")}>
+          <div %{Styles.s "display:flex;gap:10px;align-items:baseline;"}>
+            <span %{name_style}>#{name}</span>
+            <span %{tagline_style}>#{tagline}</span>
           </div>
-          %{group ~heading:"Best when" ~color:theme.Styles.green
-              ~mark:"\u{2713}" best}
-          %{group ~heading:"Weak when" ~color:theme.Styles.red
-              ~mark:"\u{2717}" weak}
+          <div
+            %{Styles.s
+                "display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;"}>
+            %{group ~heading:"Best when" ~head_color:theme.Styles.green
+                ~color:theme.Styles.green ~mark:"\u{2713}" best}
+            %{group ~heading:"Weak when" ~head_color:theme.Styles.red
+                ~color:theme.Styles.red ~mark:"\u{2717}" weak}
+          </div>
           <div %{typical_style}>Typically used by: #{typical}</div>
         </div>
       |}
@@ -4098,13 +4064,15 @@ let algorithm_detail ~theme ~algo =
    strategy's own dials only — the fill-model numbers are the market, not the
    trader, so a preset never touches those. *)
 let presets =
-  [ "Passive", "Trade slowly, hide in the volume", 0.0008, 0.0
-  ; "Balanced", "A middle-of-the-road pace", 0.0015, 1.0
-  ; "Aggressive", "Front-load and finish early", 0.0040, 5.0
+  [ "Passive", "trade slowly, hide in the volume", 0.0008, 0.0
+  ; "Balanced", "a middle-of-the-road pace", 0.0015, 1.0
+  ; "Aggressive", "front-load and finish early", 0.0040, 5.0
   ]
 ;;
 
-let preset_row ~theme ~param_text ~set_param_text =
+(* The posture column: a vertical list in the mockup's voice, the selected
+   stance inked with a blue rail. *)
+let preset_rows ~theme ~param_text ~set_param_text =
   let current_pov = param_text.Replay.Param_text.pov_rate in
   let current_urgency = param_text.Replay.Param_text.urgency in
   let matches (_, _, pov, urgency) =
@@ -4112,24 +4080,23 @@ let preset_row ~theme ~param_text ~set_param_text =
     && String.equal current_urgency (sprintf "%.1f" urgency)
   in
   let is_custom = not (List.exists presets ~f:matches) in
-  let chip ~selected ~title ~subtitle ~on_click =
+  let item ~selected ~title ~subtitle ~on_click =
     let style =
       Styles.s
-        ("display:flex;flex-direction:column;gap:2px;text-align:left;background:"
-         ^ (if selected then theme.Styles.blue_soft else theme.Styles.chip_bg)
-         ^ ";border:1px solid "
-         ^ (if selected then theme.Styles.blue else theme.Styles.chip_border)
-         ^ ";border-radius:9px;padding:10px \
-            14px;cursor:pointer;flex:1;min-width:150px;")
+        ("display:flex;flex-direction:column;gap:1px;text-align:left;background:"
+         ^ (if selected then theme.Styles.blue_soft else "transparent")
+         ^ ";border:none;border-left:3px solid "
+         ^ (if selected then theme.Styles.blue else theme.Styles.hairline)
+         ^ ";padding:7px 10px;cursor:pointer;width:100%;")
     in
     let title_style =
       Styles.s
-        ("font-size:13px;font-weight:700;color:"
+        ("font-size:12.5px;font-weight:700;color:"
          ^ (if selected then theme.Styles.blue else theme.Styles.text)
          ^ ";")
     in
     let sub_style =
-      Styles.s ("font-size:11.5px;color:" ^ theme.Styles.secondary ^ ";")
+      Styles.s ("font-size:11px;color:" ^ theme.Styles.secondary ^ ";")
     in
     {%html|
       <button class="btn" %{style} on_click=%{on_click}>
@@ -4138,8 +4105,8 @@ let preset_row ~theme ~param_text ~set_param_text =
       </button>
     |}
   in
-  let preset_chip (name, blurb, pov, urgency) =
-    chip
+  let preset_item (name, blurb, pov, urgency) =
+    item
       ~selected:(matches (name, blurb, pov, urgency))
       ~title:name
       ~subtitle:blurb
@@ -4150,24 +4117,25 @@ let preset_row ~theme ~param_text ~set_param_text =
           ; urgency = sprintf "%.1f" urgency
           })
   in
+  let note =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.faint
+       ^ ";font-size:10.5px;line-height:1.5;margin-top:8px;")
+  in
   {%html|
     <div>
       <div %{Styles.s (Styles.label theme ^ "margin-bottom:8px;")}>
-        How hard to push
+        Strategy posture · yours
       </div>
-      <div %{Styles.s "display:flex;gap:8px;flex-wrap:wrap;"}>
-        *{List.map presets ~f:preset_chip}
-        %{chip ~selected:is_custom ~title:"Custom"
-            ~subtitle:"Your own numbers below"
+      <div %{Styles.s "display:flex;flex-direction:column;gap:4px;"}>
+        *{List.map presets ~f:preset_item}
+        %{item ~selected:is_custom ~title:"Custom"
+            ~subtitle:"your own numbers below"
             ~on_click:(fun _ -> Effect.Ignore)}
       </div>
-      <div
-        %{Styles.s
-            ("color:"
-             ^ theme.Styles.faint
-             ^ ";font-size:11.5px;margin-top:8px;line-height:1.5;")}>
-        POV uses the participation rate; IS uses the urgency dial. TWAP and
-        VWAP follow their own schedules and ignore both.
+      <div %{note}>
+        Presets set strategy dials only — they never alter market physics.
       </div>
     </div>
   |}
@@ -4190,7 +4158,6 @@ let setup_view
   ~back
   =
   let section_label = Styles.s (Styles.label theme ^ "margin-bottom:8px;") in
-  let pills = Styles.s "display:flex;gap:8px;" in
   let error_style =
     Styles.s
       ("color:" ^ theme.Styles.red ^ ";font-size:12.5px;" ^ Styles.mono)
@@ -4207,28 +4174,104 @@ let setup_view
         |}
       ]
   in
-  let instructions =
-    match Replay.parse_alpha alpha_text with
-    | Ok instructions -> List.map instructions ~f:(instruction_row ~theme)
-    | Error error ->
-      [ {%html|<div %{error_style}>#{Error.to_string_hum error}</div>|} ]
-  in
-  (* Name what the alpha in the box actually trades, not what calendar was
-     browsed to get here — they need not be the same. *)
-  let subtitle =
-    let names =
-      match Replay.parse_alpha alpha_text with
-      | Error (_ : Error.t) -> Symbol.to_string symbol
-      | Ok instructions ->
-        List.map instructions ~f:(fun instruction ->
-          instruction.Alpha_instruction.symbol)
-        |> List.dedup_and_sort ~compare:Symbol.compare
-        |> List.map ~f:Symbol.to_string
-        |> String.concat ~sep:" "
+  let parsed = Replay.parse_alpha alpha_text in
+  (* The mockup's algorithm chooser: a vertical list, name plus tagline, with
+     the selected algorithm's reference card unfolding beneath. *)
+  let algo_item
+    (key, name, tagline, (_ : string list), (_ : string list), (_ : string))
+    =
+    let selected = String.equal algo key in
+    let style =
+      Styles.s
+        ("display:flex;flex-direction:column;gap:1px;text-align:left;width:100%;background:"
+         ^ (if selected then theme.Styles.blue_soft else "transparent")
+         ^ ";border:1px solid "
+         ^ (if selected then theme.Styles.blue else theme.Styles.chip_border)
+         ^ ";border-radius:3px;padding:8px 12px;cursor:pointer;")
     in
-    sprintf "%s · %s · bar-based fill model" names (Date.to_string date)
+    let name_style =
+      Styles.s
+        ("font-size:12.5px;font-weight:800;color:"
+         ^ (if selected then theme.Styles.blue else theme.Styles.text)
+         ^ ";"
+         ^ Styles.mono)
+    in
+    let tagline_style =
+      Styles.s ("font-size:11.5px;color:" ^ theme.Styles.secondary ^ ";")
+    in
+    {%html|
+      <button class="btn" %{style} on_click=%{fun _ -> set_algo key}>
+        <span %{name_style}>#{name}</span>
+        <span %{tagline_style}>#{tagline}</span>
+      </button>
+    |}
   in
-  let param_field ~label:text ~value ~set =
+  (* The right panel: what this run will actually trade, validated. *)
+  let instructions_panel =
+    let body =
+      match parsed with
+      | Ok instructions ->
+        instructions_header ~theme
+        :: List.map instructions ~f:(instruction_row ~theme)
+      | Error error ->
+        [ {%html|<div %{error_style}>#{Error.to_string_hum error}</div>|} ]
+    in
+    let summary =
+      match parsed with
+      | Error (_ : Error.t) -> []
+      | Ok instructions ->
+        let names =
+          List.map instructions ~f:(fun instruction ->
+            instruction.Alpha_instruction.symbol)
+          |> List.dedup_and_sort ~compare:Symbol.compare
+          |> List.map ~f:Symbol.to_string
+          |> String.concat ~sep:" "
+        in
+        let shares =
+          List.sum (module Int) instructions ~f:(fun instruction ->
+            Size.to_int instruction.Alpha_instruction.quantity)
+        in
+        let line =
+          Styles.s
+            ("color:"
+             ^ theme.Styles.faint
+             ^ ";font-size:11px;margin-top:10px;"
+             ^ Styles.mono)
+        in
+        let ready =
+          Styles.s
+            ("border:1px solid "
+             ^ theme.Styles.green
+             ^ ";border-radius:3px;padding:8px 12px;margin-top:10px;color:"
+             ^ theme.Styles.green
+             ^ ";font-size:11.5px;font-weight:600;"
+             ^ Styles.mono)
+        in
+        [ {%html|
+            <div %{line}>
+              #{sprintf "%s · %d instructions · %s shares" names
+                  (List.length instructions)
+                  (Int.to_string_hum ~delimiter:','  shares)}
+            </div>
+          |}
+        ; {%html|
+            <div %{ready}>
+              ✓ ready — validated against session #{Date.to_string date}
+            </div>
+          |}
+        ]
+    in
+    {%html|
+      <div %{Styles.card theme "padding:20px;"}>
+        <div %{section_label}>Alpha instructions</div>
+        *{body}
+        *{summary}
+      </div>
+    |}
+  in
+  (* A labelled field, with the mockup's "· POV only" annotations; inactive
+     dials stay visible but fade. *)
+  let param_field ?(active = true) ?note ~label:text ~value ~set () =
     let input_style =
       Styles.s
         ("width:110px;background:"
@@ -4237,15 +4280,33 @@ let setup_view
          ^ theme.Styles.text
          ^ ";border:1px solid "
          ^ theme.Styles.chip_border
-         ^ ";border-radius:4px;padding:5px 8px;font-size:12.5px;"
+         ^ ";border-radius:3px;padding:6px 9px;font-size:12.5px;"
          ^ Styles.mono)
     in
-    let label_style =
-      Styles.s ("color:" ^ theme.Styles.secondary ^ ";font-size:12px;")
+    let wrap =
+      Styles.s
+        ("display:flex;flex-direction:column;gap:4px;"
+         ^ if active then "" else "opacity:0.45;")
+    in
+    let note_node =
+      match note with
+      | None -> []
+      | Some note_text ->
+        let style =
+          Styles.s
+            ("color:"
+             ^ theme.Styles.faint
+             ^ ";font-size:9.5px;letter-spacing:0.04em;"
+             ^ Styles.mono)
+        in
+        [ {%html|<span %{style}>· #{note_text}</span>|} ]
     in
     {%html|
-      <label %{Styles.s "display:flex;flex-direction:column;gap:4px;"}>
-        <span %{label_style}>#{text}</span>
+      <label %{wrap}>
+        <span %{Styles.s "display:flex;gap:5px;align-items:baseline;"}>
+          <span %{Styles.s (Styles.label theme)}>#{text}</span>
+          *{note_node}
+        </span>
         <input
           type="text"
           %{Vdom.Attr.string_property "value" value}
@@ -4254,111 +4315,160 @@ let setup_view
       </label>
     |}
   in
-  let params_card =
-    let knob_note =
+  let update f value = set_param_text (f param_text value) in
+  let is_synthetic =
+    String.equal param_text.Replay.Param_text.engine "synthetic"
+  in
+  (* The fill engine as the mockup's radio list. *)
+  let engine_choice =
+    let option value ~name ~blurb =
+      let selected =
+        String.equal param_text.Replay.Param_text.engine value
+      in
+      let style =
+        Styles.s
+          ("display:flex;gap:8px;align-items:flex-start;text-align:left;width:100%;background:"
+           ^ (if selected then theme.Styles.blue_soft else "transparent")
+           ^ ";border:1px solid "
+           ^ (if selected
+              then theme.Styles.blue
+              else theme.Styles.chip_border)
+           ^ ";border-radius:3px;padding:8px 10px;cursor:pointer;")
+      in
+      let dot =
+        Styles.s
+          ("color:"
+           ^ (if selected then theme.Styles.blue else theme.Styles.faint)
+           ^ ";font-size:11px;flex-shrink:0;margin-top:1px;")
+      in
+      let name_style =
+        Styles.s
+          ("font-size:12px;font-weight:700;color:"
+           ^ (if selected then theme.Styles.blue else theme.Styles.text)
+           ^ ";")
+      in
+      let blurb_style =
+        Styles.s
+          ("font-size:10.5px;line-height:1.5;color:"
+           ^ theme.Styles.secondary
+           ^ ";")
+      in
+      {%html|
+        <button
+          class="btn"
+          %{style}
+          on_click=%{fun _ ->
+            update (fun p v -> { p with Replay.Param_text.engine = v })
+              value}>
+          <span %{dot}>#{if selected then "●" else "○"}</span>
+          <span %{Styles.s "display:flex;flex-direction:column;gap:1px;"}>
+            <span %{name_style}>#{name}</span>
+            <span %{blurb_style}>#{blurb}</span>
+          </span>
+        </button>
+      |}
+    in
+    {%html|
+      <div>
+        <div %{Styles.s (Styles.label theme ^ "margin-bottom:8px;")}>
+          Fill engine
+        </div>
+        <div %{Styles.s "display:flex;flex-direction:column;gap:6px;"}>
+          %{option "bar" ~name:"Bar model"
+              ~blurb:"deterministic fills on 1-minute bars"}
+          %{option "synthetic" ~name:"Synthetic exchange"
+              ~blurb:"seeded book · queue + partial fills"}
+          %{param_field ~active:is_synthetic ~note:"synthetic only"
+              ~label:"seed" ~value:param_text.Replay.Param_text.seed
+              ~set:(update (fun p v -> { p with Replay.Param_text.seed = v }))
+              ()}
+        </div>
+      </div>
+    |}
+  in
+  let algo_params =
+    let note =
       Styles.s
         ("color:"
          ^ theme.Styles.faint
-         ^ ";font-size:11.5px;line-height:1.6;margin-bottom:10px;max-width:78ch;"
-        )
-    in
-    let update f value = set_param_text (f param_text value) in
-    let fill_fields =
-      [ param_field
-          ~label:"half spread $"
-          ~value:param_text.Replay.Param_text.half_spread
-          ~set:
-            (update (fun p v -> { p with Replay.Param_text.half_spread = v }))
-      ; param_field
-          ~label:"participation cap"
-          ~value:param_text.Replay.Param_text.participation
-          ~set:
-            (update (fun p v ->
-               { p with Replay.Param_text.participation = v }))
-      ; param_field
-          ~label:"impact coeff $"
-          ~value:param_text.Replay.Param_text.impact
-          ~set:(update (fun p v -> { p with Replay.Param_text.impact = v }))
-      ]
-    in
-    let algo_fields =
-      if String.equal algo "pov"
-      then
-        [ param_field
-            ~label:"participation rate"
-            ~value:param_text.Replay.Param_text.pov_rate
-            ~set:
-              (update (fun p v -> { p with Replay.Param_text.pov_rate = v }))
-        ]
-      else if String.equal algo "is"
-      then
-        [ param_field
-            ~label:"urgency (0 = TWAP)"
-            ~value:param_text.Replay.Param_text.urgency
-            ~set:
-              (update (fun p v -> { p with Replay.Param_text.urgency = v }))
-        ]
-      else []
-    in
-    let engine_pills =
-      let pill value label =
-        algo_pill
-          ~theme
-          ~selected:(String.equal param_text.Replay.Param_text.engine value)
-          ~on_click:(fun _ ->
-            update (fun p v -> { p with Replay.Param_text.engine = v }) value)
-          label
-      in
-      [ {%html|
-          <div %{Styles.s "display:flex;gap:8px;align-items:flex-end;"}>
-            %{pill "bar" "Bar model"}
-            %{pill "synthetic" "Synthetic exchange"}
-          </div>
-        |}
-      ]
-      @
-      if String.equal param_text.Replay.Param_text.engine "synthetic"
-      then
-        [ param_field
-            ~label:"seed"
-            ~value:param_text.Replay.Param_text.seed
-            ~set:(update (fun p v -> { p with Replay.Param_text.seed = v }))
-        ]
-      else []
+         ^ ";font-size:10.5px;line-height:1.5;margin-top:8px;")
     in
     {%html|
+      <div>
+        <div %{Styles.s (Styles.label theme ^ "margin-bottom:8px;")}>
+          Algorithm parameters
+        </div>
+        <div %{Styles.s "display:flex;flex-direction:column;gap:10px;"}>
+          %{param_field ~active:(String.equal algo "pov") ~note:"POV only"
+              ~label:"pov rate"
+              ~value:param_text.Replay.Param_text.pov_rate
+              ~set:(update (fun p v ->
+                { p with Replay.Param_text.pov_rate = v })) ()}
+          %{param_field ~active:(String.equal algo "is") ~note:"IS only"
+              ~label:"is urgency"
+              ~value:param_text.Replay.Param_text.urgency
+              ~set:(update (fun p v ->
+                { p with Replay.Param_text.urgency = v })) ()}
+        </div>
+        <div %{note}>
+          TWAP and VWAP follow their own schedules and ignore both dials.
+        </div>
+      </div>
+    |}
+  in
+  let friction_params =
+    {%html|
+      <div>
+        <div %{Styles.s (Styles.label theme ^ "margin-bottom:8px;")}>
+          Market friction · house physics
+        </div>
+        <div %{Styles.s "display:flex;flex-direction:column;gap:10px;"}>
+          %{param_field ~label:"half spread $"
+              ~value:param_text.Replay.Param_text.half_spread
+              ~set:(update (fun p v ->
+                { p with Replay.Param_text.half_spread = v })) ()}
+          %{param_field ~label:"participation cap"
+              ~value:param_text.Replay.Param_text.participation
+              ~set:(update (fun p v ->
+                { p with Replay.Param_text.participation = v })) ()}
+          %{param_field ~label:"impact coeff $"
+              ~value:param_text.Replay.Param_text.impact
+              ~set:(update (fun p v ->
+                { p with Replay.Param_text.impact = v })) ()}
+        </div>
+      </div>
+    |}
+  in
+  let explain =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.faint
+       ^ ";font-size:11px;line-height:1.65;border-top:1px solid "
+       ^ theme.Styles.hairline
+       ^ ";padding-top:12px;margin-top:18px;max-width:100ch;")
+  in
+  let params_card =
+    {%html|
       <div %{Styles.card theme "padding:20px;"}>
-        %{preset_row ~theme ~param_text ~set_param_text}
-        <div %{Styles.s (Styles.label theme ^ "margin:18px 0 4px 0;")}>
-          Market friction
+        <div
+          %{Styles.s
+              "display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:24px;align-items:start;"}>
+          %{preset_rows ~theme ~param_text ~set_param_text}
+          %{algo_params}
+          %{friction_params}
+          %{engine_choice}
         </div>
-        <div %{knob_note}>
-          These describe the market you are trading against, not your
-          strategy. <b>Half spread</b> is the toll for demanding an
-          immediate fill. <b>Participation cap</b> is the most of one
-          minute's volume any single order may take. <b>Impact coeff</b>
-          scales how far your own buying pushes the price when you take a
-          large share of that minute.
-        </div>
-        <div %{Styles.s "display:flex;gap:14px;flex-wrap:wrap;"}>
-          *{fill_fields}
-          *{algo_fields}
-        </div>
-        <div %{Styles.s (Styles.label theme ^ "margin:14px 0 4px 0;")}>
-          Fill engine
-        </div>
-        <div %{knob_note}>
-          <b>Bar model</b> prices each fill by formula: the minute's opening
-          price, plus the half spread, plus an impact penalty that grows
-          with your share of that minute's volume. <b>Synthetic exchange</b>
-          runs a real limit order book instead — background traders post
-          bids and offers around the historical price, and your orders match
-          against them by price-time priority, so impact and queueing
-          emerge from the matching rather than from a formula. It is
-          slower, seeded, and reproducible.
-        </div>
-        <div %{Styles.s "display:flex;gap:14px;flex-wrap:wrap;"}>
-          *{engine_pills}
+        <div %{explain}>
+          Market friction describes the market you trade against, not your
+          strategy: half spread is the toll for demanding an immediate
+          fill, the participation cap is the most of one minute's volume
+          any single order may take, and the impact coefficient scales how
+          far your own trading pushes the price. The bar model prices
+          fills by formula from each minute's bar; the synthetic exchange
+          runs a real limit order book — background traders post around the
+          historical price and your orders match by price-time priority, so
+          impact and queueing emerge from the matching. It is slower,
+          seeded, and reproducible.
         </div>
       </div>
     |}
@@ -4366,29 +4476,22 @@ let setup_view
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
       %{wizard_header ~step:2 ?profile ~theme ~is_dark ~toggle_theme
-          ~title:"New simulation" ~subtitle
+          ~title:"New simulation"
+          ~subtitle:(sprintf
+                       "%s · %s — three separate things: the algorithm, \
+                        your strategy dials, and the market's physics"
+                       (Symbol.to_string symbol)
+                       (Date.to_string date))
           ~back:None ()}
       <div %{Styles.s two_col}>
         <div %{Styles.card theme "padding:20px;"}>
           <div %{section_label}>Execution algorithm</div>
-          <div %{pills}>
-            %{algo_pill ~theme ~selected:(String.equal algo "twap")
-                ~on_click:(fun _ -> set_algo "twap") "TWAP"}
-            %{algo_pill ~theme ~selected:(String.equal algo "vwap")
-                ~on_click:(fun _ -> set_algo "vwap") "VWAP"}
-            %{algo_pill ~theme ~selected:(String.equal algo "pov")
-                ~on_click:(fun _ -> set_algo "pov") "POV"}
-            %{algo_pill ~theme ~selected:(String.equal algo "is")
-                ~on_click:(fun _ -> set_algo "is") "IS"}
-            %{algo_pill ~theme ~selected:(String.equal algo "immediate")
-                ~on_click:(fun _ -> set_algo "immediate") "Immediate"}
+          <div %{Styles.s "display:flex;flex-direction:column;gap:6px;"}>
+            *{List.map algorithm_cards ~f:algo_item}
           </div>
           *{algorithm_detail ~theme ~algo}
         </div>
-        <div %{Styles.card theme "padding:20px;"}>
-          <div %{section_label}>Alpha instructions</div>
-          *{instructions}
-        </div>
+        %{instructions_panel}
       </div>
       %{params_card}
       *{error_card}
@@ -4519,22 +4622,27 @@ let results_view
       then theme.Styles.red
       else theme.Styles.secondary
     in
-    let tile ~label ~sub ~color value =
+    (* The mockup's headline band: four cells split by hairlines, the
+       plain-words verdict above them, the glossary a click away. *)
+    let tile index ~label ~sub ~color value =
       let tile_style =
         Styles.s
-          ("display:flex;flex-direction:column;gap:2px;background:"
-           ^ theme.Styles.chip_bg
-           ^ ";border-radius:8px;padding:14px 16px;")
+          ("display:flex;flex-direction:column;gap:3px;padding:14px 18px;"
+           ^
+           if index = 0
+           then ""
+           else "border-left:1px solid " ^ theme.Styles.hairline ^ ";")
       in
       let value_style =
         Styles.s
-          ("font-size:22px;font-weight:700;color:"
+          ("font-size:22px;font-weight:700;white-space:nowrap;color:"
            ^ color
            ^ ";"
            ^ Styles.mono)
       in
       let sub_style =
-        Styles.s ("font-size:11.5px;color:" ^ theme.Styles.faint ^ ";")
+        Styles.s
+          ("font-size:11px;line-height:1.5;color:" ^ theme.Styles.faint ^ ";")
       in
       {%html|
         <div %{tile_style}>
@@ -4546,69 +4654,52 @@ let results_view
     in
     let verdict_style =
       Styles.s
-        ("font-size:15px;font-weight:600;color:"
-         ^ theme.Styles.text
-         ^ ";margin-bottom:12px;")
+        ("font-size:14.5px;font-weight:600;color:" ^ theme.Styles.text ^ ";")
     in
     let tiles =
       Styles.s
-        "display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;"
+        ("display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));border-top:1px \
+          solid "
+         ^ theme.Styles.hairline
+         ^ ";")
     in
     let help_button =
-      let style =
-        Styles.s
-          ("display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;background:"
-           ^ theme.Styles.chip_bg
-           ^ ";color:"
-           ^ theme.Styles.blue
-           ^ ";border:1px solid "
-           ^ theme.Styles.chip_border
-           ^ ";cursor:pointer;font-size:14px;font-weight:800;flex-shrink:0;"
-          )
-      in
-      {%html|
-        <button
-          class="btn"
-          %{style}
-          title="What do these numbers mean?"
-          on_click=%{fun _ -> open_help}>
-          ?
-        </button>
-      |}
+      secondary_button
+        ~theme
+        ~on_click:(fun _ -> open_help)
+        "Metrics glossary ?"
     in
     let verdict_row =
       Styles.s
-        "display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:12px;"
+        "display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:16px \
+         18px;"
     in
     {%html|
-      <div %{Styles.card theme "padding:20px;"}>
+      <div %{Styles.card theme ""}>
         <div %{verdict_row}>
           <span %{verdict_style}>#{verdict}</span>
           %{help_button}
         </div>
         <div %{tiles}>
-          %{tile ~label:"Slippage vs decision price"
-              ~sub:"how far your average fill drifted from the price when \
-                    you decided — the algorithm's own score"
-              ~color:(if Float.( <= ) shortfall_bps 0.
-                      then theme.Styles.green else theme.Styles.red)
-              (sprintf "%+.1f bps" shortfall_bps)}
-          %{tile ~label:"Execution bonus"
-              ~sub:"vs the same orders traded the moment they arrived"
-              ~color:(money_color value_add)
-              (dollars_signed value_add)}
-          %{tile ~label:"Alpha captured"
+          %{tile 0 ~label:"Your alpha predicted"
+              ~sub:"profit if every order filled instantly and free"
+              ~color:(money_color total_gross)
+              (dollars_signed total_gross)}
+          %{tile 1 ~label:"You actually kept"
+              ~sub:"net P&L after realistic trading costs"
+              ~color:(money_color total_net)
+              (dollars_signed total_net)}
+          %{tile 2 ~label:"Alpha captured"
               ~sub:(if Float.( > ) capture_ratio 1.
                     then "over 100%: you traded better than the decision price"
                     else "the share of the prediction that survived")
               ~color:(if Float.( > ) capture_ratio 1.
                       then theme.Styles.green else theme.Styles.text)
               capture}
-          %{tile ~label:"You actually kept"
-              ~sub:"net P&L — mostly a verdict on the alpha, not the \
-                    execution"
-              ~color:(money_color total_net)
-              (dollars_signed total_net)}
+          %{tile 3 ~label:"Execution bonus vs immediate"
+              ~sub:"vs selling/buying everything the moment it arrived"
+              ~color:(money_color value_add)
+              (dollars_signed value_add)}
         </div>
       </div>
     |}
@@ -4775,6 +4866,10 @@ let results_view
     Styles.s
       ("color:" ^ theme.Styles.text ^ ";font-size:14px;font-weight:600;")
   in
+  let formula_aside =
+    Styles.s
+      ("color:" ^ theme.Styles.faint ^ ";font-size:11px;" ^ Styles.mono)
+  in
   let leaderboard_card =
     let title_style =
       Styles.s
@@ -4931,7 +5026,53 @@ let results_view
       </div>
     |}
   in
-  let buttons = Styles.s "display:flex;gap:10px;align-items:center;" in
+  (* The mockup's on-page glossary: every metric's plain-words line in a
+     three-column grid; the modal keeps the long-form detail. *)
+  let glossary_section =
+    let entry (term, plain, (_ : string)) =
+      let cell =
+        Styles.s
+          ("display:flex;flex-direction:column;gap:3px;border-top:1px solid "
+           ^ theme.Styles.hairline
+           ^ ";padding:10px 0 4px;")
+      in
+      let term_style =
+        Styles.s
+          ("color:"
+           ^ theme.Styles.text
+           ^ ";font-size:12px;font-weight:700;"
+           ^ Styles.mono)
+      in
+      let plain_style =
+        Styles.s
+          ("color:"
+           ^ theme.Styles.secondary
+           ^ ";font-size:11.5px;line-height:1.55;")
+      in
+      {%html|
+        <div %{cell}>
+          <span %{term_style}>#{term}</span>
+          <span %{plain_style}>#{plain}</span>
+        </div>
+      |}
+    in
+    {%html|
+      <div %{Styles.card theme "padding:16px 18px 14px;"}>
+        <div %{Styles.s (Styles.kicker theme ^ "margin-bottom:10px;")}>
+          #{sprintf "metrics glossary · %d entries"
+              (List.length glossary_entries)}
+        </div>
+        <div
+          %{Styles.s
+              "display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));column-gap:24px;"}>
+          *{List.map glossary_entries ~f:entry}
+        </div>
+      </div>
+    |}
+  in
+  let buttons =
+    Styles.s "display:flex;gap:10px;align-items:center;flex-wrap:wrap;"
+  in
   let export_name suffix =
     sprintf
       "execlab_%s_%s_%s_%s.csv"
@@ -4946,14 +5087,13 @@ let results_view
   let ghost_button ~on_click label =
     let style =
       Styles.s
-        ("background:"
-         ^ theme.Styles.chip_bg
-         ^ ";color:"
+        ("background:transparent;color:"
          ^ theme.Styles.secondary
          ^ ";border:1px solid "
          ^ theme.Styles.chip_border
-         ^ ";border-radius:5px;padding:9px \
-            16px;cursor:pointer;font-size:13px;font-weight:600;")
+         ^ ";border-radius:3px;padding:8px \
+            14px;cursor:pointer;font-size:12px;font-weight:600;"
+         ^ Styles.mono)
     in
     {%html|<button %{style} on_click=%{on_click}>#{label}</button>|}
   in
@@ -4970,9 +5110,12 @@ let results_view
           ~back:(Some ("← Replay", to_sim)) ()}
       %{summary}
       *{what_changed ~theme ~current:(run_record replay) ~previous:previous_run}
-      <div %{Styles.card theme "padding-bottom:4px;"}>
-        <div %{Styles.s "padding:14px 16px 0 16px;"}>
+      <div %{Styles.card theme "padding-bottom:4px;overflow-x:auto;"}>
+        <div
+          %{Styles.s
+              "padding:14px 16px 0 16px;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;"}>
           <span %{title_style}>Execution cost breakdown</span>
+          <span %{formula_aside}>timing + spread + impact = shortfall</span>
         </div>
         <div %{head_row cost_columns}>
           <span>order</span>
@@ -4988,9 +5131,12 @@ let results_view
         *{List.mapi rows ~f:cost_row}
         %{cost_totals}
       </div>
-      <div %{Styles.card theme "padding-bottom:4px;"}>
-        <div %{Styles.s "padding:14px 16px 0 16px;"}>
-          <span %{title_style}>Results</span>
+      <div %{Styles.card theme "padding-bottom:4px;overflow-x:auto;"}>
+        <div
+          %{Styles.s
+              "padding:14px 16px 0 16px;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;"}>
+          <span %{title_style}>P&L identity</span>
+          <span %{formula_aside}>gross alpha − shortfall − opportunity = net P&L</span>
         </div>
         <div %{head_row results_columns}>
           <span>order</span>
@@ -5008,20 +5154,767 @@ let results_view
         %{results_totals}
       </div>
       %{leaderboard_card}
+      %{glossary_section}
       <div %{buttons}>
         %{primary_button ~theme ~on_click:(fun _ -> new_sim)
             "New simulation"}
-        %{primary_button ~theme ~on_click:(fun _ -> to_dashboard)
+        %{secondary_button ~theme ~on_click:(fun _ -> to_dashboard)
             "Dashboard"}
-        %{ghost_button
-            ~on_click:(fun _ ->
-              download (export_name "results") (Replay.results_csv replay))
-            "⤓ Results CSV"}
-        %{ghost_button
-            ~on_click:(fun _ ->
-              download (export_name "fills") (Replay.fills_csv replay))
-            "⤓ Fills CSV"}
+        <span
+          %{Styles.s "margin-left:auto;display:flex;gap:10px;align-items:center;"}>
+          %{ghost_button
+              ~on_click:(fun _ ->
+                download (export_name "results") (Replay.results_csv replay))
+              "↓ Results CSV"}
+          %{ghost_button
+              ~on_click:(fun _ ->
+                download (export_name "fills") (Replay.fills_csv replay))
+              "↓ Fills CSV"}
+        </span>
       </div>
+    </div>
+  |}
+;;
+
+(* ---------- landing page ---------- *)
+
+module Demo_strip = struct
+  type t =
+    { line1 : string
+    ; line2 : string
+    }
+end
+
+(* One real replay's numbers for the front door: a one-order sample alpha,
+   TWAP, the first bundled session — computed once, lazily, by the same
+   simulator every run uses. If anything about the bundled data is off the
+   strip simply doesn't render; it never shows made-up numbers. *)
+let demo_strip =
+  lazy
+    (let%bind.Option symbol = List.hd Dataset.symbols in
+     let%bind.Option date = List.hd (Dataset.dates_for symbol) in
+     let alpha_text =
+       sprintf "10:00:00,%s,BUY,5000,11:00:00\n" (Symbol.to_string symbol)
+     in
+     let%bind.Option params =
+       Result.ok (Replay.parse_params Replay.Param_text.default)
+     in
+     let%bind.Option replay =
+       Result.ok (Replay.run ~date ~alpha_text ~algo_name:"twap" ~params)
+     in
+     let%bind.Option parent = List.hd replay.Replay.parents in
+     let%bind.Option row = List.hd replay.Replay.results.rows in
+     let grading = row.Replay.grading in
+     let%bind.Option metrics = grading.Transaction_cost.fill_metrics in
+     let vwap = Replay.vwap_for replay symbol in
+     let%bind.Option () = Option.some_if (Array.length vwap > 0) () in
+     let day_vwap = vwap.(Array.length vwap - 1) in
+     let capture =
+       match grading.Transaction_cost.alpha_capture with
+       | None -> ""
+       | Some c -> sprintf " · capture %.1f%%" (c *. 100.)
+     in
+     Some
+       { Demo_strip.line1 =
+           sprintf
+             "%s %s · O1 %s %s · arrival %s · avg fill %.4f · vs arrival \
+              %+.1f bps"
+             (Symbol.to_string symbol)
+             (Date.to_string date)
+             (side_str grading.Transaction_cost.side)
+             (Int.to_string_hum
+                ~delimiter:','
+                (Size.to_int grading.Transaction_cost.quantity))
+             (Price.to_string_dollar parent.Replay.arrival_price)
+             metrics.Transaction_cost.Fill_metrics.average_fill_price
+             metrics.Transaction_cost.Fill_metrics.shortfall_bps
+       ; line2 =
+           sprintf
+             "day vwap %.2f · shortfall %s%s — from a real replay, not \
+              marketing data"
+             day_vwap
+             (dollars_signed grading.Transaction_cost.friction_cost_cents)
+             capture
+       })
+;;
+
+(* The stats band under the hero, computed from what is actually bundled so
+   the front door can never overstate the lab. *)
+let landing_stats_band ~theme =
+  let sessions =
+    List.sum (module Int) Dataset.symbols ~f:(fun symbol ->
+      List.length (Dataset.dates_for symbol))
+  in
+  let stats =
+    [ Int.to_string (List.length Dataset.symbols), "symbols"
+    ; Int.to_string sessions, "historical sessions"
+    ; Int.to_string (List.length algorithm_cards), "execution algorithms"
+    ; "2", "fill engines"
+    ; Int.to_string (List.length glossary_entries), "measured metrics"
+    ]
+  in
+  let cell index (value, label_text) =
+    let style =
+      Styles.s
+        ("display:flex;flex-direction:column;gap:6px;padding:18px 20px 14px;"
+         ^
+         if index = 0
+         then ""
+         else "border-left:1px solid " ^ theme.Styles.hairline ^ ";")
+    in
+    let value_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.text
+         ^ ";font-size:26px;font-weight:700;"
+         ^ Styles.serif)
+    in
+    {%html|
+      <div %{style}>
+        <span %{value_style}>#{value}</span>
+        <span %{Styles.s (Styles.label theme)}>#{label_text}</span>
+      </div>
+    |}
+  in
+  {%html|
+    <div
+      %{Styles.s
+          ("display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));border-top:1px \
+            solid "
+           ^ theme.Styles.text
+           ^ ";")}>
+      *{List.mapi stats ~f:cell}
+    </div>
+  |}
+;;
+
+(* A section opener in the mockup's voice: a rule, then an amber small-caps
+   kicker. *)
+let landing_section_head ~theme text =
+  {%html|
+    <div
+      %{Styles.s
+          ("border-top:1px solid "
+           ^ theme.Styles.text
+           ^ ";padding-top:14px;")}>
+      <span %{Styles.s (Styles.kicker theme)}>#{text}</span>
+    </div>
+  |}
+;;
+
+let landing_how_it_works ~theme =
+  let steps =
+    [ ( "01"
+      , "Pick a market day"
+      , sprintf
+          "A real session — %d symbols, 1-minute closes, 09:30–15:59."
+          (List.length Dataset.symbols) )
+    ; ( "02"
+      , "Paste alpha instructions"
+      , "Timestamped parent orders as CSV — or start from a sample." )
+    ; ( "03"
+      , "Configure execution"
+      , "Algorithm, posture, market friction, and the fill engine." )
+    ; ( "04"
+      , "Replay the day"
+      , "Minute-by-minute fills against the tape, at 1×–16×." )
+    ; ( "05"
+      , "Read the decomposition"
+      , "timing + spread + impact = shortfall, plus opportunity cost." )
+    ]
+  in
+  let step index (number, title, blurb) =
+    let style =
+      Styles.s
+        ("display:flex;flex-direction:column;gap:5px;padding:4px 18px 4px 0;"
+         ^
+         if index = 0
+         then ""
+         else
+           "border-left:1px solid "
+           ^ theme.Styles.hairline
+           ^ ";padding-left:18px;")
+    in
+    let number_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.brown
+         ^ ";font-size:12px;font-weight:700;"
+         ^ Styles.mono)
+    in
+    let title_style =
+      Styles.s
+        ("color:" ^ theme.Styles.text ^ ";font-size:13.5px;font-weight:700;")
+    in
+    let blurb_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.secondary
+         ^ ";font-size:12px;line-height:1.55;")
+    in
+    {%html|
+      <div %{style}>
+        <span %{number_style}>#{number}</span>
+        <span %{title_style}>#{title}</span>
+        <span %{blurb_style}>#{blurb}</span>
+      </div>
+    |}
+  in
+  {%html|
+    <div
+      %{Styles.s
+          "display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-top:16px;"}>
+      *{List.mapi steps ~f:step}
+    </div>
+  |}
+;;
+
+(* "Five ways to work an order": the algorithm reference data rendered as the
+   mockup's comparison table. *)
+let landing_algo_table ~theme =
+  let columns = "110px 1.1fr 1.3fr 1.3fr" in
+  let head =
+    Styles.s
+      ("display:grid;grid-template-columns:"
+       ^ columns
+       ^ ";column-gap:18px;padding:10px 0 8px;border-bottom:1px solid "
+       ^ theme.Styles.hairline
+       ^ ";")
+  in
+  let head_cell ?color text =
+    let style =
+      Styles.s
+        (Styles.table_label theme
+         ^ match color with None -> "" | Some c -> "color:" ^ c ^ ";")
+    in
+    {%html|<span %{style}>#{text}</span>|}
+  in
+  let row ((_ : string), name, tagline, best, weak, (_ : string)) =
+    let style =
+      Styles.s
+        ("display:grid;grid-template-columns:"
+         ^ columns
+         ^ ";column-gap:18px;padding:11px 0;border-bottom:1px solid "
+         ^ theme.Styles.hairline
+         ^ ";align-items:baseline;")
+    in
+    let name_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.text
+         ^ ";font-size:13px;font-weight:700;"
+         ^ Styles.mono)
+    in
+    let cell_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.secondary
+         ^ ";font-size:12.5px;line-height:1.55;")
+    in
+    let join items = String.concat ~sep:"; " items in
+    {%html|
+      <div %{style}>
+        <span %{name_style}>#{name}</span>
+        <span %{cell_style}>#{tagline}</span>
+        <span %{cell_style}>#{join best}</span>
+        <span %{cell_style}>#{join weak}</span>
+      </div>
+    |}
+  in
+  let title_row =
+    Styles.s
+      "display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin:14px \
+       0 2px;"
+  in
+  let title_style =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.text
+       ^ ";font-size:19px;font-weight:700;"
+       ^ Styles.serif)
+  in
+  let aside =
+    Styles.s
+      ("color:" ^ theme.Styles.faint ^ ";font-size:11.5px;" ^ Styles.mono)
+  in
+  {%html|
+    <div>
+      <div %{title_row}>
+        <span %{title_style}>Five ways to work an order</span>
+        <span %{aside}>same instructions · same day · different execution</span>
+      </div>
+      <div %{Styles.s "overflow-x:auto;"}>
+        <div %{Styles.s "min-width:760px;"}>
+          <div %{head}>
+            %{head_cell "algorithm"}
+            %{head_cell "schedule"}
+            %{head_cell ~color:theme.Styles.green "best when"}
+            %{head_cell ~color:theme.Styles.red "weak when"}
+          </div>
+          *{List.map algorithm_cards ~f:row}
+        </div>
+      </div>
+    </div>
+  |}
+;;
+
+let landing_engines_and_metrics ~theme =
+  let h2 =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.text
+       ^ ";font-size:16px;font-weight:700;padding-bottom:8px;border-bottom:2px \
+          solid "
+       ^ theme.Styles.text
+       ^ ";margin-bottom:12px;"
+       ^ Styles.serif)
+  in
+  let term =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.text
+       ^ ";font-size:12.5px;font-weight:700;"
+       ^ Styles.mono)
+  in
+  let body =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.secondary
+       ^ ";font-size:12.5px;line-height:1.65;")
+  in
+  let footnote =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.faint
+       ^ ";font-size:11px;margin-top:12px;"
+       ^ Styles.mono)
+  in
+  let formula =
+    let part color text =
+      let style =
+        Styles.s ("color:" ^ color ^ ";font-weight:700;" ^ Styles.mono)
+      in
+      {%html|<span %{style}>#{text}</span>|}
+    in
+    let plus =
+      let style = Styles.s ("color:" ^ theme.Styles.faint ^ ";") in
+      fun text -> {%html|<span %{style}>#{text}</span>|}
+    in
+    {%html|
+      <div %{Styles.s "display:flex;gap:8px;font-size:13.5px;margin-bottom:10px;flex-wrap:wrap;"}>
+        %{part theme.Styles.blue "timing"}
+        %{plus "+"}
+        %{part theme.Styles.blue "spread"}
+        %{plus "+"}
+        %{part theme.Styles.blue "impact"}
+        %{plus "="}
+        %{part theme.Styles.red "shortfall"}
+      </div>
+    |}
+  in
+  let stack = Styles.s "display:flex;flex-direction:column;gap:10px;" in
+  {%html|
+    <div
+      %{Styles.s
+          "display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:36px;margin-top:16px;"}>
+      <div>
+        <div %{h2}>Two fill engines</div>
+        <div %{stack}>
+          <div>
+            <div %{term}>Bar model</div>
+            <div %{body}>
+              Deterministic fills against historical 1-minute bars, with a
+              configurable half-spread and an impact model that grows with
+              your share of the minute's volume.
+            </div>
+          </div>
+          <div>
+            <div %{term}>Synthetic exchange</div>
+            <div %{body}>
+              A seeded order book with queue position, partial fills, and
+              maker/taker outcomes calibrated to the session.
+            </div>
+          </div>
+        </div>
+        <div %{footnote}>
+          same seed · same day · same fills — every run reproducible
+        </div>
+      </div>
+      <div>
+        <div %{h2}>What gets measured</div>
+        %{formula}
+        <div %{body}>
+          Every run decomposes implementation shortfall against the arrival
+          price, adds opportunity cost on anything left unfilled, and
+          reports capture — the share of predicted alpha that survived —
+          alongside value added versus an Immediate baseline.
+        </div>
+        <div %{footnote}>
+          per order and in total · dollars and basis points · exportable as
+          CSV
+        </div>
+      </div>
+    </div>
+  |}
+;;
+
+(* Shared field styling for the sign-in card. *)
+let landing_field
+  ~theme
+  ~kind
+  ~label:label_text
+  ~value
+  ~placeholder
+  ~on_input
+  =
+  let input_style =
+    Styles.s
+      ("background:"
+       ^ theme.Styles.page_bg
+       ^ ";color:"
+       ^ theme.Styles.text
+       ^ ";border:1px solid "
+       ^ theme.Styles.chip_border
+       ^ ";border-radius:3px;padding:9px 11px;font-size:13.5px;width:100%;"
+       ^ Styles.mono)
+  in
+  {%html|
+    <label %{Styles.s "display:flex;flex-direction:column;gap:5px;"}>
+      <span %{Styles.s (Styles.label theme)}>#{label_text}</span>
+      <input
+        type=%{kind}
+        %{input_style}
+        placeholder=%{placeholder}
+        %{Vdom.Attr.string_property "value" value}
+        on_input=%{fun (_ : _) text -> on_input text} />
+    </label>
+  |}
+;;
+
+(* The mockup's "Start a session" card: handle + passcode, both auth actions
+   side by side, and the guest door underneath. [submit_auth] takes the mode,
+   so "Sign in" and "Create account" are one form with two exits. *)
+let session_card
+  ~theme
+  ~username
+  ~set_username
+  ~passcode
+  ~set_passcode
+  ~status
+  ~submit_auth
+  ~enter_as_guest
+  =
+  let card =
+    Styles.card theme "padding:20px 22px;width:100%;max-width:400px;"
+  in
+  let title_style =
+    Styles.s
+      ("color:" ^ theme.Styles.text ^ ";font-size:15px;font-weight:700;")
+  in
+  let note_style =
+    Styles.s
+      ("color:" ^ theme.Styles.faint ^ ";font-size:11.5px;line-height:1.55;")
+  in
+  let status_node =
+    match status with
+    | None -> []
+    | Some text ->
+      let style =
+        Styles.s
+          ("color:" ^ theme.Styles.red ^ ";font-size:12px;line-height:1.5;")
+      in
+      [ {%html|<div %{style}>#{text}</div>|} ]
+  in
+  let guest_link =
+    Styles.s
+      ("background:none;border:none;padding:2px 0;color:"
+       ^ theme.Styles.blue
+       ^ ";font-size:12.5px;font-weight:600;cursor:pointer;text-align:left;"
+      )
+  in
+  let stack = Styles.s "display:flex;flex-direction:column;gap:12px;" in
+  {%html|
+    <div %{card} id="start">
+      <div %{stack}>
+        <span %{title_style}>Start a session</span>
+        %{landing_field ~theme ~kind:"text" ~label:"handle"
+            ~value:username ~placeholder:"handle" ~on_input:set_username}
+        %{landing_field ~theme ~kind:"password" ~label:"passcode"
+            ~value:passcode ~placeholder:"••••••" ~on_input:set_passcode}
+        *{status_node}
+        <div %{Styles.s "display:flex;gap:8px;flex-wrap:wrap;"}>
+          %{primary_button ~theme
+              ~on_click:(fun _ -> submit_auth Auth_mode.Sign_in) "Sign in"}
+          %{secondary_button ~theme
+              ~on_click:(fun _ -> submit_auth Auth_mode.Create_account)
+              "Create account"}
+        </div>
+        <button
+          class="btn"
+          %{guest_link}
+          on_click=%{fun _ -> enter_as_guest}>
+          Continue as guest →
+        </button>
+        <span %{note_style}>
+          An account is only required to publish runs to the leaderboard.
+        </span>
+      </div>
+    </div>
+  |}
+;;
+
+(* Signed in, the hero card is the way back into the lab instead. *)
+let welcome_card ~theme ~username ~enter ~to_my_runs ~sign_out =
+  let card =
+    Styles.card theme "padding:20px 22px;width:100%;max-width:400px;"
+  in
+  let who =
+    Styles.s
+      ("color:" ^ theme.Styles.faint ^ ";font-size:11.5px;" ^ Styles.mono)
+  in
+  let name_style =
+    Styles.s ("color:" ^ theme.Styles.text ^ ";font-weight:700;")
+  in
+  let link =
+    Styles.s
+      ("background:none;border:none;padding:2px 0;color:"
+       ^ theme.Styles.secondary
+       ^ ";font-size:12px;font-weight:600;cursor:pointer;text-align:left;")
+  in
+  {%html|
+    <div %{card} id="start">
+      <div %{Styles.s "display:flex;flex-direction:column;gap:12px;"}>
+        <span %{who}>signed in as <span %{name_style}>#{username}</span></span>
+        %{primary_button ~icon:(Icon.arrow_right ~size:14 ()) ~theme
+            ~on_click:(fun _ -> enter) "Start a session"}
+        %{secondary_button ~theme ~on_click:(fun _ -> to_my_runs) "My runs"}
+        <button class="btn" %{link} on_click=%{fun _ -> sign_out}>
+          Sign out
+        </button>
+      </div>
+    </div>
+  |}
+;;
+
+let landing_view
+  ~theme
+  ~is_dark
+  ~toggle_theme
+  ~enter
+  ~to_dashboard
+  ~session
+  ~auth_username
+  ~set_auth_username
+  ~auth_passcode
+  ~set_auth_passcode
+  ~auth_status
+  ~submit_auth
+  ~sign_out
+  =
+  let page =
+    Styles.s
+      "display:flex;flex-direction:column;gap:34px;max-width:1240px;margin:0 \
+       auto;padding:26px 24px 60px;"
+  in
+  let bar =
+    Styles.s
+      ("display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding-bottom:12px;border-bottom:2px \
+        solid "
+       ^ theme.Styles.text
+       ^ ";")
+  in
+  let header_link =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.secondary
+       ^ ";font-size:12.5px;font-weight:600;text-decoration:none;padding:6px \
+          4px;")
+  in
+  let header_button =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.text
+       ^ ";background:"
+       ^ theme.Styles.card_bg
+       ^ ";border:1px solid "
+       ^ theme.Styles.chip_border
+       ^ ";border-radius:3px;padding:6px \
+          13px;font-size:12.5px;font-weight:600;text-decoration:none;")
+  in
+  let right =
+    match (session : Session.t option) with
+    | None ->
+      [ {%html|<a href="#start" class="btn" %{header_link}>Sign in</a>|}
+      ; {%html|<a href="#start" class="btn" %{header_button}>Create account</a>|}
+      ]
+    | Some { Session.username; token = (_ : string) } ->
+      let chip =
+        Styles.s
+          ("color:" ^ theme.Styles.faint ^ ";font-size:11.5px;" ^ Styles.mono)
+      in
+      let name_style =
+        Styles.s ("color:" ^ theme.Styles.text ^ ";font-weight:700;")
+      in
+      let link =
+        Styles.s
+          ("background:none;border:none;color:"
+           ^ theme.Styles.blue
+           ^ ";font-size:12.5px;font-weight:600;cursor:pointer;padding:4px \
+              6px;")
+      in
+      [ {%html|<span %{chip}>signed in as <span %{name_style}>#{username}</span></span>|}
+      ; {%html|
+          <button class="btn" %{link} on_click=%{fun _ -> to_dashboard}>
+            My runs
+          </button>
+        |}
+      ]
+  in
+  let hero_kicker =
+    {%html|<div %{Styles.s (Styles.kicker theme)}>historical execution laboratory</div>|}
+  in
+  let headline =
+    let style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.text
+         ^ ";font-size:clamp(30px,3.8vw,44px);font-weight:700;line-height:1.14;margin:8px \
+            0 0;letter-spacing:-0.01em;max-width:15ch;"
+         ^ Styles.serif)
+    in
+    let kept = Styles.s ("color:" ^ theme.Styles.blue ^ ";") in
+    {%html|
+      <h1 %{style}>
+        Your alpha decides <em>what</em> to trade. ExecLab measures what
+        execution <span %{kept}>kept</span>.
+      </h1>
+    |}
+  in
+  let subhead =
+    let style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.secondary
+         ^ ";font-size:14px;line-height:1.7;max-width:56ch;")
+    in
+    let strong =
+      Styles.s ("color:" ^ theme.Styles.text ^ ";font-weight:600;")
+    in
+    {%html|
+      <div %{style}>
+        Upload timestamped parent orders from an alpha model, replay them
+        through a real historical session, and watch them execute minute by
+        minute. Every basis point you pay to trade is decomposed and
+        accounted for — because
+        <span %{strong}>the paper profit was never the point; what survives
+          execution is</span>.
+      </div>
+    |}
+  in
+  let cta =
+    let guest_link =
+      Styles.s
+        ("background:none;border:none;padding:6px 0;color:"
+         ^ theme.Styles.blue
+         ^ ";font-size:13px;font-weight:600;cursor:pointer;")
+    in
+    let start_button =
+      match (session : Session.t option) with
+      | Some (_ : Session.t) ->
+        primary_button
+          ~icon:(Icon.arrow_right ~size:14 ())
+          ~theme
+          ~on_click:(fun _ -> enter)
+          "Start a session"
+      | None ->
+        (* Signed out, the button walks you to the session card. *)
+        let style =
+          Styles.s
+            ("display:inline-flex;align-items:center;gap:8px;background:"
+             ^ theme.Styles.blue
+             ^ ";color:#ffffff;border:1px solid "
+             ^ theme.Styles.blue
+             ^ ";border-radius:3px;padding:9px \
+                18px;font-size:13.5px;font-weight:700;text-decoration:none;"
+            )
+        in
+        {%html|<a href="#start" class="btn" %{style}>Start a session →</a>|}
+    in
+    {%html|
+      <div %{Styles.s "display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:6px;"}>
+        %{start_button}
+        <button class="btn" %{guest_link} on_click=%{fun _ -> enter}>
+          or continue as guest
+        </button>
+      </div>
+    |}
+  in
+  let strip =
+    match Lazy.force demo_strip with
+    | None -> []
+    | Some { Demo_strip.line1; line2 } ->
+      let style =
+        Styles.s
+          ("color:"
+           ^ theme.Styles.faint
+           ^ ";font-size:11.5px;line-height:1.8;margin-top:14px;"
+           ^ Styles.mono)
+      in
+      [ {%html|
+          <div %{style}>
+            <div>#{line1}</div>
+            <div>#{line2}</div>
+          </div>
+        |}
+      ]
+  in
+  let hero_card =
+    match (session : Session.t option) with
+    | None ->
+      session_card
+        ~theme
+        ~username:auth_username
+        ~set_username:set_auth_username
+        ~passcode:auth_passcode
+        ~set_passcode:set_auth_passcode
+        ~status:auth_status
+        ~submit_auth
+        ~enter_as_guest:enter
+    | Some { Session.username; token = (_ : string) } ->
+      welcome_card ~theme ~username ~enter ~to_my_runs:to_dashboard ~sign_out
+  in
+  let hero =
+    Styles.s
+      "display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:40px;align-items:start;padding-top:10px;"
+  in
+  {%html|
+    <div class="page fade" %{page}>
+      <div %{bar}>
+        %{wordmark ~theme}
+        <span %{Styles.s "display:flex;gap:10px;align-items:center;"}>
+          *{right}
+          %{theme_button ~theme ~is_dark ~toggle_theme}
+        </span>
+      </div>
+      <div %{hero}>
+        <div>
+          %{hero_kicker}
+          %{headline}
+          <div %{Styles.s "margin-top:14px;"}>%{subhead}</div>
+          %{cta}
+          *{strip}
+        </div>
+        <div %{Styles.s "display:flex;justify-content:flex-end;"}>
+          %{hero_card}
+        </div>
+      </div>
+      %{landing_stats_band ~theme}
+      <div>
+        %{landing_section_head ~theme "how a run works"}
+        %{landing_how_it_works ~theme}
+      </div>
+      %{landing_algo_table ~theme}
+      %{landing_engines_and_metrics ~theme}
     </div>
   |}
 ;;
@@ -5110,9 +6003,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   in
   let session, set_session =
     Bonsai.state (load_session () : Session.t option) graph
-  in
-  let auth_mode, set_auth_mode =
-    Bonsai.state (None : Auth_mode.t option) graph
   in
   let auth_username, set_auth_username = Bonsai.state "" graph in
   let auth_passcode, set_auth_passcode = Bonsai.state "" graph in
@@ -5244,20 +6134,17 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     let%bind.Effect () = set_minute (fun (_ : int) -> 0) in
     set_playing true
   in
-  (* Signing in or creating an account: same form, different endpoint. On
-     success the session is persisted, so a reload stays signed in. *)
+  (* Signing in or creating an account: one form, and the clicked button
+     picks the endpoint. On success the session is persisted, so a reload
+     stays signed in. *)
   let submit_auth =
-    let%arr auth_mode
-    and auth_username
+    let%arr auth_username
     and auth_passcode
     and set_session
     and set_auth_status
-    and set_auth_mode
     and set_auth_passcode
     and set_screen in
-    match auth_mode with
-    | None -> Effect.Ignore
-    | Some mode ->
+    fun (mode : Auth_mode.t) ->
       let credentials =
         { Credentials.username = String.strip auth_username
         ; passcode = auth_passcode
@@ -5269,15 +6156,14 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         | Sign_in -> sign_in_effect credentials
         | Create_account -> create_account_effect credentials
       in
-      (match response with
-       | Error error -> set_auth_status (Some (Error.to_string_hum error))
-       | Ok (session : Session.t) ->
-         let%bind.Effect () = set_session (Some session) in
-         let%bind.Effect () = persist_session (Some session) in
-         let%bind.Effect () = set_auth_status None in
-         let%bind.Effect () = set_auth_mode None in
-         let%bind.Effect () = set_auth_passcode "" in
-         set_screen Screen.Dashboard)
+      match response with
+      | Error error -> set_auth_status (Some (Error.to_string_hum error))
+      | Ok (session : Session.t) ->
+        let%bind.Effect () = set_session (Some session) in
+        let%bind.Effect () = persist_session (Some session) in
+        let%bind.Effect () = set_auth_status None in
+        let%bind.Effect () = set_auth_passcode "" in
+        set_screen Screen.Dashboard
   in
   (* Reopening a notebook entry: the config is complete and the simulator is
      deterministic, so replaying it locally reproduces the exact run rather
@@ -5379,7 +6265,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     and session
     and set_board
     and set_submit_status
-    and set_auth_mode
     and set_screen in
     match replay, session with
     | None, (_ : Session.t option) -> Effect.Ignore
@@ -5390,7 +6275,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         set_submit_status
           (Some "sign in or create an account to publish this run")
       in
-      let%bind.Effect () = set_auth_mode (Some Auth_mode.Sign_in) in
       set_screen Screen.Landing
     | Some r, Some { Session.token; username } ->
       let%bind.Effect () = set_submit_status (Some "submitting…") in
@@ -5473,8 +6357,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and start
   and restart
   and session
-  and auth_mode
-  and set_auth_mode
   and auth_username
   and set_auth_username
   and auth_passcode
@@ -5555,8 +6437,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~enter:(goto Screen.Choose_day)
         ~to_dashboard:open_my_runs
         ~session
-        ~auth_mode
-        ~set_auth_mode
         ~auth_username
         ~set_auth_username
         ~auth_passcode
@@ -5564,7 +6444,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~auth_status
         ~submit_auth
         ~sign_out
-        ~profile
     | My_runs, _, _ ->
       my_runs_view
         ~theme
