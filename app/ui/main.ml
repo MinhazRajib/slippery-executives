@@ -390,7 +390,6 @@ let controls
   ~set_zoom_mode
   ~zoom_tool
   ~set_zoom_tool
-  ~view:(z0, z1)
   ~set_playing
   ~set_speed
   ~set_minute
@@ -483,26 +482,11 @@ let controls
       </button>
     |}
   in
-  let range_readout =
-    let range_style =
-      Styles.s
-        ("color:"
-         ^ theme.Styles.secondary
-         ^ ";font-size:12px;white-space:nowrap;"
-         ^ Styles.mono)
-    in
-    {%html|
-      <span %{range_style}>
-        #{sprintf "%s–%s · %d min"
-            (Replay.clock_string replay ~minute:z0)
-            (Replay.clock_string replay ~minute:z1)
-            (z1 - z0)}
-      </span>
-    |}
-  in
   let slider_style =
     Styles.s
-      ("flex:3;accent-color:" ^ theme.Styles.brown ^ ";min-width:280px;")
+      ("flex:1 1 220px;accent-color:"
+       ^ theme.Styles.brown
+       ^ ";min-width:140px;")
   in
   let clock_style =
     Styles.s
@@ -584,7 +568,6 @@ let controls
         %{tool_button `Out ~title_:"Zoom out where you click"
             ~glyph:(Icon.zoom_out ~size:15 ())}
         %{reset_button}
-        %{range_readout}
       </span>
     |}
   in
@@ -609,7 +592,9 @@ let controls
        ^ Styles.mono)
   in
   let row =
-    Styles.s "display:flex;align-items:center;gap:14px;padding:12px 16px;"
+    Styles.s
+      "display:flex;align-items:center;gap:14px;padding:12px \
+       16px;flex-wrap:wrap;"
   in
   let on_slide (_ : _) value =
     match Int.of_string_opt value with
@@ -1448,21 +1433,26 @@ let symbol_tabs (replay : Replay.t) ~theme ~focus ~set_focus =
          ^ ";padding-bottom:10px;")
     in
     let label = Styles.s (Styles.table_label theme ^ "margin-right:4px;") in
+    (* Same segmented pill the day picker uses, so choosing a name means one
+       thing everywhere in the app. *)
     let tab symbol =
       let selected = Symbol.equal symbol focus in
       let style =
         Styles.s
-          ("border:none;border-radius:4px;padding:5px \
-            12px;cursor:pointer;font-size:12px;font-weight:600;"
-           ^ Styles.mono
-           ^ "background:"
-           ^ (if selected then theme.Styles.blue else theme.Styles.chip_bg)
+          ("border:1px solid "
+           ^ (if selected
+              then theme.Styles.blue
+              else theme.Styles.chip_border)
+           ^ ";background:"
+           ^ (if selected then theme.Styles.blue else theme.Styles.card_bg)
            ^ ";color:"
            ^ (if selected then "#ffffff" else theme.Styles.secondary)
-           ^ ";")
+           ^ ";border-radius:3px;padding:6px \
+              12px;font-size:12px;font-weight:700;cursor:pointer;"
+           ^ Styles.mono)
       in
       {%html|
-        <button %{style} on_click=%{fun _ -> set_focus symbol}>
+        <button class="btn" %{style} on_click=%{fun _ -> set_focus symbol}>
           #{Symbol.to_string symbol}
         </button>
       |}
@@ -1999,7 +1989,7 @@ let sim_view
       </div>
       %{controls replay ~theme ~minute ~playing ~speed ~chart_view
           ~set_chart_view ~zoom_mode ~set_zoom_mode ~zoom_tool
-          ~set_zoom_tool ~view ~set_playing
+          ~set_zoom_tool ~set_playing
           ~set_speed ~set_minute ~restart}
       <div %{Styles.card theme "padding-bottom:8px;"}>
         ?{symbol_tabs replay ~theme ~focus ~set_focus}
@@ -3511,7 +3501,9 @@ let choose_day_view
   let selection_hint =
     match selection with
     | Some ((_ : Symbol.t), date) ->
-      sprintf "%s selected — your alpha names the symbols" (Date.to_string date)
+      sprintf
+        "%s selected — your alpha names the symbols"
+        (Date.to_string date)
     | None -> "select a session to continue"
   in
   {%html|
@@ -5190,116 +5182,6 @@ let results_view
 
 (* ---------- landing page ---------- *)
 
-module Demo_strip = struct
-  type t =
-    { line1 : string
-    ; line2 : string
-    }
-end
-
-(* One real replay's numbers for the front door: a one-order sample alpha,
-   TWAP, the first bundled session — computed once, lazily, by the same
-   simulator every run uses. If anything about the bundled data is off the
-   strip simply doesn't render; it never shows made-up numbers. *)
-let demo_strip =
-  lazy
-    (let%bind.Option symbol = List.hd Dataset.symbols in
-     let%bind.Option date = List.hd (Dataset.dates_for symbol) in
-     let alpha_text =
-       sprintf "10:00:00,%s,BUY,5000,11:00:00\n" (Symbol.to_string symbol)
-     in
-     let%bind.Option params =
-       Result.ok (Replay.parse_params Replay.Param_text.default)
-     in
-     let%bind.Option replay =
-       Result.ok (Replay.run ~date ~alpha_text ~algo_name:"twap" ~params)
-     in
-     let%bind.Option parent = List.hd replay.Replay.parents in
-     let%bind.Option row = List.hd replay.Replay.results.rows in
-     let grading = row.Replay.grading in
-     let%bind.Option metrics = grading.Transaction_cost.fill_metrics in
-     let vwap = Replay.vwap_for replay symbol in
-     let%bind.Option () = Option.some_if (Array.length vwap > 0) () in
-     let day_vwap = vwap.(Array.length vwap - 1) in
-     let capture =
-       match grading.Transaction_cost.alpha_capture with
-       | None -> ""
-       | Some c -> sprintf " · capture %.1f%%" (c *. 100.)
-     in
-     Some
-       { Demo_strip.line1 =
-           sprintf
-             "%s %s · O1 %s %s · arrival %s · avg fill %.4f · vs arrival \
-              %+.1f bps"
-             (Symbol.to_string symbol)
-             (Date.to_string date)
-             (side_str grading.Transaction_cost.side)
-             (Int.to_string_hum
-                ~delimiter:','
-                (Size.to_int grading.Transaction_cost.quantity))
-             (Price.to_string_dollar parent.Replay.arrival_price)
-             metrics.Transaction_cost.Fill_metrics.average_fill_price
-             metrics.Transaction_cost.Fill_metrics.shortfall_bps
-       ; line2 =
-           sprintf
-             "day vwap %.2f · shortfall %s%s — from a real replay, not \
-              marketing data"
-             day_vwap
-             (dollars_signed grading.Transaction_cost.friction_cost_cents)
-             capture
-       })
-;;
-
-(* The stats band under the hero, computed from what is actually bundled so
-   the front door can never overstate the lab. *)
-let landing_stats_band ~theme =
-  let sessions =
-    List.sum (module Int) Dataset.symbols ~f:(fun symbol ->
-      List.length (Dataset.dates_for symbol))
-  in
-  let stats =
-    [ Int.to_string (List.length Dataset.symbols), "symbols"
-    ; Int.to_string sessions, "historical sessions"
-    ; Int.to_string (List.length algorithm_cards), "execution algorithms"
-    ; "2", "fill engines"
-    ; Int.to_string (List.length glossary_entries), "measured metrics"
-    ]
-  in
-  let cell index (value, label_text) =
-    let style =
-      Styles.s
-        ("display:flex;flex-direction:column;gap:6px;padding:18px 20px 14px;"
-         ^
-         if index = 0
-         then ""
-         else "border-left:1px solid " ^ theme.Styles.hairline ^ ";")
-    in
-    let value_style =
-      Styles.s
-        ("color:"
-         ^ theme.Styles.text
-         ^ ";font-size:26px;font-weight:700;"
-         ^ Styles.serif)
-    in
-    {%html|
-      <div %{style}>
-        <span %{value_style}>#{value}</span>
-        <span %{Styles.s (Styles.label theme)}>#{label_text}</span>
-      </div>
-    |}
-  in
-  {%html|
-    <div
-      %{Styles.s
-          ("display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));border-top:1px \
-            solid "
-           ^ theme.Styles.text
-           ^ ";")}>
-      *{List.mapi stats ~f:cell}
-    </div>
-  |}
-;;
-
 (* A section opener in the mockup's voice: a rule, then an amber small-caps
    kicker. *)
 let landing_section_head ~theme text =
@@ -5494,13 +5376,6 @@ let landing_engines_and_metrics ~theme =
        ^ theme.Styles.secondary
        ^ ";font-size:12.5px;line-height:1.65;")
   in
-  let footnote =
-    Styles.s
-      ("color:"
-       ^ theme.Styles.faint
-       ^ ";font-size:11px;margin-top:12px;"
-       ^ Styles.mono)
-  in
   let formula =
     let part color text =
       let style =
@@ -5548,9 +5423,6 @@ let landing_engines_and_metrics ~theme =
             </div>
           </div>
         </div>
-        <div %{footnote}>
-          same seed · same day · same fills — every run reproducible
-        </div>
       </div>
       <div>
         <div %{h2}>What gets measured</div>
@@ -5560,10 +5432,6 @@ let landing_engines_and_metrics ~theme =
           price, adds opportunity cost on anything left unfilled, and
           reports capture — the share of predicted alpha that survived —
           alongside value added versus an Immediate baseline.
-        </div>
-        <div %{footnote}>
-          per order and in total · dollars and basis points · exportable as
-          CSV
         </div>
       </div>
     </div>
@@ -5861,25 +5729,6 @@ let landing_view
       </div>
     |}
   in
-  let strip =
-    match Lazy.force demo_strip with
-    | None -> []
-    | Some { Demo_strip.line1; line2 } ->
-      let style =
-        Styles.s
-          ("color:"
-           ^ theme.Styles.faint
-           ^ ";font-size:11.5px;line-height:1.8;margin-top:14px;"
-           ^ Styles.mono)
-      in
-      [ {%html|
-          <div %{style}>
-            <div>#{line1}</div>
-            <div>#{line2}</div>
-          </div>
-        |}
-      ]
-  in
   let hero_card =
     match (session : Session.t option) with
     | None ->
@@ -5914,13 +5763,11 @@ let landing_view
           %{headline}
           <div %{Styles.s "margin-top:14px;"}>%{subhead}</div>
           %{cta}
-          *{strip}
         </div>
         <div %{Styles.s "display:flex;justify-content:flex-end;"}>
           %{hero_card}
         </div>
       </div>
-      %{landing_stats_band ~theme}
       <div>
         %{landing_section_head ~theme "how a run works"}
         %{landing_how_it_works ~theme}
