@@ -1,8 +1,8 @@
-(** The execlab server: serves the client app and the sexp API.
+(** The execlab server: serves the client app over HTTP.
 
-    [dune exec bin/server.exe -- 8081] — then open http://localhost:8081/
-    (the client), while POST /api/* carries the protocol. Data is read from
-    [data/], submitted runs live under [runs/]. *)
+    [dune exec bin/server.exe -- 8081] — then open http://localhost:8081/.
+    The lab is local and single-user: simulations run in the browser and
+    history lives in its localStorage, so this binary only delivers files. *)
 
 open! Core
 open Execlab_server
@@ -16,8 +16,5 @@ let () =
       eprintf "usage: server.exe [port]\n";
       exit 2
   in
-  never_returns
-    (Http.serve_forever
-       ~port
-       ~handle:(Service.handle ~data_dir:"data" ~runs_dir:"runs" ~root:"."))
+  never_returns (Http.serve_forever ~port ~handle:(Service.handle ~root:"."))
 ;;

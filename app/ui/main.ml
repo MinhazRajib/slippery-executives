@@ -4,7 +4,6 @@ open Bonsai.Let_syntax
 open! Execlab_types
 open! Execlab_market
 open! Execlab_analytics
-open Execlab_protocol
 
 (* Wizard flow (adapted from app/ui/client's seven screens): Dashboard ->
    Choose_day -> Alpha -> Setup (algorithm + confirm) -> Sim -> Results. *)
@@ -18,16 +17,6 @@ module Screen = struct
     | Setup
     | Sim
     | Results
-  [@@deriving sexp, equal]
-end
-
-(* The landing card is one form with two exits: signing in and creating an
-   account share the handle/passcode fields and differ only in which endpoint
-   the clicked button calls. *)
-module Auth_mode = struct
-  type t =
-    | Sign_in
-    | Create_account
   [@@deriving sexp, equal]
 end
 
@@ -94,57 +83,28 @@ let money_stat ~theme ~label:text value_cents =
   |}
 ;;
 
-(* A small labelled icon button for secondary table actions. *)
-let icon_action ~theme ~glyph ~label ~on_click =
+(* The one persistent navigation affordance: your dashboard, from any screen,
+   always in the same corner. *)
+let my_dashboard_button ~theme ~on_click =
   let style =
     Styles.s
-      ("display:inline-flex;align-items:center;gap:6px;background:"
-       ^ theme.Styles.chip_bg
+      ("display:inline-flex;align-items:center;gap:7px;background:"
+       ^ theme.Styles.blue_soft
        ^ ";color:"
-       ^ theme.Styles.secondary
+       ^ theme.Styles.blue
        ^ ";border:1px solid "
        ^ theme.Styles.chip_border
-       ^ ";border-radius:7px;padding:6px \
-          11px;cursor:pointer;font-size:12px;font-weight:700;")
-  in
-  {%html|
-    <button class="btn" %{style} on_click=%{on_click}>
-      %{glyph}
-      #{label}
-    </button>
-  |}
-;;
-
-(* The account chip: identity plus a way into your own runs, in the same
-   corner on every screen. Guests get a way to sign in instead. *)
-let profile_button ~theme ~session ~on_click =
-  (* The mockup's header identity: "signed in as qomer", a quiet mono line
-     that is also the way into your own runs. Guests get "guest". *)
-  let prefix, name =
-    match (session : Session.t option) with
-    | Some { Session.username; token = (_ : string) } ->
-      "signed in as ", username
-    | None -> "", "guest"
-  in
-  let style =
-    Styles.s
-      ("display:inline-flex;align-items:baseline;gap:5px;background:transparent;color:"
-       ^ theme.Styles.faint
-       ^ ";border:none;padding:4px \
-          2px;cursor:pointer;font-size:11.5px;white-space:nowrap;"
-       ^ Styles.mono)
-  in
-  let name_style =
-    Styles.s ("color:" ^ theme.Styles.text ^ ";font-weight:700;")
+       ^ ";border-radius:999px;padding:6px \
+          13px;cursor:pointer;font-size:12.5px;font-weight:700;white-space:nowrap;"
+      )
   in
   {%html|
     <button
       class="btn"
       %{style}
-      title="Your runs"
+      title="Your dashboard"
       on_click=%{fun _ -> on_click}>
-      #{prefix}
-      <span %{name_style}>#{name}</span>
+      My dashboard
     </button>
   |}
 ;;
@@ -175,8 +135,8 @@ let wordmark ?on_click ~theme () =
   let name =
     Styles.s
       ("color:"
-       ^ theme.Styles.text
-       ^ ";font-size:15.5px;font-weight:800;letter-spacing:-0.01em;")
+       ^ theme.Styles.blue
+       ^ ";font-size:17px;font-weight:800;letter-spacing:-0.01em;")
   in
   let suffix =
     Styles.s
@@ -232,7 +192,6 @@ module Icon = struct
   let search ?size () = make ?size Search
   let zoom_in ?size () = make ?size Zoom_in
   let zoom_out ?size () = make ?size Zoom_out
-  let refresh ?size () = make ?size Refresh_cw
 end
 
 let wizard_steps = [ "Day"; "Alpha"; "Setup"; "Replay"; "Results" ]
@@ -336,14 +295,6 @@ let alpha_symbols_line ~fallback alpha_text =
     |> List.dedup_and_sort ~compare:Symbol.compare
     |> List.map ~f:Symbol.to_string
     |> String.concat ~sep:" "
-;;
-
-let symbols_label symbols =
-  match symbols with
-  | [] -> "-"
-  | [ symbol ] -> Symbol.to_string symbol
-  | first :: rest ->
-    sprintf "%s +%d" (Symbol.to_string first) (List.length rest)
 ;;
 
 let chart_w = 1140.
@@ -2181,28 +2132,6 @@ let two_col =
   "display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px;align-items:start;"
 ;;
 
-let pnl_cell_int63 ~theme cents =
-  let dollars = Run_summary.dollars cents in
-  let color =
-    if Float.( > ) dollars 0.
-    then theme.Styles.green
-    else if Float.( < ) dollars 0.
-    then theme.Styles.red
-    else theme.Styles.faint
-  in
-  let style =
-    Styles.s
-      ("color:" ^ color ^ ";font-size:13px;font-weight:600;" ^ Styles.mono)
-  in
-  let text =
-    sprintf
-      "%s$%s"
-      (if Float.( < ) dollars 0. then "-" else "+")
-      (Float.to_string_hum ~delimiter:',' ~decimals:2 (Float.abs dollars))
-  in
-  {%html|<span %{style}>#{text}</span>|}
-;;
-
 let run_record (replay : Replay.t) =
   let rows = replay.results.rows in
   let sum f = List.sum (module Int) rows ~f in
@@ -2228,6 +2157,12 @@ let run_record (replay : Replay.t) =
     in
     if filled > 0 then weighted /. Float.of_int filled else 0.
   in
+  let fill = replay.params.Execlab_session.Params.fill_config in
+  let ran_at =
+    (* A display label and a newest-first sort key; browser wall clock. *)
+    let date = new%js Js_of_ocaml.Js.date_now in
+    Js_of_ocaml.Js.to_string date##toISOString
+  in
   { History.Run_record.symbols = replay.symbols
   ; date = replay.date
   ; algo_name = replay.algo_name
@@ -2239,7 +2174,47 @@ let run_record (replay : Replay.t) =
       (if ordered > 0
        then Float.of_int filled /. Float.of_int ordered
        else 0.)
+  ; alpha_text = replay.alpha_text
+  ; half_spread_cents = Price.to_int_cents fill.half_spread
+  ; max_participation = fill.max_participation
+  ; impact_coefficient_cents = Price.to_int_cents fill.impact_coefficient
+  ; pov_rate = replay.params.pov_rate
+  ; is_urgency = replay.params.is_urgency
+  ; engine_name =
+      (match replay.params.engine with
+       | Execlab_session.Engine_choice.Bar_model -> "bar"
+       | Synthetic { seed = (_ : int) } -> "synthetic")
+  ; engine_seed =
+      (match replay.params.engine with
+       | Execlab_session.Engine_choice.Bar_model -> 0
+       | Synthetic { seed } -> seed)
+  ; ran_at
   }
+;;
+
+(* Rebuilds the exact simulation a history row records — the local
+   counterpart of what reopening a server run used to do. *)
+let replay_of_record (record : History.Run_record.t) =
+  Replay.run
+    ~date:record.date
+    ~alpha_text:record.alpha_text
+    ~algo_name:record.algo_name
+    ~params:
+      { Execlab_session.Params.fill_config =
+          { half_spread = Price.of_int_cents record.half_spread_cents
+          ; max_participation = record.max_participation
+          ; impact_coefficient =
+              Price.of_int_cents record.impact_coefficient_cents
+          }
+      ; pov_rate = record.pov_rate
+      ; is_urgency = record.is_urgency
+      ; engine =
+          (match record.engine_name with
+           | "synthetic" ->
+             Execlab_session.Engine_choice.Synthetic
+               { seed = record.engine_seed }
+           | (_ : string) -> Execlab_session.Engine_choice.Bar_model)
+      }
 ;;
 
 (* ---------- "what changed?" ---------- *)
@@ -2369,22 +2344,56 @@ let what_changed ~theme ~(current : History.Run_record.t) ~previous =
 
 (* ---------- my runs: the execution notebook ---------- *)
 
+(* Cost convention: positive = money lost, so red; negative = favorable. *)
+let cost_cell ~theme cents =
+  let color =
+    if cents > 0
+    then theme.Styles.red
+    else if cents < 0
+    then theme.Styles.green
+    else theme.Styles.faint
+  in
+  let style =
+    Styles.s ("color:" ^ color ^ ";font-size:13px;" ^ Styles.mono)
+  in
+  {%html|<span %{style}>#{dollars_signed cents}</span>|}
+;;
+
+(* Board totals arrive as Int63 (32-bit browser ints would overflow on large
+   positions), so they format through floats. *)
+(* P&L convention: positive = money made, so green. *)
+let pnl_cell ~theme cents =
+  let color =
+    if cents > 0
+    then theme.Styles.green
+    else if cents < 0
+    then theme.Styles.red
+    else theme.Styles.faint
+  in
+  let style =
+    Styles.s
+      ("color:" ^ color ^ ";font-size:13px;font-weight:600;" ^ Styles.mono)
+  in
+  {%html|<span %{style}>#{dollars_signed cents}</span>|}
+;;
+
 let my_runs_view
   ~theme
   ~is_dark
   ~profile
   ~on_brand
   ~toggle_theme
-  ~session
-  ~my_runs
+  ~runs
   ~open_run
-  ~refresh
-  ~reset_account
-  ~confirm_reset
+  ~rerun
+  ~set_baseline
+  ~delete
+  ~clear_all
+  ~confirm_clear
   ~new_sim
   ~back
   =
-  let columns = "128px 72px 66px 58px 1fr 118px 118px 70px 90px 64px" in
+  let columns = "104px 88px 92px 66px 1fr 118px 96px 70px 260px" in
   let head =
     Styles.s
       ("display:grid;grid-template-columns:"
@@ -2399,32 +2408,41 @@ let my_runs_view
   let faint_style =
     Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:12px;")
   in
-  (* The knobs that actually shaped this run, so a notebook entry is
-     reproducible by reading it. Only the algorithm's own parameter is shown
-     — the fill-model numbers live in the tooltip. *)
-  let params_of (config : Run_config.t) =
-    match config.algo_name with
-    | "pov" -> sprintf "rate %.4f" config.pov_rate
-    | "is" -> sprintf "urgency %.1f" config.is_urgency
+  let params_of (run : History.Run_record.t) =
+    match run.algo_name with
+    | "pov" -> sprintf "rate %.4f" run.pov_rate
+    | "is" -> sprintf "urgency %.1f" run.is_urgency
     | (_ : string) -> "—"
   in
-  let full_params (config : Run_config.t) =
+  let full_params (run : History.Run_record.t) =
     sprintf
-      "half spread $%.2f · participation %.2f · impact $%.2f · pov %.4f · \
-       urgency %.1f"
-      (Float.of_int config.half_spread_cents /. 100.)
-      config.max_participation
-      (Float.of_int config.impact_coefficient_cents /. 100.)
-      config.pov_rate
-      config.is_urgency
+      "half spread $%.2f · participation %.2f · impact $%.2f · engine %s"
+      (Float.of_int run.half_spread_cents /. 100.)
+      run.max_participation
+      (Float.of_int run.impact_coefficient_cents /. 100.)
+      run.engine_name
   in
-  let run_row (run : Saved_run.t) =
+  let small_action ?(danger = false) ~label ~on_click () =
+    let style =
+      Styles.s
+        ("background:"
+         ^ theme.Styles.chip_bg
+         ^ ";color:"
+         ^ (if danger then theme.Styles.red else theme.Styles.text)
+         ^ ";border:1px solid "
+         ^ theme.Styles.chip_border
+         ^ ";border-radius:5px;padding:4px \
+            9px;cursor:pointer;font-size:11px;font-weight:700;")
+    in
+    {%html|<button class="btn" %{style} on_click=%{on_click}>#{label}</button>|}
+  in
+  let run_row (run : History.Run_record.t) =
     let style =
       Styles.s
         ("display:grid;grid-template-columns:"
          ^ columns
-         ^ ";column-gap:12px;white-space:nowrap;align-items:center;padding:9px \
-            16px;font-size:12px;color:"
+         ^ ";column-gap:12px;white-space:nowrap;align-items:center;padding:8px \
+            16px;font-size:12.5px;color:"
          ^ theme.Styles.text
          ^ ";border-bottom:1px solid "
          ^ theme.Styles.hairline
@@ -2432,223 +2450,99 @@ let my_runs_view
          ^ Styles.mono)
     in
     let capture =
-      match run.summary.alpha_capture with
+      match run.alpha_capture with
       | None -> "—"
       | Some capture -> sprintf "%.1f%%" (capture *. 100.)
     in
-    let state =
-      if run.published
-      then (
-        let style =
-          Styles.s
-            ("color:"
-             ^ theme.Styles.green
-             ^ ";font-weight:600;font-size:11.5px;")
-        in
-        {%html|<span %{style}>published</span>|})
-      else (
-        let style =
-          Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:11.5px;")
-        in
-        {%html|<span %{style}>private</span>|})
-    in
-    let open_link =
-      let style =
-        Styles.s
-          ("background:none;border:none;padding:2px 0;color:"
-           ^ theme.Styles.blue
-           ^ ";cursor:pointer;font-size:12px;font-weight:600;text-align:left;"
-           ^ Styles.mono)
-      in
-      {%html|
-        <button class="btn" %{style} on_click=%{fun _ -> open_run run}>
-          open →
-        </button>
-      |}
-    in
-    let saved_at =
-      String.map (String.prefix run.ran_at 16) ~f:(fun c ->
-        if Char.equal c 'T' then ' ' else c)
-    in
-    let engine =
-      match run.config.engine_name with
-      | "synthetic" -> "synth"
-      | (_ : string) -> "bar"
-    in
     {%html|
-      <div %{style} title=%{full_params run.config}>
-        <span %{dim}>#{saved_at}</span>
-        <span>#{symbols_label run.config.symbols}</span>
-        <span>#{String.uppercase run.config.algo_name}</span>
-        <span %{dim}>#{engine}</span>
-        <span %{dim}>
-          #{Date.to_string run.config.date} · #{params_of run.config}
-        </span>
-        <span>%{pnl_cell_int63 ~theme run.summary.net_cents}</span>
-        <span>%{pnl_cell_int63 ~theme run.summary.value_add_cents}</span>
+      <div %{style} title=%{full_params run}>
+        <span %{dim}>#{String.prefix run.ran_at 10}</span>
+        <span>#{History.Run_record.symbols_label run}</span>
+        <span %{dim}>#{Date.to_string run.date}</span>
+        <span>#{String.uppercase run.algo_name}</span>
+        <span %{dim}>#{params_of run}</span>
+        <span>%{pnl_cell ~theme run.value_add_cents}</span>
+        <span>#{sprintf "%+.1f bps" run.shortfall_bps}</span>
         <span %{dim}>#{capture}</span>
-        %{state}
-        %{open_link}
+        <span %{Styles.s "display:flex;gap:6px;"}>
+          %{small_action ~label:"Open"
+              ~on_click:(fun _ -> open_run run) ()}
+          %{small_action ~label:"Rerun"
+              ~on_click:(fun _ -> rerun run) ()}
+          %{small_action ~label:"Baseline"
+              ~on_click:(fun _ -> set_baseline run) ()}
+          %{small_action ~danger:true ~label:"Delete"
+              ~on_click:(fun _ -> delete run) ()}
+        </span>
       </div>
     |}
   in
   let body =
-    match (my_runs : Saved_run.t list option) with
-    | None ->
-      [ {%html|
-          <div %{Styles.s "padding:16px;"}>
-            <span %{faint_style}>Loading your runs…</span>
-          </div>
-        |}
-      ]
-    | Some [] ->
+    match (runs : History.Run_record.t list) with
+    | [] ->
       [ {%html|
           <div
             %{Styles.s
                 "padding:26px 16px;display:flex;flex-direction:column;gap:12px;align-items:flex-start;"}>
             <span %{faint_style}>
-              No runs yet. Every simulation you execute while signed in is
-              recorded here automatically.
+              No runs yet. Every simulation you execute is saved here, on
+              this machine.
             </span>
             %{primary_button ~icon:(Icon.arrow_right ~size:15 ()) ~theme
                 ~on_click:(fun _ -> new_sim) "Run your first simulation"}
           </div>
         |}
       ]
-    | Some runs ->
+    | runs ->
       {%html|
         <div %{head}>
-          <span>saved</span>
-          <span>sym</span>
+          <span>ran</span>
+          <span>symbols</span>
+          <span>day</span>
           <span>algo</span>
-          <span>engine</span>
-          <span>day · settings</span>
-          <span>net P&L</span>
+          <span>settings</span>
           <span>vs immediate</span>
+          <span>slippage</span>
           <span>capture</span>
-          <span>state</span>
           <span>actions</span>
         </div>
       |}
       :: List.map runs ~f:run_row
   in
-  (* The mockup's slim stats line: "14 saved | 5 published | 6 symbols | best
-     vs Immediate +$1,072.25". *)
-  let stats_line =
-    match (my_runs : Saved_run.t list option) with
-    | None | Some [] -> []
-    | Some runs ->
-      let published =
-        List.count runs ~f:(fun (run : Saved_run.t) -> run.published)
-      in
-      let symbols =
-        List.concat_map runs ~f:(fun (run : Saved_run.t) ->
-          run.config.symbols)
-        |> List.dedup_and_sort ~compare:Symbol.compare
-        |> List.length
-      in
-      let best =
-        List.map runs ~f:(fun (run : Saved_run.t) ->
-          run.summary.value_add_cents)
-        |> List.max_elt ~compare:Int63.compare
-      in
-      let sep =
-        Styles.s
-          ("color:"
-           ^ theme.Styles.hairline
-           ^ ";align-self:stretch;border-left:1px solid "
-           ^ theme.Styles.hairline
-           ^ ";")
-      in
-      let piece text =
-        let style =
-          Styles.s
-            ("color:"
-             ^ theme.Styles.secondary
-             ^ ";font-size:12px;"
-             ^ Styles.mono)
-        in
-        {%html|<span %{style}>#{text}</span>|}
-      in
-      let best_piece =
-        match best with
-        | None -> []
-        | Some v ->
-          [ {%html|<span %{sep}></span>|}
-          ; {%html|
-              <span
-                %{Styles.s
-                    ("color:"
-                     ^ theme.Styles.secondary
-                     ^ ";font-size:12px;display:inline-flex;gap:6px;align-items:baseline;"
-                     ^ Styles.mono)}>
-                best vs Immediate %{pnl_cell_int63 ~theme v}
-              </span>
-            |}
-          ]
-      in
-      [ {%html|
-          <div
-            %{Styles.s
-                ("display:flex;gap:14px;align-items:baseline;padding:10px 16px;border-bottom:1px solid "
-                 ^ theme.Styles.hairline
-                 ^ ";")}>
-            %{piece (sprintf "%d saved" (List.length runs))}
-            <span %{sep}></span>
-            %{piece (sprintf "%d published" published)}
-            <span %{sep}></span>
-            %{piece (sprintf "%d symbols" symbols)}
-            *{best_piece}
-          </div>
-        |}
-      ]
-  in
-  (* Destructive, so it asks twice: the first click arms it and turns it red,
-     the second actually erases. *)
-  let reset_button =
+  (* Destructive, so it asks twice. *)
+  let clear_button =
     let style =
       Styles.s
         ("display:inline-flex;align-items:center;gap:6px;background:"
-         ^ (if confirm_reset then theme.Styles.red else "transparent")
+         ^ (if confirm_clear then theme.Styles.red else theme.Styles.chip_bg)
          ^ ";color:"
-         ^ (if confirm_reset then "#ffffff" else theme.Styles.red)
+         ^ (if confirm_clear then "#ffffff" else theme.Styles.red)
          ^ ";border:1px solid "
-         ^ (if confirm_reset
+         ^ (if confirm_clear
             then theme.Styles.red
             else theme.Styles.chip_border)
-         ^ ";border-radius:3px;padding:6px \
+         ^ ";border-radius:7px;padding:6px \
             11px;cursor:pointer;font-size:12px;font-weight:700;")
     in
     {%html|
-      <button class="btn" %{style} on_click=%{fun _ -> reset_account}>
-        #{if confirm_reset
-          then "Click again to erase everything"
-          else "Reset my data"}
+      <button class="btn" %{style} on_click=%{fun _ -> clear_all}>
+        #{if confirm_clear
+          then "Click again to erase all runs"
+          else "Clear history"}
       </button>
     |}
   in
-  let who =
-    match (session : Session.t option) with
-    | None -> "not signed in"
-    | Some { Session.username; token = (_ : string) } ->
-      sprintf "signed in as %s" username
-  in
-  let footer_note =
-    Styles.s
-      ("color:"
-       ^ theme.Styles.faint
-       ^ ";font-size:11.5px;line-height:1.6;padding:10px 16px 14px;")
-  in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
-      %{wizard_header ?profile ~on_brand ~theme ~is_dark ~toggle_theme ~title:"My runs"
-          ~subtitle:("your server-side research notebook — every saved run, \
-                      reopenable and reproducible — " ^ who)
+      %{wizard_header ?profile ?on_brand:(Some on_brand) ~theme ~is_dark
+          ~toggle_theme ~title:"My runs"
+          ~subtitle:"every simulation you've executed, stored on this \
+                     machine"
           ~back:(Some ("← Dashboard", back)) ()}
       <div %{Styles.card theme "padding-bottom:4px;"}>
         <div
           %{Styles.s
-              "display:flex;justify-content:space-between;align-items:center;padding:12px 16px;"}>
+              "display:flex;justify-content:space-between;align-items:center;padding:14px 16px 4px 16px;"}>
           <span
             %{Styles.s
                 ("color:"
@@ -2656,22 +2550,21 @@ let my_runs_view
                  ^ ";font-size:14.5px;font-weight:700;")}>
             Saved runs
           </span>
-          <span %{Styles.s "display:flex;gap:8px;align-items:center;"}>
-            %{icon_action ~theme ~glyph:(Icon.refresh ~size:14 ())
-                ~label:"Refresh" ~on_click:(fun _ -> refresh)}
-            %{reset_button}
-          </span>
+          %{clear_button}
         </div>
-        *{stats_line}
         <div %{Styles.s "overflow-x:auto;"}>
           <div %{Styles.s "min-width:980px;"}>
             *{body}
           </div>
         </div>
-        <div %{footer_note}>
-          Published runs appear on the day's leaderboard after server-side
-          re-scoring under house physics. Reopening a run restores its exact
-          configuration and results.
+        <div
+          %{Styles.s
+              ("color:"
+               ^ theme.Styles.faint
+               ^ ";font-size:11.5px;padding:10px 16px 12px;line-height:1.5;")}>
+          Open restores a run's exact results. Rerun starts a new setup from
+          its day and instructions. Baseline makes it the run your next
+          results compare against.
         </div>
       </div>
       %{nav_footer ~theme
@@ -2857,9 +2750,6 @@ let dashboard_view
   ~is_dark
   ~runs
   ~new_sim
-  ~session
-  ~sign_out
-  ~to_sign_in
   ~to_my_runs
   ~quick_start_with
   ~profile
@@ -3009,13 +2899,6 @@ let dashboard_view
        ^ theme.Styles.faint
        ^ ";font-size:11.5px;line-height:1.6;padding:10px 16px 14px;")
   in
-  (* Sign out lives in the header, next to the identity it acts on; guests
-     get the way in instead. *)
-  let session_link =
-    match (session : Session.t option) with
-    | Some (_ : Session.t) -> "Sign out", sign_out
-    | None -> "Sign in", to_sign_in
-  in
   (* The mockup's stats strip: one bordered band, hairline-divided cells,
      label over value. All four come straight from the local run history. *)
   let stats_band =
@@ -3025,31 +2908,21 @@ let dashboard_view
         run.value_add_cents)
       |> List.max_elt ~compare:Int.compare
     in
-    let median_capture =
-      let captures =
-        List.filter_map runs ~f:(fun (run : History.Run_record.t) ->
-          run.alpha_capture)
-        |> List.sort ~compare:Float.compare
-      in
-      let n = List.length captures in
-      if n = 0
-      then None
-      else if n % 2 = 1
-      then List.nth captures (n / 2)
-      else (
-        match List.nth captures ((n / 2) - 1), List.nth captures (n / 2) with
-        | Some a, Some b -> Some ((a +. b) /. 2.)
-        | (_ : float option), (_ : float option) -> None)
+    let best_capture =
+      List.filter_map runs ~f:(fun (run : History.Run_record.t) ->
+        run.alpha_capture)
+      |> List.max_elt ~compare:Float.compare
     in
-    let latest =
-      match List.hd runs with
-      | None -> "—"
-      | Some (run : History.Run_record.t) ->
-        sprintf
-          "%s · %s · %s"
-          (History.Run_record.symbols_label run)
-          (Date.to_string run.date)
-          (String.uppercase run.algo_name)
+    let lowest_shortfall =
+      List.map runs ~f:(fun (run : History.Run_record.t) ->
+        run.shortfall_bps)
+      |> List.min_elt ~compare:Float.compare
+    in
+    let most_used_algo =
+      List.map runs ~f:(fun (run : History.Run_record.t) -> run.algo_name)
+      |> List.sort_and_group ~compare:String.compare
+      |> List.max_elt ~compare:(Comparable.lift Int.compare ~f:List.length)
+      |> Option.bind ~f:List.hd
     in
     let cell index ~label:label_text ~color value =
       let style =
@@ -3085,17 +2958,21 @@ let dashboard_view
         <div
           %{Styles.s
               "display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));"}>
-          %{cell 0 ~label:"saved runs" ~color:theme.Styles.text
+          %{cell 0 ~label:"total simulations" ~color:theme.Styles.text
               (Int.to_string count)}
-          %{cell 1 ~label:"best value-add vs immediate" ~color:best_color
-              (match best_value with
-               | None -> "—"
-               | Some v -> dollars_signed v)}
-          %{cell 2 ~label:"median capture" ~color:theme.Styles.text
-              (match median_capture with
+          %{cell 1 ~label:"best alpha capture" ~color:best_color
+              (match best_capture with
                | None -> "—"
                | Some c -> sprintf "%.1f%%" (c *. 100.))}
-          %{cell 3 ~label:"latest run" ~color:theme.Styles.secondary latest}
+          %{cell 2 ~label:"lowest slippage" ~color:theme.Styles.text
+              (match lowest_shortfall with
+               | None -> "—"
+               | Some bps -> sprintf "%+.1f bps" bps)}
+          %{cell 3 ~label:"most used algorithm"
+              ~color:theme.Styles.secondary
+              (match most_used_algo with
+               | None -> "—"
+               | Some algo -> String.uppercase algo)}
         </div>
       </div>
     |}
@@ -3141,7 +3018,7 @@ let dashboard_view
           ~title:"Historical execution laboratory"
           ~subtitle:"upload an alpha, pick a day, and see how much survives \
                      execution"
-          ~back:(Some session_link) ()}
+          ~back:None ()}
       <div %{Styles.s "display:flex;gap:10px;flex-wrap:wrap;align-items:center;"}>
         %{primary_button ~icon:(Icon.arrow_right ~size:15 ()) ~theme
             ~on_click:(fun _ -> new_sim) "New simulation"}
@@ -4519,39 +4396,6 @@ let setup_view
 
 (* ---------- results: the metric tree ---------- *)
 
-(* Cost convention: positive = money lost, so red; negative = favorable. *)
-let cost_cell ~theme cents =
-  let color =
-    if cents > 0
-    then theme.Styles.red
-    else if cents < 0
-    then theme.Styles.green
-    else theme.Styles.faint
-  in
-  let style =
-    Styles.s ("color:" ^ color ^ ";font-size:13px;" ^ Styles.mono)
-  in
-  {%html|<span %{style}>#{dollars_signed cents}</span>|}
-;;
-
-(* Board totals arrive as Int63 (32-bit browser ints would overflow on large
-   positions), so they format through floats. *)
-(* P&L convention: positive = money made, so green. *)
-let pnl_cell ~theme cents =
-  let color =
-    if cents > 0
-    then theme.Styles.green
-    else if cents < 0
-    then theme.Styles.red
-    else theme.Styles.faint
-  in
-  let style =
-    Styles.s
-      ("color:" ^ color ^ ";font-size:13px;font-weight:600;" ^ Styles.mono)
-  in
-  {%html|<span %{style}>#{dollars_signed cents}</span>|}
-;;
-
 let results_view
   (replay : Replay.t)
   ~theme
@@ -4562,13 +4406,10 @@ let results_view
   ~on_brand
   ~to_sim
   ~new_sim
+  ~to_my_runs
+  ~retest
   ~to_dashboard
   ~toggle_theme
-  ~session
-  ~board
-  ~submit_status
-  ~submit
-  ~refresh_board
   =
   let rows = replay.results.rows in
   let sum f = List.sum (module Int) rows ~f in
@@ -4886,159 +4727,40 @@ let results_view
     Styles.s
       ("color:" ^ theme.Styles.faint ^ ";font-size:11px;" ^ Styles.mono)
   in
-  let leaderboard_card =
-    let title_style =
+  (* A single-user lab has no one to rank against; what replaces the board is
+     the workflow around your own runs. *)
+  let actions_card =
+    let note =
       Styles.s
-        ("color:" ^ theme.Styles.text ^ ";font-size:14px;font-weight:600;")
+        ("color:"
+         ^ theme.Styles.faint
+         ^ ";font-size:12px;line-height:1.55;margin-top:8px;")
     in
-    let dim =
-      Styles.s ("color:" ^ theme.Styles.secondary ^ ";font-size:12.5px;")
-    in
-    let faint_style =
-      Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:12.5px;")
-    in
-    (* Who the submission would be attributed to. Guests see the button but
-       are routed through sign-in, keeping this finished run in state. *)
-    let name_input =
-      match (session : Session.t option) with
-      | Some { Session.username; token = (_ : string) } ->
-        let chip =
-          Styles.s
-            ("display:inline-flex;align-items:center;gap:6px;background:"
-             ^ theme.Styles.blue_soft
-             ^ ";color:"
-             ^ theme.Styles.blue
-             ^ ";border-radius:999px;padding:4px \
-                11px;font-size:12px;font-weight:700;")
-        in
-        {%html|<span %{chip}>#{username}</span>|}
+    let compare_hint =
+      match previous_run with
+      | Some (_ : History.Run_record.t) ->
+        "Comparing against your baseline run — the \"What changed?\" panel \
+         above shows the deltas."
       | None ->
-        {%html|<span %{faint_style}>publishing as a guest is not possible</span>|}
-    in
-    let submit_button =
-      let label =
-        match (session : Session.t option) with
-        | Some (_ : Session.t) -> "Submit to leaderboard"
-        | None -> "Sign in to submit"
-      in
-      primary_button
-        ~icon:(Icon.arrow_right ~size:14 ())
-        ~theme
-        ~on_click:(fun _ -> submit)
-        label
-    in
-    let refresh_button =
-      let style =
-        Styles.s
-          ("background:"
-           ^ theme.Styles.chip_bg
-           ^ ";color:"
-           ^ theme.Styles.secondary
-           ^ ";border:1px solid "
-           ^ theme.Styles.chip_border
-           ^ ";border-radius:5px;padding:7px \
-              12px;cursor:pointer;font-size:12.5px;font-weight:600;")
-      in
-      {%html|
-        <button class="btn" %{style} on_click=%{fun _ -> refresh_board}>
-          Refresh
-        </button>
-      |}
-    in
-    let status =
-      match submit_status with
-      | None -> []
-      | Some text -> [ {%html|<span %{faint_style}>#{text}</span>|} ]
-    in
-    let columns = "44px 1fr 140px 140px 90px 150px" in
-    let head_row =
-      Styles.s
-        ("display:grid;grid-template-columns:"
-         ^ columns
-         ^ ";column-gap:10px;white-space:nowrap;padding:10px 16px 6px \
-            16px;border-bottom:1px solid "
-         ^ theme.Styles.hairline
-         ^ ";"
-         ^ Styles.table_label theme)
-    in
-    let board_rows =
-      match board with
-      | None ->
-        [ {%html|
-            <div %{Styles.s "padding:10px 16px;"}>
-              <span %{faint_style}>
-                Submit this run, or refresh to see standing entries.
-              </span>
-            </div>
-          |}
-        ]
-      | Some [] ->
-        [ {%html|
-            <div %{Styles.s "padding:10px 16px;"}>
-              <span %{faint_style}>
-                No submissions for this day and alpha yet — be first.
-              </span>
-            </div>
-          |}
-        ]
-      | Some rows ->
-        List.mapi rows ~f:(fun index (row : Leaderboard_row.t) ->
-          let style =
-            Styles.s
-              ("display:grid;grid-template-columns:"
-               ^ columns
-               ^ ";column-gap:10px;white-space:nowrap;padding:7px \
-                  16px;font-size:12.5px;color:"
-               ^ theme.Styles.text
-               ^ ";border-bottom:1px solid "
-               ^ theme.Styles.hairline
-               ^ ";"
-               ^ Styles.mono)
-          in
-          let capture =
-            match row.summary.alpha_capture with
-            | None -> "n/a"
-            | Some capture -> sprintf "%.1f%%" (capture *. 100.)
-          in
-          {%html|
-            <div %{style}>
-              <span %{dim}>#{Int.to_string (index + 1)}</span>
-              <span>#{row.player}</span>
-              <span>%{pnl_cell_int63 ~theme row.summary.value_add_cents}</span>
-              <span>%{pnl_cell_int63 ~theme row.summary.net_cents}</span>
-              <span %{dim}>#{capture}</span>
-              <span %{dim}>#{String.prefix row.submitted_at 16}</span>
-            </div>
-          |})
+        "Run another simulation (or pick a baseline in My runs) and the \
+         next results will show what changed."
     in
     {%html|
-      <div %{Styles.card theme "padding-bottom:4px;"}>
+      <div %{Styles.card theme "padding:18px;"}>
         <div
           %{Styles.s
-              "display:flex;gap:12px;align-items:center;padding:14px 16px 8px 16px;"}>
-          <span %{title_style}>Leaderboard</span>
-          <span %{faint_style}>
-            · this day · this alpha · this engine · scored by the server
-            under house physics
-          </span>
-          <span
-            %{Styles.s
-                "margin-left:auto;display:flex;gap:8px;align-items:center;"}>
-            *{status}
-            %{name_input}
-            %{submit_button}
-            %{refresh_button}
-          </span>
+              ("color:"
+               ^ theme.Styles.text
+               ^ ";font-size:14.5px;font-weight:700;margin-bottom:10px;")}>
+          This run is saved
         </div>
-        <div %{head_row}>
-          <span>rank</span>
-          <span>player</span>
-          <span>vs immediate</span>
-          <span>net P&L</span>
-          <span>capture</span>
-          <span>submitted</span>
+        <div %{Styles.s "display:flex;gap:10px;flex-wrap:wrap;"}>
+          %{secondary_button ~theme ~on_click:(fun _ -> to_my_runs)
+              "View in My runs"}
+          %{secondary_button ~theme ~on_click:(fun _ -> retest)
+              "Rerun with a different algorithm"}
         </div>
-        *{board_rows}
+        <div %{note}>#{compare_hint}</div>
       </div>
     |}
   in
@@ -5169,7 +4891,7 @@ let results_view
         *{List.mapi rows ~f:results_row}
         %{results_totals}
       </div>
-      %{leaderboard_card}
+      %{actions_card}
       %{glossary_section}
       <div %{buttons}>
         %{primary_button ~theme ~on_click:(fun _ -> new_sim)
@@ -5339,15 +5061,10 @@ let landing_algo_table ~theme =
        ^ ";font-size:19px;font-weight:700;"
        ^ Styles.serif)
   in
-  let aside =
-    Styles.s
-      ("color:" ^ theme.Styles.faint ^ ";font-size:11.5px;" ^ Styles.mono)
-  in
   {%html|
     <div>
       <div %{title_row}>
         <span %{title_style}>Five ways to work an order</span>
-        <span %{aside}>same instructions · same day · different execution</span>
       </div>
       <div %{Styles.s "overflow-x:auto;"}>
         <div %{Styles.s "min-width:760px;"}>
@@ -5450,159 +5167,7 @@ let landing_engines_and_metrics ~theme =
   |}
 ;;
 
-(* Shared field styling for the sign-in card. *)
-let landing_field
-  ~theme
-  ~kind
-  ~label:label_text
-  ~value
-  ~placeholder
-  ~on_input
-  =
-  let input_style =
-    Styles.s
-      ("background:"
-       ^ theme.Styles.page_bg
-       ^ ";color:"
-       ^ theme.Styles.text
-       ^ ";border:1px solid "
-       ^ theme.Styles.chip_border
-       ^ ";border-radius:3px;padding:9px 11px;font-size:13.5px;width:100%;"
-       ^ Styles.mono)
-  in
-  {%html|
-    <label %{Styles.s "display:flex;flex-direction:column;gap:5px;"}>
-      <span %{Styles.s (Styles.label theme)}>#{label_text}</span>
-      <input
-        type=%{kind}
-        %{input_style}
-        placeholder=%{placeholder}
-        %{Vdom.Attr.string_property "value" value}
-        on_input=%{fun (_ : _) text -> on_input text} />
-    </label>
-  |}
-;;
-
-(* The mockup's "Start a session" card: handle + passcode, both auth actions
-   side by side, and the guest door underneath. [submit_auth] takes the mode,
-   so "Sign in" and "Create account" are one form with two exits. *)
-let session_card
-  ~theme
-  ~username
-  ~set_username
-  ~passcode
-  ~set_passcode
-  ~status
-  ~submit_auth
-  ~enter_as_guest
-  =
-  let card =
-    Styles.card theme "padding:20px 22px;width:100%;max-width:400px;"
-  in
-  let title_style =
-    Styles.s
-      ("color:" ^ theme.Styles.text ^ ";font-size:15px;font-weight:700;")
-  in
-  let note_style =
-    Styles.s
-      ("color:" ^ theme.Styles.faint ^ ";font-size:11.5px;line-height:1.55;")
-  in
-  let status_node =
-    match status with
-    | None -> []
-    | Some text ->
-      let style =
-        Styles.s
-          ("color:" ^ theme.Styles.red ^ ";font-size:12px;line-height:1.5;")
-      in
-      [ {%html|<div %{style}>#{text}</div>|} ]
-  in
-  let guest_link =
-    Styles.s
-      ("background:none;border:none;padding:2px 0;color:"
-       ^ theme.Styles.blue
-       ^ ";font-size:12.5px;font-weight:600;cursor:pointer;text-align:left;"
-      )
-  in
-  let stack = Styles.s "display:flex;flex-direction:column;gap:12px;" in
-  {%html|
-    <div %{card} id="start">
-      <div %{stack}>
-        <span %{title_style}>Start a session</span>
-        %{landing_field ~theme ~kind:"text" ~label:"handle"
-            ~value:username ~placeholder:"handle" ~on_input:set_username}
-        %{landing_field ~theme ~kind:"password" ~label:"passcode"
-            ~value:passcode ~placeholder:"••••••" ~on_input:set_passcode}
-        *{status_node}
-        <div %{Styles.s "display:flex;gap:8px;flex-wrap:wrap;"}>
-          %{primary_button ~theme
-              ~on_click:(fun _ -> submit_auth Auth_mode.Sign_in) "Sign in"}
-          %{secondary_button ~theme
-              ~on_click:(fun _ -> submit_auth Auth_mode.Create_account)
-              "Create account"}
-        </div>
-        <button
-          class="btn"
-          %{guest_link}
-          on_click=%{fun _ -> enter_as_guest}>
-          Continue as guest →
-        </button>
-        <span %{note_style}>
-          An account is only required to publish runs to the leaderboard.
-        </span>
-      </div>
-    </div>
-  |}
-;;
-
-(* Signed in, the hero card is the way back into the lab instead. *)
-let welcome_card ~theme ~username ~enter ~to_my_runs ~sign_out =
-  let card =
-    Styles.card theme "padding:20px 22px;width:100%;max-width:400px;"
-  in
-  let who =
-    Styles.s
-      ("color:" ^ theme.Styles.faint ^ ";font-size:11.5px;" ^ Styles.mono)
-  in
-  let name_style =
-    Styles.s ("color:" ^ theme.Styles.text ^ ";font-weight:700;")
-  in
-  let link =
-    Styles.s
-      ("background:none;border:none;padding:2px 0;color:"
-       ^ theme.Styles.secondary
-       ^ ";font-size:12px;font-weight:600;cursor:pointer;text-align:left;")
-  in
-  {%html|
-    <div %{card} id="start">
-      <div %{Styles.s "display:flex;flex-direction:column;gap:12px;"}>
-        <span %{who}>signed in as <span %{name_style}>#{username}</span></span>
-        %{primary_button ~icon:(Icon.arrow_right ~size:14 ()) ~theme
-            ~on_click:(fun _ -> enter) "Start a session"}
-        %{secondary_button ~theme ~on_click:(fun _ -> to_my_runs) "My runs"}
-        <button class="btn" %{link} on_click=%{fun _ -> sign_out}>
-          Sign out
-        </button>
-      </div>
-    </div>
-  |}
-;;
-
-let landing_view
-  ~theme
-  ~is_dark
-  ~toggle_theme
-  ~enter
-  ~to_dashboard
-  ~session
-  ~auth_username
-  ~set_auth_username
-  ~auth_passcode
-  ~set_auth_passcode
-  ~auth_status
-  ~submit_auth
-  ~sign_out
-  =
+let landing_view ~theme ~is_dark ~toggle_theme ~enter ~to_dashboard =
   let page =
     Styles.s
       "display:flex;flex-direction:column;gap:34px;max-width:1240px;margin:0 \
@@ -5615,70 +5180,22 @@ let landing_view
        ^ theme.Styles.text
        ^ ";")
   in
-  let header_link =
-    Styles.s
-      ("color:"
-       ^ theme.Styles.secondary
-       ^ ";font-size:12.5px;font-weight:600;text-decoration:none;padding:6px \
-          4px;")
-  in
-  let header_button =
-    Styles.s
-      ("color:"
-       ^ theme.Styles.text
-       ^ ";background:"
-       ^ theme.Styles.card_bg
-       ^ ";border:1px solid "
-       ^ theme.Styles.chip_border
-       ^ ";border-radius:3px;padding:6px \
-          13px;font-size:12.5px;font-weight:600;text-decoration:none;")
-  in
-  let right =
-    match (session : Session.t option) with
-    | None ->
-      [ {%html|<a href="#start" class="btn" %{header_link}>Sign in</a>|}
-      ; {%html|<a href="#start" class="btn" %{header_button}>Create account</a>|}
-      ]
-    | Some { Session.username; token = (_ : string) } ->
-      let chip =
-        Styles.s
-          ("color:" ^ theme.Styles.faint ^ ";font-size:11.5px;" ^ Styles.mono)
-      in
-      let name_style =
-        Styles.s ("color:" ^ theme.Styles.text ^ ";font-weight:700;")
-      in
-      let link =
-        Styles.s
-          ("background:none;border:none;color:"
-           ^ theme.Styles.blue
-           ^ ";font-size:12.5px;font-weight:600;cursor:pointer;padding:4px \
-              6px;")
-      in
-      [ {%html|<span %{chip}>signed in as <span %{name_style}>#{username}</span></span>|}
-      ; {%html|
-          <button class="btn" %{link} on_click=%{fun _ -> to_dashboard}>
-            My runs
-          </button>
-        |}
-      ]
-  in
   let hero_kicker =
-    {%html|<div %{Styles.s (Styles.kicker theme)}>historical execution laboratory</div>|}
+    {%html|<div %{Styles.s (Styles.kicker theme)}>your local execution lab</div>|}
   in
+  (* Plain words: what it is, what you do with it. *)
   let headline =
     let style =
       Styles.s
         ("color:"
          ^ theme.Styles.text
          ^ ";font-size:clamp(30px,3.8vw,44px);font-weight:700;line-height:1.14;margin:8px \
-            0 0;letter-spacing:-0.01em;max-width:15ch;"
+            0 0;letter-spacing:-0.01em;max-width:17ch;"
          ^ Styles.serif)
     in
-    let kept = Styles.s ("color:" ^ theme.Styles.blue ^ ";") in
     {%html|
       <h1 %{style}>
-        Your alpha decides <em>what</em> to trade. ExecLab measures what
-        execution <span %{kept}>kept</span>.
+        Run your trades through a real market day and see what they cost.
       </h1>
     |}
   in
@@ -5689,96 +5206,40 @@ let landing_view
          ^ theme.Styles.secondary
          ^ ";font-size:14px;line-height:1.7;max-width:56ch;")
     in
-    let strong =
-      Styles.s ("color:" ^ theme.Styles.text ^ ";font-weight:600;")
-    in
     {%html|
       <div %{style}>
-        Upload timestamped parent orders from an alpha model, replay them
-        through a real historical session, and watch them execute minute by
-        minute. Every basis point you pay to trade is decomposed and
-        accounted for — because
-        <span %{strong}>the paper profit was never the point; what survives
-          execution is</span>.
+        Bring a list of orders — or start from a sample — pick a historical
+        trading day and an execution algorithm, and replay the session
+        minute by minute. Every run is graded and saved on this machine so
+        you can compare your experiments over time.
       </div>
     |}
   in
   let cta =
-    let guest_link =
-      Styles.s
-        ("background:none;border:none;padding:6px 0;color:"
-         ^ theme.Styles.blue
-         ^ ";font-size:13px;font-weight:600;cursor:pointer;")
-    in
-    let start_button =
-      match (session : Session.t option) with
-      | Some (_ : Session.t) ->
-        primary_button
-          ~icon:(Icon.arrow_right ~size:14 ())
-          ~theme
-          ~on_click:(fun _ -> enter)
-          "Start a session"
-      | None ->
-        (* Signed out, the button walks you to the session card. *)
-        let style =
-          Styles.s
-            ("display:inline-flex;align-items:center;gap:8px;background:"
-             ^ theme.Styles.blue
-             ^ ";color:#ffffff;border:1px solid "
-             ^ theme.Styles.blue
-             ^ ";border-radius:3px;padding:9px \
-                18px;font-size:13.5px;font-weight:700;text-decoration:none;"
-            )
-        in
-        {%html|<a href="#start" class="btn" %{style}>Start a session →</a>|}
-    in
     {%html|
-      <div %{Styles.s "display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:6px;"}>
-        %{start_button}
-        <button class="btn" %{guest_link} on_click=%{fun _ -> enter}>
-          or continue as guest
-        </button>
+      <div
+        %{Styles.s
+            "display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:18px;"}>
+        %{primary_button ~icon:(Icon.arrow_right ~size:14 ()) ~theme
+            ~on_click:(fun _ -> enter) "Run simulation"}
+        %{secondary_button ~theme ~on_click:(fun _ -> to_dashboard)
+            "My dashboard"}
       </div>
     |}
-  in
-  let hero_card =
-    match (session : Session.t option) with
-    | None ->
-      session_card
-        ~theme
-        ~username:auth_username
-        ~set_username:set_auth_username
-        ~passcode:auth_passcode
-        ~set_passcode:set_auth_passcode
-        ~status:auth_status
-        ~submit_auth
-        ~enter_as_guest:enter
-    | Some { Session.username; token = (_ : string) } ->
-      welcome_card ~theme ~username ~enter ~to_my_runs:to_dashboard ~sign_out
-  in
-  let hero =
-    Styles.s
-      "display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:40px;align-items:start;padding-top:10px;"
   in
   {%html|
     <div class="page fade" %{page}>
       <div %{bar}>
         %{wordmark ~theme ()}
         <span %{Styles.s "display:flex;gap:10px;align-items:center;"}>
-          *{right}
           %{theme_button ~theme ~is_dark ~toggle_theme}
         </span>
       </div>
-      <div %{hero}>
-        <div>
-          %{hero_kicker}
-          %{headline}
-          <div %{Styles.s "margin-top:14px;"}>%{subhead}</div>
-          %{cta}
-        </div>
-        <div %{Styles.s "display:flex;justify-content:flex-end;"}>
-          %{hero_card}
-        </div>
+      <div>
+        %{hero_kicker}
+        %{headline}
+        <div %{Styles.s "margin-top:14px;"}>%{subhead}</div>
+        %{cta}
       </div>
       <div>
         %{landing_section_head ~theme "how a run works"}
@@ -5788,54 +5249,6 @@ let landing_view
       %{landing_engines_and_metrics ~theme}
     </div>
   |}
-;;
-
-(* ---------- the leaderboard seam ---------- *)
-
-let submit_run_effect = Effect.of_deferred_fun Net.submit_run
-let fetch_board_effect = Effect.of_deferred_fun Net.leaderboard
-let create_account_effect = Effect.of_deferred_fun Net.create_account
-let sign_in_effect = Effect.of_deferred_fun Net.sign_in
-let save_run_effect = Effect.of_deferred_fun Net.save_run
-let reset_account_effect = Effect.of_deferred_fun Net.reset_account
-let my_runs_effect = Effect.of_deferred_fun Net.my_runs
-
-let persist_session =
-  Effect.of_sync_fun (fun (session : Session.t option) ->
-    Storage.set
-      Storage.session_key
-      (Sexp.to_string [%sexp (session : Session.t option)]))
-;;
-
-let load_session () : Session.t option =
-  match Storage.get Storage.session_key with
-  | None -> None
-  | Some text ->
-    (try [%of_sexp: Session.t option] (Sexp.of_string text) with
-     | (_ : exn) -> None)
-;;
-
-let config_of (replay : Replay.t) ~player =
-  let fill = replay.params.Execlab_session.Params.fill_config in
-  { Run_config.player
-  ; symbols = replay.symbols
-  ; date = replay.date
-  ; alpha_text = replay.alpha_text
-  ; algo_name = replay.algo_name
-  ; half_spread_cents = Price.to_int_cents fill.half_spread
-  ; max_participation = fill.max_participation
-  ; impact_coefficient_cents = Price.to_int_cents fill.impact_coefficient
-  ; pov_rate = replay.params.pov_rate
-  ; is_urgency = replay.params.is_urgency
-  ; engine_name =
-      (match replay.params.engine with
-       | Execlab_session.Engine_choice.Bar_model -> "bar"
-       | Synthetic { seed = (_ : int) } -> "synthetic")
-  ; engine_seed =
-      (match replay.params.engine with
-       | Execlab_session.Engine_choice.Bar_model -> 0
-       | Synthetic { seed } -> seed)
-  }
 ;;
 
 (* ---------- the app ---------- *)
@@ -5872,24 +5285,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let previous_run, set_previous_run =
     Bonsai.state (None : History.Run_record.t option) graph
   in
-  let session, set_session =
-    Bonsai.state (load_session () : Session.t option) graph
-  in
-  let auth_username, set_auth_username = Bonsai.state "" graph in
-  let auth_passcode, set_auth_passcode = Bonsai.state "" graph in
-  let auth_status, set_auth_status =
-    Bonsai.state (None : string option) graph
-  in
-  let my_runs, set_my_runs =
-    Bonsai.state (None : Saved_run.t list option) graph
-  in
-  let confirm_reset, set_confirm_reset = Bonsai.state false graph in
-  let board, set_board =
-    Bonsai.state (None : Leaderboard_row.t list option) graph
-  in
-  let submit_status, set_submit_status =
-    Bonsai.state (None : string option) graph
-  in
+  let confirm_clear, set_confirm_clear = Bonsai.state false graph in
   let replay, set_replay = Bonsai.state (None : Replay.t option) graph in
   let minute, set_minute = Bonsai.state' 0 graph in
   let playing, set_playing = Bonsai.state true graph in
@@ -5952,11 +5348,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     and set_screen
     and set_minute
     and set_playing
-    and set_board
-    and session
-    and set_previous_run
-    and set_my_runs
-    and set_submit_status in
+    and set_previous_run in
     match selection, Replay.parse_params param_text with
     | None, _ -> set_run_error (Some (Error.of_string "choose a day first"))
     | Some (_ : Symbol.t * Date.t), Error error -> set_run_error (Some error)
@@ -5971,33 +5363,14 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
       (match result with
        | Error error -> set_run_error (Some error)
        | Ok r ->
-         (* A board belongs to one (day, alpha, engine): carrying the
-            previous run's rows or its "submitted" banner onto a new run's
-            results would be a lie. *)
-         let%bind.Effect () = set_board None in
-         let%bind.Effect () = set_submit_status None in
          let%bind.Effect () = set_run_error None in
          let%bind.Effect () = set_replay (Some r) in
          let%bind.Effect () = set_minute (fun (_ : int) -> 0) in
          let%bind.Effect () = set_playing true in
+         (* The freshest previous run becomes the comparison baseline unless
+            the user pinned one from My runs. *)
          let%bind.Effect () = set_previous_run (List.hd runs) in
          let%bind.Effect () = set_runs (History.add (run_record r) runs) in
-         (* Signed-in users get an execution notebook: every completed run is
-            recorded server-side, privately, the moment it finishes. The
-            server regrades it under the run's own parameters, so the
-            notebook never depends on the browser's arithmetic. *)
-         let%bind.Effect () =
-           match session with
-           | None -> Effect.Ignore
-           | Some { Session.token; username } ->
-             let%bind.Effect (_ : Save_run.Response.t Or_error.t) =
-               save_run_effect
-                 { Save_run.Request.token
-                 ; config = config_of r ~player:username
-                 }
-             in
-             set_my_runs None
-         in
          set_screen Screen.Sim)
   in
   let restart =
@@ -6005,197 +5378,59 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     let%bind.Effect () = set_minute (fun (_ : int) -> 0) in
     set_playing true
   in
-  (* Signing in or creating an account: one form, and the clicked button
-     picks the endpoint. On success the session is persisted, so a reload
-     stays signed in. *)
-  let submit_auth =
-    let%arr auth_username
-    and auth_passcode
-    and set_session
-    and set_auth_status
-    and set_auth_passcode
-    and set_my_runs
-    and set_screen in
-    fun (mode : Auth_mode.t) ->
-      let credentials =
-        { Credentials.username = String.strip auth_username
-        ; passcode = auth_passcode
-        }
-      in
-      let%bind.Effect () = set_auth_status (Some "working…") in
-      let%bind.Effect response =
-        match (mode : Auth_mode.t) with
-        | Sign_in -> sign_in_effect credentials
-        | Create_account -> create_account_effect credentials
-      in
-      match response with
-      | Error error -> set_auth_status (Some (Error.to_string_hum error))
-      | Ok (session : Session.t) ->
-        let%bind.Effect () = set_session (Some session) in
-        let%bind.Effect () = persist_session (Some session) in
-        let%bind.Effect () = set_auth_status None in
-        let%bind.Effect () = set_auth_passcode "" in
-        (* The dashboard you land on should already be your account's, not
-           this browser's leftovers. *)
-        let%bind.Effect response =
-          my_runs_effect { My_runs.Request.token = session.token }
-        in
-        let%bind.Effect () =
-          set_my_runs
-            (match response with
-             | Ok resp -> Some resp.My_runs.Response.runs
-             | Error (_ : Error.t) -> Some [])
-        in
-        set_screen Screen.Dashboard
-  in
-  (* Reopening a notebook entry: the config is complete and the simulator is
-     deterministic, so replaying it locally reproduces the exact run rather
-     than storing a results blob. *)
+  (* Local run actions: everything runs off the history record, which carries
+     the complete config. *)
   let open_run =
-    let%arr set_replay
-    and set_run_error
-    and set_board
-    and set_submit_status
-    and set_minute
-    and set_screen in
-    fun (saved : Saved_run.t) ->
-      let config = saved.Saved_run.config in
-      let params =
-        { Execlab_session.Params.fill_config =
-            { half_spread = Price.of_int_cents config.half_spread_cents
-            ; max_participation = config.max_participation
-            ; impact_coefficient =
-                Price.of_int_cents config.impact_coefficient_cents
-            }
-        ; pov_rate = config.pov_rate
-        ; is_urgency = config.is_urgency
-        ; engine =
-            (match config.engine_name with
-             | "synthetic" ->
-               Execlab_session.Engine_choice.Synthetic
-                 { seed = config.engine_seed }
-             | (_ : string) -> Execlab_session.Engine_choice.Bar_model)
-        }
-      in
+    let%arr set_replay and set_run_error and set_minute and set_screen in
+    fun (record : History.Run_record.t) ->
       let%bind.Effect result =
-        Effect.of_sync_fun
-          (fun () ->
-            Replay.run
-              ~date:config.date
-              ~alpha_text:config.alpha_text
-              ~algo_name:config.algo_name
-              ~params)
-          ()
+        Effect.of_sync_fun (fun () -> replay_of_record record) ()
       in
       match result with
       | Error error -> set_run_error (Some error)
       | Ok r ->
-        let%bind.Effect () = set_board None in
-        let%bind.Effect () = set_submit_status None in
         let%bind.Effect () = set_replay (Some r) in
         let%bind.Effect () =
           set_minute (fun (_ : int) -> Replay.last_minute r)
         in
         set_screen Screen.Results
   in
-  (* "Reset all my data": the server notebook and the browser-local run
-     history both go. Two clicks — the first only arms the button. *)
-  let reset_account =
-    let%arr session
-    and confirm_reset
-    and set_confirm_reset
-    and set_my_runs
-    and set_runs
-    and set_previous_run
-    and set_submit_status in
-    match session with
-    | None -> Effect.Ignore
-    | Some { Session.token; username = (_ : string) } ->
-      if not confirm_reset
-      then set_confirm_reset true
-      else (
-        let%bind.Effect (_ : Reset_account.Response.t Or_error.t) =
-          reset_account_effect { Reset_account.Request.token }
-        in
-        let%bind.Effect () = set_confirm_reset false in
-        let%bind.Effect () = set_my_runs (Some []) in
-        let%bind.Effect () = set_previous_run None in
-        let%bind.Effect () = set_submit_status None in
-        let%bind.Effect () =
-          Effect.of_sync_fun (fun () -> History.save []) ()
-        in
-        set_runs [])
-  in
-  let sign_out =
-    let%arr set_session and set_my_runs and set_screen in
-    let%bind.Effect () = set_session None in
-    let%bind.Effect () = persist_session None in
-    let%bind.Effect () = set_my_runs None in
-    set_screen Screen.Landing
-  in
-  let refresh_my_runs =
-    let%arr session and set_my_runs in
-    match session with
-    | None -> set_my_runs (Some [])
-    | Some { Session.token; username = (_ : string) } ->
-      let%bind.Effect response = my_runs_effect { My_runs.Request.token } in
-      (match response with
-       | Ok resp -> set_my_runs (Some resp.My_runs.Response.runs)
-       | Error (_ : Error.t) -> set_my_runs (Some []))
-  in
-  let submit =
-    let%arr replay
-    and session
-    and set_board
-    and set_submit_status
-    and set_screen in
-    match replay, session with
-    | None, (_ : Session.t option) -> Effect.Ignore
-    (* A guest keeps the finished run in state: we only move them to the
-       landing form, and they come back to the same results screen. *)
-    | Some (_ : Replay.t), None ->
+  (* Rerun: load the run's day and instructions into the wizard and land on
+     Setup, so changing the algorithm is one click away. *)
+  let rerun_run =
+    let%arr set_selection and set_alpha_text and set_algo and set_screen in
+    fun (record : History.Run_record.t) ->
       let%bind.Effect () =
-        set_submit_status
-          (Some "sign in or create an account to publish this run")
+        set_selection
+          (match record.symbols with
+           | first :: (_ : Symbol.t list) -> Some (first, record.date)
+           | [] -> None)
       in
-      set_screen Screen.Landing
-    | Some r, Some { Session.token; username } ->
-      let%bind.Effect () = set_submit_status (Some "submitting…") in
-      let%bind.Effect response =
-        submit_run_effect
-          { Submit_run.Request.token; config = config_of r ~player:username }
-      in
-      (match response with
-       | Ok resp ->
-         let%bind.Effect () =
-           set_board (Some resp.Submit_run.Response.leaderboard)
-         in
-         set_submit_status (Some "published — verified by the server")
-       | Error error ->
-         set_submit_status
-           (Some ("submit failed: " ^ Error.to_string_hum error)))
+      let%bind.Effect () = set_alpha_text record.alpha_text in
+      let%bind.Effect () = set_algo record.algo_name in
+      set_screen Screen.Setup
   in
-  let refresh_board =
-    let%arr replay and set_board and set_submit_status in
-    match replay with
-    | None -> Effect.Ignore
-    | Some r ->
-      let%bind.Effect response =
-        fetch_board_effect
-          { Leaderboard.Request.symbols = r.symbols
-          ; date = r.date
-          ; alpha_hash = alpha_hash r.alpha_text
-          ; engine_name =
-              (match r.params.Execlab_session.Params.engine with
-               | Execlab_session.Engine_choice.Bar_model -> "bar"
-               | Synthetic { seed = (_ : int) } -> "synthetic")
-          }
+  let set_baseline_run =
+    let%arr set_previous_run and set_screen in
+    fun (record : History.Run_record.t) ->
+      let%bind.Effect () = set_previous_run (Some record) in
+      set_screen Screen.Dashboard
+  in
+  let delete_run =
+    let%arr runs and set_runs in
+    fun (record : History.Run_record.t) ->
+      set_runs (History.remove ~id:(History.Run_record.id record) runs)
+  in
+  let clear_history =
+    let%arr confirm_clear and set_confirm_clear and set_runs in
+    if not confirm_clear
+    then set_confirm_clear true
+    else (
+      let%bind.Effect () =
+        Effect.of_sync_fun (fun () -> History.clear ()) ()
       in
-      (match response with
-       | Ok resp -> set_board (Some resp.Leaderboard.Response.rows)
-       | Error error ->
-         set_submit_status
-           (Some ("refresh failed: " ^ Error.to_string_hum error)))
+      let%bind.Effect () = set_confirm_clear false in
+      set_runs [])
   in
   let%arr screen
   and selection
@@ -6239,23 +5474,12 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_screen
   and start
   and restart
-  and session
-  and auth_username
-  and set_auth_username
-  and auth_passcode
-  and set_auth_passcode
-  and auth_status
-  and my_runs
-  and submit_auth
-  and sign_out
-  and reset_account
-  and confirm_reset
+  and confirm_clear
   and open_run
-  and refresh_my_runs
-  and board
-  and submit_status
-  and submit
-  and refresh_board in
+  and rerun_run
+  and set_baseline_run
+  and delete_run
+  and clear_history in
   let theme = if is_dark then Styles.dark else Styles.paper in
   let toggle_theme =
     let next = if is_dark then Styles.paper else Styles.dark in
@@ -6265,49 +5489,16 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let goto s = set_screen s in
   let select symbol date = set_selection (Some (symbol, date)) in
   let on_brand = goto Screen.Landing in
-  let open_dashboard =
-    Effect.Many [ goto Screen.Dashboard; refresh_my_runs ]
-  in
-  let open_my_runs = Effect.Many [ goto Screen.My_runs; refresh_my_runs ] in
-  let profile =
-    Some
-      (profile_button
-         ~theme
-         ~session
-         ~on_click:
-           (match session with
-            | Some (_ : Session.t) -> open_dashboard
-            | None -> goto Screen.Landing))
-  in
-  (* Signed in, "your runs" means your account's notebook on the server — the
-     same list from any browser. The localStorage history only speaks for
-     guests. Int63 cents truncate to int for display; the browser-local path
-     has the identical exposure. *)
-  let display_runs =
-    match session, my_runs with
-    | Some (_ : Session.t), Some saved ->
-      List.map saved ~f:(fun (run : Saved_run.t) ->
-        { History.Run_record.symbols = run.config.symbols
-        ; date = run.config.date
-        ; algo_name = run.config.algo_name
-        ; alpha_capture = run.summary.alpha_capture
-        ; value_add_cents = Int63.to_int_trunc run.summary.value_add_cents
-        ; net_cents = Int63.to_int_trunc run.summary.net_cents
-        ; shortfall_bps = 0.
-        ; completion = 0.
-        })
-    | (Some (_ : Session.t) | None), (Some (_ : Saved_run.t list) | None) ->
-      runs
-  in
+  let open_dashboard = goto Screen.Dashboard in
+  let open_my_runs = goto Screen.My_runs in
+  (* Always visible, always the same place: the way to your own work. *)
+  let profile = Some (my_dashboard_button ~theme ~on_click:open_dashboard) in
   let dashboard () =
     dashboard_view
       ~theme
       ~is_dark
-      ~runs:display_runs
+      ~runs
       ~new_sim:(goto Screen.Choose_day)
-      ~session
-      ~sign_out
-      ~to_sign_in:(goto Screen.Landing)
       ~to_my_runs:open_my_runs
       ~quick_start_with:(fun symbol ->
         let%bind.Effect () = set_cal_symbol (Some symbol) in
@@ -6344,28 +5535,21 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~is_dark
         ~toggle_theme
         ~enter:(goto Screen.Choose_day)
-        ~to_dashboard:open_my_runs
-        ~session
-        ~auth_username
-        ~set_auth_username
-        ~auth_passcode
-        ~set_auth_passcode
-        ~auth_status
-        ~submit_auth
-        ~sign_out
+        ~to_dashboard:open_dashboard
     | My_runs, _, _ ->
       my_runs_view
         ~theme
         ~is_dark
         ~toggle_theme
-        ~session
         ~profile
         ~on_brand
-        ~my_runs
+        ~runs
         ~open_run
-        ~refresh:refresh_my_runs
-        ~reset_account
-        ~confirm_reset
+        ~rerun:rerun_run
+        ~set_baseline:set_baseline_run
+        ~delete:delete_run
+        ~clear_all:clear_history
+        ~confirm_clear
         ~new_sim:(goto Screen.Choose_day)
         ~back:open_dashboard
     | Dashboard, _, _ -> dashboard ()
@@ -6449,13 +5633,10 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~on_brand
         ~to_sim:(goto Screen.Sim)
         ~new_sim:(goto Screen.Choose_day)
+        ~to_my_runs:open_my_runs
+        ~retest:(goto Screen.Setup)
         ~to_dashboard:open_dashboard
         ~toggle_theme
-        ~session
-        ~board
-        ~submit_status
-        ~submit
-        ~refresh_board
   in
   let shell =
     Styles.s
@@ -6483,7 +5664,4 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   {%html|<div class="shell-decor" %{shell}>%{keyed_body} *{overlay}</div>|}
 ;;
 
-let () =
-  Async_js.init ();
-  Bonsai_web.Start.start app
-;;
+let () = Bonsai_web.Start.start app

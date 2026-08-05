@@ -17,8 +17,24 @@ module Run_record = struct
     ; shortfall_bps : float
         (* fill-weighted across the run's orders; positive is worse *)
     ; completion : float (* filled / ordered, 0 to 1 *)
+    ; alpha_text : string
+        (* the exact instructions, so the run can be replayed *)
+    ; half_spread_cents : int
+    ; max_participation : float
+    ; impact_coefficient_cents : int
+    ; pov_rate : float
+    ; is_urgency : float
+    ; engine_name : string (* "bar" | "synthetic" *)
+    ; engine_seed : int
+    ; ran_at : string (* wall-clock label, newest-first tiebreak *)
     }
   [@@deriving sexp, equal]
+
+  (* Identity for delete/compare: the config plus when it ran. *)
+  let id t =
+    Md5.to_hex (Md5.digest_string (Sexp.to_string [%sexp (t : t)]))
+    |> fun hex -> String.prefix hex 12
+  ;;
 
   (* History written before a run could name more than one symbol carries
      [(symbol TSLA)]. One unreadable record would take the whole list down
@@ -70,3 +86,14 @@ let add run runs =
   save runs;
   runs
 ;;
+
+let remove ~id runs =
+  let runs =
+    List.filter runs ~f:(fun run ->
+      not (String.equal (Run_record.id run) id))
+  in
+  save runs;
+  runs
+;;
+
+let clear () = save []

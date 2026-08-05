@@ -1,6 +1,0 @@
-(library
- (name execlab_protocol)
- (public_name execlab.protocol)
- (libraries core execlab_types)
- (preprocess
-  (pps ppx_jane)))
