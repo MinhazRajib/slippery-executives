@@ -194,12 +194,12 @@ let%expect_test "the driver runs a whole session in the synthetic market \
   in
   let result =
     Driver.run
-      ~day:flat_day
+      ~universe:(Universe.of_day flat_day)
       ~instructions
       ~algorithm:(module Execlab_execution.Twap)
-      ~engine:
-        (Synthetic_market.engine
-           { Synthetic_market.Config.default with seed = 1 })
+      ~engine_for:(fun (_ : Symbol.t) ->
+        Synthetic_market.engine
+          { Synthetic_market.Config.default with seed = 1 })
       ()
   in
   List.iter

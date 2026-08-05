@@ -59,21 +59,26 @@ let forecast_profile ~(day : Trading_day.t) ~forecast_days =
   | Error (_ : Error.t) -> Day_stats.volume_profile day
 ;;
 
-let algorithm_named
-  ~(day : Trading_day.t)
-  ~forecast_days
-  ~(params : Params.t)
-  = function
+(* One forecast per symbol the run touches: a volume curve belongs to a
+   stock, not to a run. *)
+let forecast_profiles ~universe ~forecast_days =
+  Symbol.Map.of_alist_exn
+    (List.map (Universe.days universe) ~f:(fun (day : Trading_day.t) ->
+       let others =
+         Option.value (Map.find forecast_days day.symbol) ~default:[]
+       in
+       ( day.symbol
+       , List.map2_exn
+           day.bars
+           (forecast_profile ~day ~forecast_days:others)
+           ~f:(fun bar weight -> bar.Market_bar.time, weight) )))
+;;
+
+let algorithm_named ~universe ~forecast_days ~(params : Params.t) = function
   | "immediate" -> Ok (module Immediate : Algorithm_intf.S)
   | "twap" -> Ok (module Twap : Algorithm_intf.S)
   | "vwap" ->
-    let profile =
-      List.map2_exn
-        day.bars
-        (forecast_profile ~day ~forecast_days)
-        ~f:(fun bar weight -> bar.Market_bar.time, weight)
-    in
-    Ok (Vwap.create ~profile)
+    Ok (Vwap.create ~profiles:(forecast_profiles ~universe ~forecast_days))
   | "pov" -> Ok (Pov.create ~participation_rate:params.pov_rate ())
   | "is" ->
     Ok (Implementation_shortfall.create ~urgency:params.is_urgency ())
@@ -127,13 +132,20 @@ module Outcome = struct
   ;;
 end
 
-let grade ~day ~attribution_half_spread (result : Driver.t) =
-  let day_vwap = Day_stats.vwap day in
-  let terminal_price = Benchmarks.terminal_price day in
+(* A parent is graded against its own symbol's session: its own arrival
+   price, its own closing price, its own day VWAP. Nothing about a
+   multi-symbol run pools those, because a benchmark is a property of the
+   market the order traded in. *)
+let grade ~universe ~attribution_half_spread (result : Driver.t) =
   let half_spread = attribution_half_spread in
   List.map (Order_manager.parents result.manager) ~f:(fun parent ->
     let open Or_error.Let_syntax in
     let instruction = parent.Parent_order.instruction in
+    let day =
+      Universe.day_exn universe instruction.Alpha_instruction.symbol
+    in
+    let day_vwap = Day_stats.vwap day in
+    let terminal_price = Benchmarks.terminal_price day in
     let fills =
       let ids =
         Order_id.Set.of_list
@@ -164,36 +176,48 @@ let grade ~day ~attribution_half_spread (result : Driver.t) =
   |> Or_error.combine_errors
 ;;
 
-let run ~day ~forecast_days ~instructions ~algo_name ~(params : Params.t) =
+let run
+  ~universe
+  ~forecast_days
+  ~instructions
+  ~algo_name
+  ~(params : Params.t)
+  =
   let open Or_error.Let_syntax in
   let%bind () =
     match
       List.find instructions ~f:(fun instruction ->
-        not
-          (Symbol.equal
-             instruction.Alpha_instruction.symbol
-             day.Trading_day.symbol))
+        not (Universe.mem universe instruction.Alpha_instruction.symbol))
     with
     | None -> Ok ()
     | Some instruction ->
       Or_error.error_s
         [%message
-          "instruction symbol does not match the day"
-            (instruction : Alpha_instruction.t)
-            ~day:(day.Trading_day.symbol : Symbol.t)]
+          "the alpha names a symbol this run has no session for"
+            ~symbol:(instruction.Alpha_instruction.symbol : Symbol.t)
+            ~loaded:(Universe.symbols universe : Symbol.t list)]
   in
   let%bind algorithm =
-    algorithm_named ~day ~forecast_days ~params algo_name
+    algorithm_named ~universe ~forecast_days ~params algo_name
   in
-  let engine () =
+  (* One engine per symbol. A synthetic run derives each symbol's seed from
+     the run's own, so two names never share a random stream — a coincidence
+     of ladders and noise across unrelated stocks would be the one thing a
+     synthetic market must not invent — while the run as a whole stays
+     reproducible from a single number. *)
+  let engine_for symbol =
     match params.engine with
     | Engine_choice.Bar_model -> Fill_model.engine params.fill_config
     | Synthetic { seed } ->
+      let seed =
+        String.fold (Symbol.to_string symbol) ~init:seed ~f:(fun acc c ->
+          ((acc * 31) + Char.to_int c) % 100_003)
+      in
       Execlab_exchange.Synthetic_market.engine
         { Execlab_exchange.Synthetic_market.Config.default with seed }
   in
   let run_one algorithm =
-    Driver.run ~day ~instructions ~algorithm ~engine:(engine ()) ()
+    Driver.run ~universe ~instructions ~algorithm ~engine_for ()
   in
   let algo_result = run_one algorithm in
   let baseline_result = run_one (module Immediate) in
@@ -208,9 +232,11 @@ let run ~day ~forecast_days ~instructions ~algo_name ~(params : Params.t) =
       params.fill_config.Fill_model.Config.half_spread
     | Synthetic { seed = (_ : int) } -> Price.of_int_cents 0
   in
-  let%bind algo_gradings = grade ~day ~attribution_half_spread algo_result in
+  let%bind algo_gradings =
+    grade ~universe ~attribution_half_spread algo_result
+  in
   let%bind baseline_gradings =
-    grade ~day ~attribution_half_spread baseline_result
+    grade ~universe ~attribution_half_spread baseline_result
   in
   let%map graded =
     List.map2_exn algo_gradings baseline_gradings ~f:(fun algo baseline ->

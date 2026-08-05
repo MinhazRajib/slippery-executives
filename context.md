@@ -411,7 +411,8 @@ Everything in the original plan through Engine B now EXISTS
 tree, the six-screen wizard client, a thin blocking HTTP server
 (bin/server.exe: static client + two sexp endpoints over
 lib/protocol), run persistence as sexp files (one directory per
-(symbol, date, alpha-hash) — a leaderboard is a directory listing),
+(symbols, date, alpha-hash, engine, physics) — a leaderboard is a
+directory listing),
 server-verified leaderboards (the server re-runs submitted configs;
 determinism is the anti-cheat), a shared lib/session pipeline behind
 the CLI, the browser, and the server, and Engine B — lib/exchange's
@@ -420,19 +421,27 @@ seeded noise tape calibrated per bar, cross-platform-deterministic via
 an Int32 LCG, selectable everywhere ("synthetic[:seed]" in the CLI,
 the Fill engine pills in the UI).
 
+Multi-symbol alphas landed on 2026-08-05. A run is now a
+`Market.Universe`: several Trading_days of one date stepped by a
+single clock, one engine per symbol (a synthetic run derives each
+name's seed from the run's, so no two names share a random stream),
+and every order graded against its own session's arrival price, close
+and day VWAP. The alpha file decides which names trade — the CLI takes
+`<alpha.csv> DATE ALGO`, the day picker binds a date, and the chart
+carries a tab per symbol. `bin/sweep.exe` checks the invariant that
+makes this one run rather than several: a leg inside a basket must
+trade exactly as it does alone.
+
 What remains:
 
 1. **Serving story**: bin/server.exe replaces `python3 -m
    http.server` — run it and the client, leaderboard included, is one
    process. Local-only by design; hosting and auth stay out of scope.
-2. **Multi-symbol alpha files.** `Alpha_instruction` carries a symbol
-   and the parser accepts mixed-symbol files, but a run binds to one
-   `(symbol, Trading_day)` (the check now lives in
-   `Execlab_session.run`). Multi-stock strategies need the driver to
-   step several Trading_days in lockstep (per-symbol engines and day
-   stats, one clock), a portfolio spanning symbols, and a day picker
-   that binds a date rather than a (symbol, date) pair. The UI sample
-   library should then grow multi-symbol presets.
+2. **Portfolio-level analytics.** A basket run grades each order
+   against its own session, which is right but incomplete: nothing yet
+   treats the basket as a *portfolio* rather than a set of independent
+   orders — net exposure through the day, cross-symbol risk, or a
+   scheduler that trades one name harder because another is behind.
 3. **Engine B v3**: v2 shipped 2026-08-04 — spreads calibrated to bar
    range, permanent impact (makers remember client aggression and
    requote against it, decaying over bars), and resting client limits

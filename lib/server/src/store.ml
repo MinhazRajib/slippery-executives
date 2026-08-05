@@ -30,13 +30,25 @@ let run_id ~(config : Run_config.t) ~ran_at =
     16
 ;;
 
-(* One board per (symbol, day, alpha, engine): a bar-model run and a
+(* Path component for the run's names. [Symbol.of_string] admits uppercase
+   letters only, so this is always filename-safe; long baskets collapse to a
+   count, since [alpha_hash] already pins the exact file. *)
+let symbols_slug symbols =
+  match symbols with
+  | [] -> "none"
+  | symbols when List.length symbols <= 4 ->
+    String.concat ~sep:"-" (List.map symbols ~f:Symbol.to_string)
+  | first :: rest ->
+    sprintf "%s-and%d" (Symbol.to_string first) (List.length rest)
+;;
+
+(* One board per (names, day, alpha, engine): a bar-model run and a
    synthetic-exchange run of the same alpha are different contests. *)
-let board_dir ~runs_dir ~symbol ~date ~alpha_hash ~engine_name ~physics =
+let board_dir ~runs_dir ~symbols ~date ~alpha_hash ~engine_name ~physics =
   boards_dir ~runs_dir
   ^/ sprintf
        "%s-%s-%s-%s-%s"
-       (Symbol.to_string symbol)
+       (symbols_slug symbols)
        (Date.to_string date)
        alpha_hash
        (match engine_name with
@@ -76,7 +88,7 @@ let save ~runs_dir ~physics (record : Record.t) =
   let dir =
     board_dir
       ~runs_dir
-      ~symbol:record.config.symbol
+      ~symbols:record.config.symbols
       ~date:record.config.date
       ~alpha_hash:(alpha_hash record.config.alpha_text)
       ~engine_name:record.config.engine_name
@@ -106,9 +118,9 @@ let sexp_files dir =
     |> List.sort ~compare:String.compare
 ;;
 
-let load_board ~runs_dir ~symbol ~date ~alpha_hash ~engine_name ~physics =
+let load_board ~runs_dir ~symbols ~date ~alpha_hash ~engine_name ~physics =
   let dir =
-    board_dir ~runs_dir ~symbol ~date ~alpha_hash ~engine_name ~physics
+    board_dir ~runs_dir ~symbols ~date ~alpha_hash ~engine_name ~physics
   in
   sexp_files dir
   |> List.filter_map ~f:(fun file ->

@@ -56,8 +56,10 @@ let instruction ~arrival ~deadline ~quantity =
        ~deadline:(Time_ns.Ofday.of_string deadline))
 ;;
 
+let universe = Universe.of_day day
+
 let run ?(algorithm = (module Twap : Algorithm_intf.S)) instructions =
-  Driver.run ~day ~instructions ~algorithm ~fill_config ()
+  Driver.run ~universe ~instructions ~algorithm ~fill_config ()
 ;;
 
 let summarize (result : Driver.t) =
@@ -196,7 +198,7 @@ let%expect_test "an instruction arriving in the first minute benchmarks \
   in
   let result =
     Driver.run
-      ~day
+      ~universe:(Universe.of_day day)
       ~instructions:[ instruction ]
       ~algorithm:(module Immediate)
       ~fill_config

@@ -237,8 +237,9 @@ let run_demo (demo : Demo.t) =
     let requested = requested_of instructions in
     match
       Execlab_session.run
-        ~day
-        ~forecast_days
+        ~universe:(Universe.of_day day)
+        ~forecast_days:
+          (Symbol.Map.singleton day.Trading_day.symbol forecast_days)
         ~instructions
         ~algo_name:config.algo
         ~params:config.params

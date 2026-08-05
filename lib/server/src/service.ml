@@ -103,18 +103,16 @@ let own_params (config : Run_config.t) =
    of its own score) and stores only its own grading. *)
 let grade ~data_dir ~(config : Run_config.t) ~params =
   let open Or_error.Let_syntax in
-  let%bind day =
-    Catalog.load ~data_dir ~symbol:config.symbol ~date:config.date
-  in
   let%bind parsed = Execlab_alpha.Parser.parse config.alpha_text in
+  let symbols = Catalog.symbols_of_instructions parsed.instructions in
+  let%bind universe =
+    Catalog.universe ~data_dir ~date:config.date ~symbols
+  in
   let%map outcome =
     Execlab_session.run
-      ~day
+      ~universe
       ~forecast_days:
-        (Catalog.forecast_days
-           ~data_dir
-           ~symbol:config.symbol
-           ~excluding:config.date)
+        (Catalog.forecast_days_for ~data_dir ~date:config.date ~symbols)
       ~instructions:parsed.instructions
       ~algo_name:config.algo_name
       ~params
@@ -185,7 +183,7 @@ let submit_run ~data_dir ~runs_dir (request : Submit_run.Request.t) =
   let leaderboard =
     Store.load_board
       ~runs_dir
-      ~symbol:config.symbol
+      ~symbols:config.symbols
       ~date:config.date
       ~alpha_hash:(alpha_hash config.alpha_text)
       ~engine_name:config.engine_name
@@ -232,7 +230,7 @@ let leaderboard ~runs_dir (request : Leaderboard.Request.t) =
     { Leaderboard.Response.rows =
         Store.load_board
           ~runs_dir
-          ~symbol:request.symbol
+          ~symbols:request.symbols
           ~date:request.date
           ~alpha_hash:request.alpha_hash
           ~engine_name:request.engine_name

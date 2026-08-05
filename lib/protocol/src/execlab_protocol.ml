@@ -4,7 +4,7 @@ open! Execlab_types
 module Run_config = struct
   type t =
     { player : string
-    ; symbol : Symbol.t
+    ; symbols : Symbol.t list
     ; date : Date.t
     ; alpha_text : string
     ; algo_name : string
@@ -17,6 +17,25 @@ module Run_config = struct
     ; engine_seed : int
     }
   [@@deriving sexp, equal]
+
+  (* Runs saved before an alpha could name more than one symbol wrote
+     [(symbol TSLA)]. Rewrite that to today's field rather than dropping the
+     record: a stored notebook and its leaderboard rows outlive the shape of
+     the config that wrote them, and a silently skipped run reads as a lost
+     one. *)
+  let t_of_sexp sexp =
+    let sexp =
+      match sexp with
+      | Sexp.Atom (_ : string) -> sexp
+      | Sexp.List fields ->
+        Sexp.List
+          (List.map fields ~f:(function
+            | Sexp.List [ Sexp.Atom "symbol"; symbol ] ->
+              Sexp.List [ Sexp.Atom "symbols"; Sexp.List [ symbol ] ]
+            | field -> field))
+    in
+    t_of_sexp sexp
+  ;;
 end
 
 module Run_summary = struct
@@ -156,7 +175,7 @@ module Leaderboard = struct
 
   module Request = struct
     type t =
-      { symbol : Symbol.t
+      { symbols : Symbol.t list
       ; date : Date.t
       ; alpha_hash : string
       ; engine_name : string

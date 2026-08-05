@@ -7,7 +7,7 @@
 
 open! Core
 open Execlab_types
-open Execlab_market
+open! Execlab_market
 open Execlab_analytics
 
 let parse_alpha filename : Execlab_alpha.Parser.t =
@@ -43,31 +43,37 @@ let engine_of_string text =
       [%message "unknown engine" (text : string) ~known:"bar, synthetic[:N]"]
 ;;
 
-let run_report ~alpha_file ~symbol ~date ~algo_name ~engine =
-  let symbol = Symbol.of_string (String.uppercase symbol) in
+let run_report ~alpha_file ~date ~algo_name ~engine =
   let date = Date.of_string date in
-  let day = Or_error.ok_exn (Data_loader.load ~symbol ~date ()) in
-  let forecast_days =
-    Execlab_server.Catalog.forecast_days
-      ~data_dir:"data"
-      ~symbol
-      ~excluding:date
-  in
   let instructions = (parse_alpha alpha_file).instructions in
+  let symbols =
+    Execlab_server.Catalog.symbols_of_instructions instructions
+  in
+  let universe =
+    Or_error.ok_exn
+      (Execlab_server.Catalog.universe ~data_dir:"data" ~date ~symbols)
+  in
   let outcome =
     Or_error.ok_exn
       (Execlab_session.run
-         ~day
-         ~forecast_days
+         ~universe
+         ~forecast_days:
+           (Execlab_server.Catalog.forecast_days_for
+              ~data_dir:"data"
+              ~date
+              ~symbols)
          ~instructions
          ~algo_name
          ~params:{ Execlab_session.Params.default with engine })
   in
   printf
-    "%s %s: %d instruction(s), %s vs immediate baseline\n\n"
-    (Symbol.to_string symbol)
+    "%s %s: %d instruction(s) across %s, %s vs immediate baseline\n\n"
+    (String.concat ~sep:"," (List.map symbols ~f:Symbol.to_string))
     (Date.to_string date)
     (List.length instructions)
+    (match List.length symbols with
+     | 1 -> "one symbol"
+     | n -> sprintf "%d symbols" n)
     algo_name;
   List.iter outcome.graded ~f:(fun graded ->
     print_endline
@@ -80,35 +86,79 @@ let run_report ~alpha_file ~symbol ~date ~algo_name ~engine =
     print_endline "")
 ;;
 
+(* The alpha now names its own symbols, so a date is all the market a run
+   needs. The older form with an explicit symbol still works and means what
+   it always did: assert that the whole file trades that one name. *)
+let run_report ~alpha_file ?only_symbol ~date ~algo_name ~engine () =
+  match only_symbol with
+  | None -> run_report ~alpha_file ~date ~algo_name ~engine
+  | Some only ->
+    let only = Symbol.of_string (String.uppercase only) in
+    let instructions = (parse_alpha alpha_file).instructions in
+    (match
+       List.find instructions ~f:(fun instruction ->
+         not (Symbol.equal instruction.Alpha_instruction.symbol only))
+     with
+     | None -> run_report ~alpha_file ~date ~algo_name ~engine
+     | Some instruction ->
+       raise_s
+         [%message
+           "alpha names a symbol other than the one asked for"
+             ~asked_for:(only : Symbol.t)
+             (instruction : Alpha_instruction.t)])
+;;
+
+let is_date text =
+  Option.is_some (Option.try_with (fun () -> Date.of_string text))
+;;
+
 let () =
+  let bar = Execlab_session.Engine_choice.Bar_model in
   match Sys.get_argv () with
   | [| _; filename |] -> print_instructions filename
-  | [| _; alpha_file; symbol; date |] ->
+  | [| _; alpha_file; date |] when is_date date ->
+    run_report ~alpha_file ~date ~algo_name:"twap" ~engine:bar ()
+  | [| _; alpha_file; date; algo_name |] when is_date date ->
+    run_report ~alpha_file ~date ~algo_name ~engine:bar ()
+  | [| _; alpha_file; date; algo_name; engine |] when is_date date ->
     run_report
       ~alpha_file
-      ~symbol
-      ~date
-      ~algo_name:"twap"
-      ~engine:Execlab_session.Engine_choice.Bar_model
-  | [| _; alpha_file; symbol; date; algo_name |] ->
-    run_report
-      ~alpha_file
-      ~symbol
-      ~date
-      ~algo_name
-      ~engine:Execlab_session.Engine_choice.Bar_model
-  | [| _; alpha_file; symbol; date; algo_name; engine |] ->
-    run_report
-      ~alpha_file
-      ~symbol
       ~date
       ~algo_name
       ~engine:(engine_of_string engine)
+      ()
+  | [| _; alpha_file; symbol; date |] ->
+    run_report
+      ~alpha_file
+      ~only_symbol:symbol
+      ~date
+      ~algo_name:"twap"
+      ~engine:bar
+      ()
+  | [| _; alpha_file; symbol; date; algo_name |] ->
+    run_report
+      ~alpha_file
+      ~only_symbol:symbol
+      ~date
+      ~algo_name
+      ~engine:bar
+      ()
+  | [| _; alpha_file; symbol; date; algo_name; engine |] ->
+    run_report
+      ~alpha_file
+      ~only_symbol:symbol
+      ~date
+      ~algo_name
+      ~engine:(engine_of_string engine)
+      ()
   | _ ->
     eprintf
       "usage: main.exe <alpha.csv>                        (parse only)\n";
     eprintf
-      "       main.exe <alpha.csv> <SYMBOL> <DATE> \
-       [twap|vwap|pov|is|immediate] [bar|synthetic[:N]]\n";
+      "       main.exe <alpha.csv> <DATE> [twap|vwap|pov|is|immediate] \
+       [bar|synthetic[:N]]\n";
+    eprintf
+      "       main.exe <alpha.csv> <SYMBOL> <DATE> ...    (asserts one \
+       symbol)\n";
     exit 2
 ;;

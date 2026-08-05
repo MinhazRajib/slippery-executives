@@ -90,7 +90,10 @@ let previous_bar =
 ;;
 
 let actions ?(profile = profile) ~now parent =
-  let module Algo = (val Vwap.create ~profile) in
+  let module Algo =
+    (val Vwap.create
+           ~profiles:(Symbol.Map.singleton (Symbol.of_string "NVDA") profile))
+  in
   let context =
     { Algorithm_intf.Context.now = Time_ns.Ofday.of_string now
     ; previous_bar
@@ -179,14 +182,20 @@ let%expect_test "deadline = arrival means everything is due immediately" =
     |}]
 ;;
 
-let%expect_test "no profile weight in the window: everything is due" =
-  (* An empty profile gives the window zero weight; like a zero-length TWAP
-     window, the whole quantity is due at once. *)
+let%expect_test "a symbol with no forecast walks Twap's straight line" =
+  (* A run may touch a symbol we have no other sessions for, and there is
+     then nothing to shape a schedule with. Degrading to the straight line is
+     the honest answer; degrading to a market order — which is what a zero
+     window weight used to mean — would have turned a patient algorithm into
+     an impatient one precisely when it knew least. Over a five-minute
+     window: nothing due at arrival, 200 a minute later. *)
   actions ~profile:[] ~now:"10:05:00" (active ~deadline:"10:10:00");
+  actions ~profile:[] ~now:"10:06:00" (active ~deadline:"10:10:00");
   [%expect
     {|
+    ()
     ((Submit
-      ((symbol NVDA) (side Buy) (quantity 1000) (order_type Market)
+      ((symbol NVDA) (side Buy) (quantity 200) (order_type Market)
        (time_in_force IOC))))
     |}]
 ;;

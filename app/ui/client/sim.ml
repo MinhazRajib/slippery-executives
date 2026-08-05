@@ -136,7 +136,7 @@ let run ~day ~instructions ~fill_config ~algo : Output.t Or_error.t =
     let algo_driver =
       Driver.run
         ~fill_config
-        ~day
+        ~universe:(Universe.of_day day)
         ~instructions
         ~algorithm:(Algo_choice.to_algorithm algo)
         ()
@@ -144,7 +144,7 @@ let run ~day ~instructions ~fill_config ~algo : Output.t Or_error.t =
     let baseline_driver =
       Driver.run
         ~fill_config
-        ~day
+        ~universe:(Universe.of_day day)
         ~instructions
         ~algorithm:(module Immediate)
         ()

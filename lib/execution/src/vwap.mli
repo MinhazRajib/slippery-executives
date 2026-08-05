@@ -22,25 +22,34 @@
 open! Core
 open! Execlab_types
 
-(** [create ~profile] closes over the profile because {!Algorithm_intf.S}
-    gives [init] no configuration of its own. [profile] pairs each bar's time
-    with that minute's forecast fraction of the day's volume. The honest
+(** [create ~profiles] closes over the forecasts because {!Algorithm_intf.S}
+    gives [init] no configuration of its own. Each symbol's profile pairs
+    that session's bar times with the forecast fraction of the day's volume
+    trading in each — one entry per symbol the run touches, since a volume
+    curve belongs to a stock rather than to a run. A symbol with no forecast
+    degrades to {!Twap}'s straight line, not to a market order. The honest
     forecast is [Day_stats.average_volume_profile] over *other* sessions of
     the same symbol — never the simulated day itself, which would let the
     algorithm peek at the volume it is about to trade:
 
     {[
-      let profile =
-        List.map2_exn
-          day.Trading_day.bars
-          (Or_error.ok_exn (Day_stats.average_volume_profile other_days))
-          ~f:(fun bar weight -> bar.Market_bar.time, weight)
+      let profiles =
+        Symbol.Map.of_alist_exn
+          (List.map days ~f:(fun day ->
+             ( day.Trading_day.symbol
+             , List.map2_exn
+                 day.bars
+                 (Or_error.ok_exn
+                    (Day_stats.average_volume_profile (others day)))
+                 ~f:(fun bar weight -> bar.Market_bar.time, weight) )))
       in
-      Driver.run ~algorithm:(Vwap.create ~profile) ...
+      Driver.run ~algorithm:(Vwap.create ~profiles) ...
     ]}
 
     Weights must be non-negative; entries outside the arrival -> deadline
-    window are ignored. If no weight falls inside the window (deadline =
-    arrival, or an empty profile), the whole quantity is due immediately,
-    like {!Twap} with a zero-length window. *)
-val create : profile:(Time_ns.Ofday.t * float) list -> Algorithm_intf.t
+    window are ignored. If a profile exists but no weight falls inside the
+    window (deadline = arrival), the whole quantity is due immediately, like
+    {!Twap} with a zero-length window. *)
+val create
+  :  profiles:(Time_ns.Ofday.t * float) list Symbol.Map.t
+  -> Algorithm_intf.t

@@ -53,11 +53,18 @@ val forecast_profile
   -> forecast_days:Trading_day.t list
   -> float list
 
+(** One forecast per symbol in the universe, ready for {!Vwap.create}. A
+    symbol with no other sessions on hand falls back to its own curve. *)
+val forecast_profiles
+  :  universe:Universe.t
+  -> forecast_days:Trading_day.t list Symbol.Map.t
+  -> (Time_ns.Ofday.t * float) list Symbol.Map.t
+
 (** Errors on an unknown name; ["vwap"] builds its schedule from
     {!forecast_profile}. *)
 val algorithm_named
-  :  day:Trading_day.t
-  -> forecast_days:Trading_day.t list
+  :  universe:Universe.t
+  -> forecast_days:Trading_day.t list Symbol.Map.t
   -> params:Params.t
   -> string
   -> Algorithm_intf.t Or_error.t
@@ -89,13 +96,15 @@ module Outcome : sig
 end
 
 (** Runs [algo_name] and the immediate baseline over the same instructions
-    and grades both. Every instruction must name [day]'s own symbol — the
-    check lives here so all three fronts (CLI, browser, server) enforce it
-    identically. Errors bubble up from the algorithm name, the benchmarks,
-    and the grading — never raises on user input. *)
+    and grades both. Every instruction must name a symbol the universe has a
+    session for — the check lives here so all three fronts (CLI, browser,
+    server) enforce it identically. Each parent is graded against its own
+    symbol's session: its own arrival price, close and day VWAP. Errors
+    bubble up from the algorithm name, the benchmarks, and the grading —
+    never raises on user input. *)
 val run
-  :  day:Trading_day.t
-  -> forecast_days:Trading_day.t list
+  :  universe:Universe.t
+  -> forecast_days:Trading_day.t list Symbol.Map.t
   -> instructions:Alpha_instruction.t list
   -> algo_name:string
   -> params:Params.t

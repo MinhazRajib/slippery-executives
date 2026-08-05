@@ -290,6 +290,15 @@ let pill ~theme ~active ~on_click label =
   {%html|<button %{style} on_click=%{on_click}>#{label}</button>|}
 ;;
 
+(* "TSLA", or "AAPL +2": one line's worth of what a run traded. *)
+let symbols_label symbols =
+  match symbols with
+  | [] -> "-"
+  | [ symbol ] -> Symbol.to_string symbol
+  | first :: rest ->
+    sprintf "%s +%d" (Symbol.to_string first) (List.length rest)
+;;
+
 let chart_w = 1140.
 let chart_left = 52.
 let chart_right = 20.
@@ -644,6 +653,7 @@ let minute_of_mouse
 let chart
   (replay : Replay.t)
   ~theme
+  ~focus
   ~minute
   ~fills
   ~show_fills
@@ -656,7 +666,20 @@ let chart
   ~drag
   ~set_drag
   =
-  let bars = replay.bars in
+  (* A price axis belongs to one stock, so the chart draws the focused symbol
+     only: its bars, its orders, its fills. Order numbers stay global (O3 is
+     the third line of the alpha whichever name it is), so the chart and the
+     tables agree. *)
+  let bars = Replay.bars_for replay focus in
+  let focused =
+    List.filter_mapi replay.parents ~f:(fun index parent ->
+      if Symbol.equal parent.Replay.symbol focus
+      then Some (index, parent)
+      else None)
+  in
+  let fills =
+    List.filter fills ~f:(fun fill -> Symbol.equal fill.Fill.symbol focus)
+  in
   let n = Array.length bars in
   let w = chart_w in
   let left = chart_left in
@@ -761,7 +784,7 @@ let chart
          (Price.to_string_dollar parent.arrival_price))
   in
   let windows =
-    List.concat_mapi replay.parents ~f:(fun index parent ->
+    List.concat_map focused ~f:(fun (index, parent) ->
       if not (window_visible parent)
       then []
       else (
@@ -842,10 +865,10 @@ let chart
   in
   (* Arrival reference lines stay, but only when few enough to read. *)
   let arrival_lines =
-    if List.length replay.parents > 4
+    if List.length focused > 4
     then []
     else
-      List.concat_mapi replay.parents ~f:(fun index parent ->
+      List.concat_map focused ~f:(fun (index, parent) ->
         if not (window_visible parent)
         then []
         else (
@@ -869,7 +892,7 @@ let chart
             ]))
   in
   (* the whole-day vwap as a flat dashed reference line *)
-  let day_vwap = replay.vwap_by_minute.(n - 1) in
+  let day_vwap = (Replay.vwap_for replay focus).(n - 1) in
   let vwap_line =
     [ svg
         "line"
@@ -1040,7 +1063,7 @@ let chart
       let cx = x m in
       let close = Price.to_float bar.Market_bar.close in
       let covering =
-        List.filter_mapi replay.parents ~f:(fun index parent ->
+        List.filter_map focused ~f:(fun (index, parent) ->
           if m >= parent.arrival_minute && m <= parent.deadline_minute
           then
             Some
@@ -1266,6 +1289,7 @@ let chart
 let legend
   (replay : Replay.t)
   ~theme
+  ~focus
   ~minute
   ~fills
   ~show_fills
@@ -1325,8 +1349,11 @@ let legend
     |}
   in
   let stats =
-    let last = replay.bars.(minute).Market_bar.close in
-    let open_pnl = Replay.open_pnl_cents ~fills ~last in
+    (* Marked per name: a multi-symbol run has no single last price. *)
+    let open_pnl =
+      Replay.open_pnl_cents ~fills ~last_for:(fun symbol ->
+        Replay.last_close replay ~symbol ~minute)
+    in
     let stats_style =
       Styles.s "margin-left:auto;display:flex;gap:16px;align-items:center;"
     in
@@ -1352,7 +1379,7 @@ let legend
   {%html|
     <div %{row}>
       %{item ~color:theme.Styles.blue ~line:true
-          (Symbol.to_string replay.symbol ^ " price (1-min close)")}
+          (Symbol.to_string focus ^ " price (1-min close)")}
       %{item ~color:theme.Styles.orange ~line:true "day vwap"}
       *{order_items}
       %{stats}
@@ -1361,13 +1388,59 @@ let legend
   |}
 ;;
 
+(* One tab per symbol in the run, because the chart can only carry one price
+   axis at a time. Single-name runs get no strip at all. *)
+let symbol_tabs (replay : Replay.t) ~theme ~focus ~set_focus =
+  match replay.symbols with
+  | [] | [ _ ] -> None
+  | symbols ->
+    let row =
+      Styles.s
+        ("display:flex;gap:6px;align-items:center;padding:12px 16px 0 \
+          16px;border-bottom:1px solid "
+         ^ theme.Styles.hairline
+         ^ ";padding-bottom:10px;")
+    in
+    let label = Styles.s (Styles.table_label theme ^ "margin-right:4px;") in
+    let tab symbol =
+      let selected = Symbol.equal symbol focus in
+      let style =
+        Styles.s
+          ("border:none;border-radius:4px;padding:5px \
+            12px;cursor:pointer;font-size:12px;font-weight:600;"
+           ^ Styles.mono
+           ^ "background:"
+           ^ (if selected then theme.Styles.blue else theme.Styles.chip_bg)
+           ^ ";color:"
+           ^ (if selected then "#ffffff" else theme.Styles.secondary)
+           ^ ";")
+      in
+      {%html|
+        <button %{style} on_click=%{fun _ -> set_focus symbol}>
+          #{Symbol.to_string symbol}
+        </button>
+      |}
+    in
+    Some
+      {%html|
+        <div %{row}>
+          <span %{label}>chart</span>
+          *{List.map symbols ~f:tab}
+        </div>
+      |}
+;;
+
 (* ---------- the orders table ---------- *)
 
 (* One row per parent order: scales to many orders where a card per order
    would not. *)
 let orders_table (replay : Replay.t) ~theme ~fills ~minute =
+  (* The symbol column only earns its width when the alpha has more than one
+     name in it. *)
+  let multi = List.length replay.symbols > 1 in
   let columns =
-    "92px 96px 116px 78px 96px 148px 62px 112px 112px 82px 1fr"
+    (if multi then "92px 68px " else "92px ")
+    ^ "96px 116px 78px 96px 148px 62px 112px 112px 82px 1fr"
   in
   let row_base =
     "display:grid;grid-template-columns:"
@@ -1386,7 +1459,6 @@ let orders_table (replay : Replay.t) ~theme ~fills ~minute =
        ^ ";"
        ^ Styles.table_label theme)
   in
-  let day_vwap = replay.vwap_by_minute.(Array.length replay.bars - 1) in
   let now = Replay.time_at replay ~minute in
   let dash =
     let style = Styles.s ("color:" ^ theme.Styles.faint ^ ";") in
@@ -1396,6 +1468,11 @@ let orders_table (replay : Replay.t) ~theme ~fills ~minute =
     let instruction = parent.instruction in
     let color = Styles.order_color theme index in
     let side = instruction.Alpha_instruction.side in
+    (* Each order is benchmarked against its own session's day VWAP. *)
+    let day_vwap =
+      let vwap = Replay.vwap_for replay parent.symbol in
+      vwap.(Array.length vwap - 1)
+    in
     let total = Size.to_int instruction.Alpha_instruction.quantity in
     let mine =
       List.filter fills ~f:(fun (fill : Fill.t) ->
@@ -1470,9 +1547,17 @@ let orders_table (replay : Replay.t) ~theme ~fills ~minute =
         let text = sprintf "$%.4f" a in
         {%html|<span>#{text}</span>|}
     in
+    let symbol_cell =
+      if not multi
+      then []
+      else (
+        let style = Styles.s ("color:" ^ theme.Styles.text ^ ";") in
+        [ {%html|<span %{style}>#{Symbol.to_string parent.symbol}</span>|} ])
+    in
     {%html|
       <div %{style}>
         <span %{order_label}><span %{chip}></span>Order %{index + 1#Int}</span>
+        *{symbol_cell}
         <span %{bold}>#{side_str side} #{Int.to_string_hum ~delimiter:',' total}</span>
         <span %{warm}>
           #{hhmm instruction.Alpha_instruction.arrival_time}
@@ -1495,11 +1580,13 @@ let orders_table (replay : Replay.t) ~theme ~fills ~minute =
     |}
   in
   let header = Styles.s "padding:14px 16px 0 16px;" in
+  let symbol_head = if multi then [ {%html|<span>symbol</span>|} ] else [] in
   {%html|
     <div %{Styles.card theme "padding-bottom:4px;"}>
       <div %{header}><span %{title_style}>Orders</span></div>
       <div %{head_row}>
         <span>order</span>
+        *{symbol_head}
         <span>side · qty</span>
         <span>window</span>
         <span>arrival</span>
@@ -1546,7 +1633,7 @@ let event_log (replay : Replay.t) ~theme ~fills ~minute =
             , sprintf
                 "%s %s %s arrives · deadline %s"
                 (side_str side)
-                (Symbol.to_string replay.symbol)
+                (Symbol.to_string parent.symbol)
                 (Int.to_string_hum ~delimiter:',' total)
                 (hhmm instruction.Alpha_instruction.deadline)
             , None )
@@ -1759,6 +1846,8 @@ let sim_view
   (replay : Replay.t)
   ~theme
   ~is_dark
+  ~focus
+  ~set_focus
   ~minute
   ~playing
   ~speed
@@ -1786,7 +1875,7 @@ let sim_view
   let fills = Replay.fills_upto replay ~minute in
   (* The visible bar window: full session, or a preset span centered on the
      playhead (clamped at the edges), so the zoom follows the replay. *)
-  let n = Array.length replay.bars in
+  let n = Replay.last_minute replay + 1 in
   let view =
     match (chart_view : Chart_view.t) with
     | Follow None -> 0, n - 1
@@ -1817,14 +1906,15 @@ let sim_view
   let title =
     sprintf
       "%s · %s · %s"
-      (Symbol.to_string replay.symbol)
+      (String.concat ~sep:" " (List.map replay.symbols ~f:Symbol.to_string))
       (Date.to_string replay.date)
       (String.uppercase replay.algo_name)
   in
+  (* The runner reads the symbols out of the alpha, so the command line is
+     the same however many names the file names. *)
   let command =
     sprintf
-      "dune exec bin/main.exe -- <your_alpha.csv> %s %s %s"
-      (Symbol.to_string replay.symbol)
+      "dune exec bin/main.exe -- <your_alpha.csv> %s %s"
       (Date.to_string replay.date)
       replay.algo_name
   in
@@ -1849,8 +1939,10 @@ let sim_view
           ~set_zoom_tool ~view ~set_playing
           ~set_speed ~set_minute ~restart}
       <div %{Styles.card theme "padding-bottom:8px;"}>
-        %{legend replay ~theme ~minute ~fills ~show_fills ~toggle_fills}
-        %{chart replay ~theme ~minute ~fills ~show_fills ~hover
+        ?{symbol_tabs replay ~theme ~focus ~set_focus}
+        %{legend replay ~theme ~focus ~minute ~fills ~show_fills
+            ~toggle_fills}
+        %{chart replay ~theme ~focus ~minute ~fills ~show_fills ~hover
             ~set_hover ~view ~zoom_mode ~zoom_tool ~drag ~set_drag
             ~set_view:(fun (z0, z1) ->
               set_chart_view (Chart_view.Manual { z0; z1 }))}
@@ -2439,7 +2531,7 @@ let run_record (replay : Replay.t) =
     in
     if filled > 0 then weighted /. Float.of_int filled else 0.
   in
-  { History.Run_record.symbol = replay.symbol
+  { History.Run_record.symbols = replay.symbols
   ; date = replay.date
   ; algo_name = replay.algo_name
   ; alpha_capture = (if gross > 0 then Some (net // gross) else None)
@@ -2539,7 +2631,7 @@ let what_changed ~theme ~(current : History.Run_record.t) ~previous =
           <div %{heading}>What changed?</div>
           <div %{sub}>
             #{sprintf "versus your previous run — %s %s, %s"
-                (Symbol.to_string previous.symbol)
+                (History.Run_record.symbols_label previous)
                 (Date.to_string previous.date)
                 (String.uppercase previous.algo_name)}
           </div>
@@ -2691,7 +2783,7 @@ let my_runs_view
       <div>
       <div %{style} title=%{full_params run.config}>
         <span %{dim}>#{String.prefix run.ran_at 16}</span>
-        <span>#{Symbol.to_string run.config.symbol}</span>
+        <span>#{symbols_label run.config.symbols}</span>
         <span>#{String.uppercase run.config.algo_name}</span>
         <span %{dim}>
           #{Date.to_string run.config.date} · #{params_of run.config}
@@ -3031,7 +3123,7 @@ let dashboard_view
     in
     {%html|
       <div %{style}>
-        <span>#{Symbol.to_string run.symbol} · #{Date.to_string run.date}</span>
+        <span>#{History.Run_record.symbols_label run} · #{Date.to_string run.date}</span>
         <span %{dim}>#{String.uppercase run.algo_name}</span>
         <span>%{money_stat ~theme ~label:"value add" run.value_add_cents}</span>
         <span>%{money_stat ~theme ~label:"net" run.net_cents}</span>
@@ -3595,7 +3687,15 @@ let choose_day_view
 (* Canned instruction sets, generated for the chosen day's symbol so a sample
    never trips the symbol-match check. Sizes stay demo-scale (see the POV
    default-rate note in bin/main.ml). *)
-let sample_alphas symbol =
+(* Other names with a session on this date, so a basket sample can only name
+   symbols the run can actually load. *)
+let others_trading ~symbol ~date =
+  List.filter Dataset.symbols ~f:(fun other ->
+    (not (Symbol.equal other symbol))
+    && List.mem (Dataset.dates_for other) date ~equal:Date.equal)
+;;
+
+let sample_alphas ~symbol ~date =
   let s = Symbol.to_string symbol in
   let csv rows =
     String.concat
@@ -3651,6 +3751,37 @@ let sample_alphas symbol =
         ; "11:15:00", "BUY", 2500, "13:00:00"
         ] )
   ]
+  @
+  (* Only offered when the day actually has other names to trade: a sample
+     that names a symbol with no session for this date would fail on the
+     first run, which is a poor introduction. *)
+  match others_trading ~symbol ~date with
+  | [] -> []
+  | others ->
+    let names = symbol :: List.take others 2 in
+    let rows =
+      List.mapi names ~f:(fun index name ->
+        let arrival, side, quantity, deadline =
+          match index with
+          | 0 -> "10:00:00", "BUY", 5000, "11:30:00"
+          | 1 -> "10:15:00", "SELL", 4000, "12:00:00"
+          | (_ : int) -> "10:45:00", "BUY", 3000, "12:30:00"
+        in
+        sprintf
+          "%s,%s,%s,%d,%s"
+          arrival
+          (Symbol.to_string name)
+          side
+          quantity
+          deadline)
+    in
+    [ ( sprintf "%d names at once" (List.length names)
+      , sprintf
+          "One basket across %s. Each name gets its own book and its own \
+           benchmarks; the chart has a tab per symbol."
+          (String.concat ~sep:", " (List.map names ~f:Symbol.to_string))
+      , String.concat ~sep:"\n" rows ^ "\n" )
+    ]
 ;;
 
 (* Reads the first selected file as text and pours it into the alpha
@@ -3781,8 +3912,7 @@ let alpha_view
   in
   let subtitle =
     sprintf
-      "%s · %s — paste, upload, or start from a sample"
-      (Symbol.to_string symbol)
+      "%s — paste, upload, or start from a sample"
       (Date.to_string date)
   in
   {%html|
@@ -3798,12 +3928,12 @@ let alpha_view
                 ("color:"
                  ^ theme.Styles.faint
                  ^ ";font-size:11.5px;margin-bottom:8px;")}>
-            written for #{Symbol.to_string symbol} — the symbol you picked;
-            a run trades one stock per session (multi-stock strategies are
-            on the roadmap)
+            written for #{Symbol.to_string symbol} — the symbol you
+            browsed. An alpha names its own symbols per line, so a file may
+            trade as many as this date has sessions for.
           </div>
           <div %{samples_row}>
-            *{List.map (sample_alphas symbol) ~f:sample_card}
+            *{List.map (sample_alphas ~symbol ~date) ~f:sample_card}
           </div>
           <div %{section_label}>Alpha CSV</div>
           <textarea
@@ -4083,11 +4213,20 @@ let setup_view
     | Error error ->
       [ {%html|<div %{error_style}>#{Error.to_string_hum error}</div>|} ]
   in
+  (* Name what the alpha in the box actually trades, not what calendar was
+     browsed to get here — they need not be the same. *)
   let subtitle =
-    sprintf
-      "%s · %s · bar-based fill model"
-      (Symbol.to_string symbol)
-      (Date.to_string date)
+    let names =
+      match Replay.parse_alpha alpha_text with
+      | Error (_ : Error.t) -> Symbol.to_string symbol
+      | Ok instructions ->
+        List.map instructions ~f:(fun instruction ->
+          instruction.Alpha_instruction.symbol)
+        |> List.dedup_and_sort ~compare:Symbol.compare
+        |> List.map ~f:Symbol.to_string
+        |> String.concat ~sep:" "
+    in
+    sprintf "%s · %s · bar-based fill model" names (Date.to_string date)
   in
   let param_field ~label:text ~value ~set =
     let input_style =
@@ -4331,7 +4470,7 @@ let results_view
   let title =
     sprintf
       "Results — %s · %s · %s"
-      (Symbol.to_string replay.symbol)
+      (String.concat ~sep:" " (List.map replay.symbols ~f:Symbol.to_string))
       (Date.to_string replay.date)
       (String.uppercase replay.algo_name)
   in
@@ -4529,7 +4668,19 @@ let results_view
   in
   (* Cost table: components in reading order, summing left-to-right into the
      shortfall column. *)
-  let cost_columns = "56px 112px 104px 116px 104px 104px 128px 1fr" in
+  (* A symbol column only when there is more than one to tell apart. *)
+  let multi = List.length replay.symbols > 1 in
+  let symbol_cell (grading : Transaction_cost.t) =
+    if not multi
+    then []
+    else [ {%html|<span %{bold}>#{Symbol.to_string grading.symbol}</span>|} ]
+  in
+  let symbol_head = if multi then [ {%html|<span>symbol</span>|} ] else [] in
+  let symbol_blank = if multi then [ blank ] else [] in
+  let with_symbol columns = if multi then "68px " ^ columns else columns in
+  let cost_columns =
+    with_symbol "56px 112px 104px 116px 104px 104px 128px 1fr"
+  in
   let cost_row index (row : Replay.result_row) =
     let grading = row.Replay.grading in
     let avg_fill, shortfall_bps =
@@ -4542,6 +4693,7 @@ let results_view
     {%html|
       <div %{body_row cost_columns}>
         %{order_cell index}
+        *{symbol_cell grading}
         <span %{bold}>#{side_qty grading}</span>
         <span>%{avg_fill}</span>
         <span>%{cost_cell ~theme grading.timing_cost_cents}</span>
@@ -4556,6 +4708,7 @@ let results_view
     {%html|
       <div %{total_style cost_columns}>
         <span>total</span>
+        *{symbol_blank}
         %{blank}
         %{blank}
         <span>%{cost_cell ~theme
@@ -4573,7 +4726,7 @@ let results_view
   (* Results table: the P&L identity, net = gross - shortfall - opportunity,
      plus the baseline comparison. *)
   let results_columns =
-    "56px 112px 64px 122px 118px 118px 130px 130px 1fr"
+    with_symbol "56px 112px 64px 122px 118px 118px 130px 130px 1fr"
   in
   let results_row index (row : Replay.result_row) =
     let grading = row.Replay.grading in
@@ -4586,6 +4739,7 @@ let results_view
     {%html|
       <div %{body_row results_columns}>
         %{order_cell index}
+        *{symbol_cell grading}
         <span %{bold}>#{side_qty grading}</span>
         <span %{dim}>
           #{sprintf "%.0f%%" (grading.completion_rate *. 100.)}
@@ -4603,6 +4757,7 @@ let results_view
     {%html|
       <div %{total_style results_columns}>
         <span>total</span>
+        *{symbol_blank}
         %{blank}
         %{blank}
         <span>%{pnl_cell ~theme total_gross}</span>
@@ -4780,7 +4935,7 @@ let results_view
   let export_name suffix =
     sprintf
       "execlab_%s_%s_%s_%s.csv"
-      (Symbol.to_string replay.symbol)
+      (Replay.symbols_slug replay)
       (Date.to_string replay.date)
       replay.algo_name
       suffix
@@ -4821,6 +4976,7 @@ let results_view
         </div>
         <div %{head_row cost_columns}>
           <span>order</span>
+          *{symbol_head}
           <span>side · qty</span>
           <span>avg fill</span>
           <span>timing</span>
@@ -4838,6 +4994,7 @@ let results_view
         </div>
         <div %{head_row results_columns}>
           <span>order</span>
+          *{symbol_head}
           <span>side · qty</span>
           <span>filled</span>
           <span>gross alpha</span>
@@ -4897,7 +5054,7 @@ let load_session () : Session.t option =
 let config_of (replay : Replay.t) ~player =
   let fill = replay.params.Execlab_session.Params.fill_config in
   { Run_config.player
-  ; symbol = replay.symbol
+  ; symbols = replay.symbols
   ; date = replay.date
   ; alpha_text = replay.alpha_text
   ; algo_name = replay.algo_name
@@ -4977,6 +5134,10 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let playing, set_playing = Bonsai.state true graph in
   let speed, set_speed = Bonsai.state 4 graph in
   let show_fills, set_show_fills = Bonsai.state true graph in
+  (* Which name the chart is drawing. Held as an option and resolved against
+     the run in hand, so a stale pick from the last alpha can never point at
+     a symbol this run never traded. *)
+  let focus, set_focus = Bonsai.state (None : Symbol.t option) graph in
   let param_text, set_param_text =
     Bonsai.state Replay.Param_text.default graph
   in
@@ -5038,11 +5199,12 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     match selection, Replay.parse_params param_text with
     | None, _ -> set_run_error (Some (Error.of_string "choose a day first"))
     | Some (_ : Symbol.t * Date.t), Error error -> set_run_error (Some error)
-    | Some (symbol, date), Ok params ->
+    (* The picked symbol only decides which calendar you were browsing; which
+       names actually trade is the alpha's business. *)
+    | Some ((_ : Symbol.t), date), Ok params ->
       let%bind.Effect result =
         Effect.of_sync_fun
-          (fun () ->
-            Replay.run ~symbol ~date ~alpha_text ~algo_name:algo ~params)
+          (fun () -> Replay.run ~date ~alpha_text ~algo_name:algo ~params)
           ()
       in
       (match result with
@@ -5150,7 +5312,6 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         Effect.of_sync_fun
           (fun () ->
             Replay.run
-              ~symbol:config.symbol
               ~date:config.date
               ~alpha_text:config.alpha_text
               ~algo_name:config.algo_name
@@ -5254,7 +5415,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     | Some r ->
       let%bind.Effect response =
         fetch_board_effect
-          { Leaderboard.Request.symbol = r.symbol
+          { Leaderboard.Request.symbols = r.symbols
           ; date = r.date
           ; alpha_hash = alpha_hash r.alpha_text
           ; engine_name =
@@ -5293,6 +5454,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_show_help
   and hover
   and set_hover
+  and focus
+  and set_focus
   and chart_view
   and set_chart_view
   and zoom_mode
@@ -5453,6 +5616,13 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         r
         ~theme
         ~is_dark
+        ~focus:
+          (match focus with
+           | Some symbol when List.mem r.symbols symbol ~equal:Symbol.equal
+             ->
+             symbol
+           | Some (_ : Symbol.t) | None -> List.hd_exn r.symbols)
+        ~set_focus:(fun symbol -> set_focus (Some symbol))
         ~minute
         ~playing
         ~speed

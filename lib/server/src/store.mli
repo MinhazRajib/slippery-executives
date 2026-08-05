@@ -51,7 +51,7 @@ val save : runs_dir:string -> physics:string -> Record.t -> unit
 
 val load_board
   :  runs_dir:string
-  -> symbol:Symbol.t
+  -> symbols:Symbol.t list
   -> date:Date.t
   -> alpha_hash:string
   -> engine_name:string
@@ -72,13 +72,13 @@ val find_user_run
   -> run_id:string
   -> Saved_run.t option
 
-(** Flips an existing entry's [published] flag on, for when a saved run is
-    later submitted to its board. A run that is not in the notebook (or is
-    unreadable) is left alone — publishing must not fail over bookkeeping. *)
 (** Deletes every saved run in [username]'s notebook, returning how many
     files went. Board entries are untouched. *)
 val delete_user_runs : runs_dir:string -> username:string -> int
 
+(** Flips an existing entry's [published] flag on, for when a saved run is
+    later submitted to its board. A run that is not in the notebook (or is
+    unreadable) is left alone — publishing must not fail over bookkeeping. *)
 val mark_published
   :  runs_dir:string
   -> username:string
