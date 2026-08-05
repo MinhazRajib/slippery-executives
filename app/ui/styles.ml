@@ -113,8 +113,15 @@ let table_label t =
   ^ ";font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;"
 ;;
 
+(* The wordmark: bigger and unmistakably the product's, in the accent blue.
+   It renders as a button (it navigates home), so the style clears button
+   chrome too. *)
 let brand t =
-  s ("color:" ^ t.secondary ^ ";font-size:12px;font-weight:600;" ^ mono)
+  s
+    ("background:none;border:none;padding:0;cursor:pointer;color:"
+     ^ t.blue
+     ^ ";font-size:17px;font-weight:800;letter-spacing:0.01em;"
+     ^ mono)
 ;;
 
 let code_chip t =

@@ -208,8 +208,6 @@ module Icon = struct
   let zoom_in ?size () = make ?size Zoom_in
   let zoom_out ?size () = make ?size Zoom_out
   let refresh ?size () = make ?size Refresh_cw
-  let log_out ?size () = make ?size Log_out
-  let user ?size () = make ?size User
 end
 
 let wizard_steps =
@@ -1013,7 +1011,7 @@ let chart
                let bar_close = Price.to_float bar.Market_bar.close in
                tooltip
                  (sprintf
-                    "YOUR FILL: %s %d shares @ $%.4f (%s, order %d, %s)\n\
+                    "YOUR FILL: %s %d shares @ $%.2f (%s, order %d, %s)\n\
                      STOCK THAT MINUTE: opened $%.2f · closed $%.2f\n\
                      you paid %+.4f vs the open"
                     (side_str fill.side)
@@ -1467,7 +1465,7 @@ let orders_table (replay : Replay.t) ~theme ~fills ~minute =
       match avg with
       | None -> dash
       | Some a ->
-        let text = sprintf "$%.4f" a in
+        let text = sprintf "$%.2f" a in
         {%html|<span>#{text}</span>|}
     in
     {%html|
@@ -1580,7 +1578,7 @@ let event_log (replay : Replay.t) ~theme ~fills ~minute =
                 , 2
                 , index
                 , sprintf
-                    "complete · %s filled · avg $%.4f"
+                    "complete · %s filled · avg $%.2f"
                     (Int.to_string_hum ~delimiter:',' cum)
                     (notional // cum /. 100.)
                 , Some theme.Styles.green )
@@ -1780,6 +1778,7 @@ let sim_view
   ~to_results
   ~back
   ~profile
+  ~on_brand
   ~hover
   ~set_hover
   =
@@ -1832,7 +1831,14 @@ let sim_view
     <div class="page fade" %{page}>
       <div>
         <div %{head_row}>
-          <span %{Styles.brand theme}>execlab</span>
+          <button
+            class="btn"
+            %{Styles.brand theme}
+            title="ExecLabs home"
+            on_click=%{fun _ ->
+              Option.value on_brand ~default:Effect.Ignore}>
+            ExecLabs
+          </button>
           <span %{Styles.s "display:flex;gap:10px;align-items:center;"}>
             %{theme_button ~theme ~is_dark ~toggle_theme}
             ?{profile}
@@ -1935,6 +1941,7 @@ let instruction_row ~theme (instruction : Alpha_instruction.t) =
 let wizard_header
   ?step
   ?profile
+  ?on_brand
   ~theme
   ~is_dark
   ~toggle_theme
@@ -1975,7 +1982,14 @@ let wizard_header
       %{Styles.s
           "display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;"}>
       <div>
-        <span %{Styles.brand theme}>execlab</span>
+        <button
+          class="btn"
+          %{Styles.brand theme}
+          title="ExecLabs home"
+          on_click=%{fun _ ->
+            Option.value on_brand ~default:Effect.Ignore}>
+          ExecLabs
+        </button>
         <div %{title_style}>#{title}</div>
         <div %{sub_style}>#{subtitle}</div>
         *{progress}
@@ -2187,6 +2201,7 @@ let landing_view
   ~submit_auth
   ~sign_out
   ~profile
+  ~on_brand:(_ : unit Ui_effect.t option)
   =
   let page =
     Styles.s
@@ -2584,6 +2599,7 @@ let my_runs_view
   ~theme
   ~is_dark
   ~profile
+  ~on_brand
   ~toggle_theme
   ~session
   ~my_runs
@@ -2783,7 +2799,7 @@ let my_runs_view
   in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
-      %{wizard_header ?profile ~theme ~is_dark ~toggle_theme ~title:"My runs"
+      %{wizard_header ?profile ?on_brand ~theme ~is_dark ~toggle_theme ~title:"My runs"
           ~subtitle:("your execution notebook — " ^ who)
           ~back:(Some ("← Dashboard", back)) ()}
       <div %{Styles.card theme "padding-bottom:4px;"}>
@@ -2994,6 +3010,7 @@ let dashboard_view
   ~to_my_runs
   ~quick_start_with
   ~profile
+  ~on_brand
   ~toggle_theme
   =
   let section_label = Styles.s (Styles.label theme ^ "margin-bottom:8px;") in
@@ -3067,22 +3084,10 @@ let dashboard_view
   in
   (* Signing out belongs where the account lives, not buried on the front
      page; guests get the way in instead. *)
-  let session_action =
+  let session_link =
     match (session : Session.t option) with
-    | Some (_ : Session.t) ->
-      [ secondary_button
-          ~icon:(Icon.log_out ~size:14 ())
-          ~theme
-          ~on_click:(fun _ -> sign_out)
-          "Sign out"
-      ]
-    | None ->
-      [ secondary_button
-          ~icon:(Icon.user ~size:14 ())
-          ~theme
-          ~on_click:(fun _ -> to_sign_in)
-          "Sign in"
-      ]
+    | Some (_ : Session.t) -> "Sign out", sign_out
+    | None -> "Sign in", to_sign_in
   in
   (* A dashboard should answer "how am I doing" before it offers a button.
      These four come straight from the local run history. *)
@@ -3136,7 +3141,9 @@ let dashboard_view
         %{Styles.s
             "display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;"}>
         %{tile ~label:"Runs" ~value:(Int.to_string count)
-            ~sub:"simulations in this browser"
+            ~sub:(match session with
+                  | Some (_ : Session.t) -> "simulations in your account"
+                  | None -> "simulations in this browser")
             ~accent:theme.Styles.text}
         %{tile ~label:"Beat the baseline"
             ~value:(if count = 0 then "—"
@@ -3191,17 +3198,17 @@ let dashboard_view
   in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
-      %{wizard_header ?profile ~theme ~is_dark ~toggle_theme
+      %{wizard_header ?profile ?on_brand ~theme ~is_dark ~toggle_theme
           ~title:"Your execution lab"
           ~subtitle:"pick a day, bring an alpha, and see what execution \
-                     costs you" ~back:None ()}
+                     costs you"
+          ~back:(Some session_link) ()}
       %{stat_tiles}
       <div %{Styles.s "display:flex;gap:12px;flex-wrap:wrap;align-items:center;"}>
         %{primary_button ~icon:(Icon.arrow_right ~size:15 ()) ~theme
             ~on_click:(fun _ -> new_sim) "New simulation"}
         %{secondary_button ~theme ~on_click:(fun _ -> to_my_runs)
             "My runs"}
-        *{session_action}
       </div>
       %{quick_start}
       <div %{Styles.s two_col}>
@@ -3271,6 +3278,7 @@ let choose_day_view
   ~select
   ~continue_
   ~profile
+  ~on_brand
   ~toggle_theme
   ~back
   =
@@ -3560,7 +3568,7 @@ let choose_day_view
   in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
-      %{wizard_header ~step:0 ?profile ~theme ~is_dark ~toggle_theme
+      %{wizard_header ~step:0 ?profile ?on_brand ~theme ~is_dark ~toggle_theme
           ~title:"Choose a market day"
           ~subtitle:"pick a symbol, then a session from its calendar"
           ~back:None ()}
@@ -3688,6 +3696,7 @@ let alpha_view
   ~set_alpha_text
   ~continue_
   ~profile
+  ~on_brand
   ~toggle_theme
   ~back
   =
@@ -3787,7 +3796,7 @@ let alpha_view
   in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
-      %{wizard_header ~step:1 ?profile ~theme ~is_dark ~toggle_theme
+      %{wizard_header ~step:1 ?profile ?on_brand ~theme ~is_dark ~toggle_theme
           ~title:"Alpha instructions" ~subtitle
           ~back:None ()}
       <div %{Styles.s two_col}>
@@ -4056,6 +4065,7 @@ let setup_view
   ~start
   ~run_error
   ~profile
+  ~on_brand
   ~toggle_theme
   ~back
   =
@@ -4226,7 +4236,7 @@ let setup_view
   in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
-      %{wizard_header ~step:2 ?profile ~theme ~is_dark ~toggle_theme
+      %{wizard_header ~step:2 ?profile ?on_brand ~theme ~is_dark ~toggle_theme
           ~title:"New simulation" ~subtitle
           ~back:None ()}
       <div %{Styles.s two_col}>
@@ -4302,6 +4312,7 @@ let results_view
   ~open_help
   ~previous_run
   ~profile
+  ~on_brand
   ~to_sim
   ~new_sim
   ~to_dashboard
@@ -4536,7 +4547,7 @@ let results_view
       match grading.Transaction_cost.fill_metrics with
       | None -> dash, dash
       | Some metrics ->
-        ( {%html|<span>#{sprintf "$%.4f" metrics.average_fill_price}</span>|}
+        ( {%html|<span>#{sprintf "$%.2f" metrics.average_fill_price}</span>|}
         , bps_view ~theme metrics.shortfall_bps )
     in
     {%html|
@@ -4809,7 +4820,7 @@ let results_view
   in
   {%html|
     <div class="page fade" %{page}>
-      %{wizard_header ~step:4 ?profile ~theme ~is_dark ~toggle_theme ~title
+      %{wizard_header ~step:4 ?profile ?on_brand ~theme ~is_dark ~toggle_theme ~title
           ~subtitle:"shortfall split into the metric tree: timing + spread \
                      + impact, plus opportunity on unfilled shares"
           ~back:(Some ("← Replay", to_sim)) ()}
@@ -5092,6 +5103,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     and set_auth_status
     and set_auth_mode
     and set_auth_passcode
+    and set_my_runs
     and set_screen in
     match auth_mode with
     | None -> Effect.Ignore
@@ -5115,6 +5127,15 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
          let%bind.Effect () = set_auth_status None in
          let%bind.Effect () = set_auth_mode None in
          let%bind.Effect () = set_auth_passcode "" in
+         let%bind.Effect response =
+           my_runs_effect { My_runs.Request.token = session.token }
+         in
+         let%bind.Effect () =
+           set_my_runs
+             (match response with
+              | Ok resp -> Some resp.My_runs.Response.runs
+              | Error (_ : Error.t) -> Some [])
+         in
          set_screen Screen.Dashboard)
   in
   (* Reopening a notebook entry: the config is complete and the simulator is
@@ -5336,6 +5357,10 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   in
   let goto s = set_screen s in
   let select symbol date = set_selection (Some (symbol, date)) in
+  let on_brand = Some (goto Screen.Landing) in
+  let open_dashboard =
+    Effect.Many [ goto Screen.Dashboard; refresh_my_runs ]
+  in
   let open_my_runs = Effect.Many [ goto Screen.My_runs; refresh_my_runs ] in
   let profile =
     Some
@@ -5344,14 +5369,34 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
          ~session
          ~on_click:
            (match session with
-            | Some (_ : Session.t) -> goto Screen.Dashboard
+            | Some (_ : Session.t) -> open_dashboard
             | None -> goto Screen.Landing))
+  in
+  (* Signed in, "your runs" means your account's notebook on the server — the
+     same list from any browser. The localStorage history only speaks for
+     guests. Int63 cents truncate to int for display; the browser-local path
+     has the identical exposure. *)
+  let display_runs =
+    match session, my_runs with
+    | Some (_ : Session.t), Some saved ->
+      List.map saved ~f:(fun (run : Saved_run.t) ->
+        { History.Run_record.symbol = run.config.symbol
+        ; date = run.config.date
+        ; algo_name = run.config.algo_name
+        ; alpha_capture = run.summary.alpha_capture
+        ; value_add_cents = Int63.to_int_trunc run.summary.value_add_cents
+        ; net_cents = Int63.to_int_trunc run.summary.net_cents
+        ; shortfall_bps = 0.
+        ; completion = 0.
+        })
+    | (Some (_ : Session.t) | None), (Some (_ : Saved_run.t list) | None) ->
+      runs
   in
   let dashboard () =
     dashboard_view
       ~theme
       ~is_dark
-      ~runs
+      ~runs:display_runs
       ~new_sim:(goto Screen.Choose_day)
       ~session
       ~sign_out
@@ -5361,6 +5406,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         let%bind.Effect () = set_cal_symbol (Some symbol) in
         set_screen Screen.Choose_day)
       ~profile
+      ~on_brand
       ~toggle_theme
   in
   let choose_day () =
@@ -5379,6 +5425,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
       ~select
       ~continue_:(goto Screen.Alpha)
       ~profile
+      ~on_brand
       ~toggle_theme
       ~back:(goto Screen.Dashboard)
   in
@@ -5402,6 +5449,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~submit_auth
         ~sign_out
         ~profile
+        ~on_brand
     | My_runs, _, _ ->
       my_runs_view
         ~theme
@@ -5409,13 +5457,14 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~toggle_theme
         ~session
         ~profile
+        ~on_brand
         ~my_runs
         ~open_run
         ~refresh:refresh_my_runs
         ~reset_account
         ~confirm_reset
         ~new_sim:(goto Screen.Choose_day)
-        ~back:(goto Screen.Dashboard)
+        ~back:open_dashboard
     | Dashboard, _, _ -> dashboard ()
     | Choose_day, _, _ -> choose_day ()
     | (Alpha | Setup | Sim | Results), _, None -> choose_day ()
@@ -5429,6 +5478,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~set_alpha_text
         ~continue_:(goto Screen.Setup)
         ~profile
+        ~on_brand
         ~toggle_theme
         ~back:(goto Screen.Choose_day)
     | Setup, _, Some (symbol, date)
@@ -5446,6 +5496,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~start
         ~run_error
         ~profile
+        ~on_brand
         ~toggle_theme
         ~back:(goto Screen.Alpha)
     | Sim, Some r, Some (_ : Symbol.t * Date.t) ->
@@ -5474,6 +5525,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~to_results:(goto Screen.Results)
         ~back:(goto Screen.Setup)
         ~profile
+        ~on_brand
         ~hover
         ~set_hover
     | Results, Some r, Some (_ : Symbol.t * Date.t) ->
@@ -5484,9 +5536,10 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~open_help:(set_show_help true)
         ~previous_run
         ~profile
+        ~on_brand
         ~to_sim:(goto Screen.Sim)
         ~new_sim:(goto Screen.Choose_day)
-        ~to_dashboard:(goto Screen.Dashboard)
+        ~to_dashboard:open_dashboard
         ~toggle_theme
         ~session
         ~board
