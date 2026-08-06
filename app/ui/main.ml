@@ -1055,6 +1055,24 @@ let chart
                   (side_str parent.instruction.Alpha_instruction.side) )
           else None)
       in
+      (* The fills that landed in this minute, with their exact prices —
+         native SVG tooltips die under the crosshair's re-rendering, so the
+         panel is where a fill's price actually gets read. *)
+      let minute_fills =
+        List.filter_map fills ~f:(fun (fill : Fill.t) ->
+          if Replay.minute_of_time replay fill.time = m
+          then (
+            let index = Replay.parent_index_of_order replay fill.order_id in
+            Some
+              ( Styles.order_color theme index
+              , sprintf
+                  "O%d %s %d @ $%.2f"
+                  (index + 1)
+                  (side_str fill.side)
+                  (Size.to_int fill.size)
+                  (Price.to_float fill.price) ))
+          else None)
+      in
       let headline = sprintf "$%.2f · %s" close (hhmm bar.Market_bar.time) in
       let detail =
         sprintf
@@ -1075,14 +1093,19 @@ let chart
         List.fold
           (width ~per_char:7.4 headline
            :: width ~per_char:5.9 detail
-           :: List.map covering ~f:(fun ((_ : string), text) ->
-             width ~per_char:6.3 text))
+           :: List.map
+                (covering @ minute_fills)
+                ~f:(fun ((_ : string), text) -> width ~per_char:6.3 text))
           ~init:0.
           ~f:Float.max
         +. 20.
       in
       let line_h = 15. in
-      let box_h = 40. +. (Float.of_int (List.length covering) *. line_h) in
+      let box_h =
+        40.
+        +. (Float.of_int (List.length covering + List.length minute_fills)
+            *. line_h)
+      in
       let box_x =
         if Float.( > ) (cx +. 12. +. box_w) (left +. plot_w)
         then cx -. 12. -. box_w
@@ -1149,7 +1172,7 @@ let chart
           headline
       ; label ~tx:(box_x +. 10.) ~ty:(box_y +. 32.) detail
       ]
-      @ List.mapi covering ~f:(fun i (color, text) ->
+      @ List.mapi (covering @ minute_fills) ~f:(fun i (color, text) ->
         label
           ~fill:color
           ~weight:"600"
@@ -4297,12 +4320,8 @@ let setup_view
   let friction_params =
     {%html|
       <div>
-        <div
-          %{Styles.s
-              (Styles.label theme
-               ^ "margin-bottom:8px;display:flex;align-items:center;gap:6px;")}>
-          Market friction · house physics
-          %{friction_help_button}
+        <div %{Styles.s (Styles.label theme ^ "margin-bottom:8px;")}>
+          Market friction
         </div>
         <div %{Styles.s "display:flex;flex-direction:column;gap:10px;"}>
           %{param_field ~label:"half spread $"
@@ -4323,7 +4342,10 @@ let setup_view
   in
   let params_card =
     {%html|
-      <div %{Styles.card theme "padding:20px;"}>
+      <div %{Styles.card theme "padding:20px;position:relative;"}>
+        <div %{Styles.s "position:absolute;top:14px;right:14px;"}>
+          %{friction_help_button}
+        </div>
         <div
           %{Styles.s
               "display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:24px;align-items:start;"}>
@@ -4845,8 +4867,8 @@ let results_view
   |}
 ;;
 
-(* The market-friction and fill-engine explainer, one modal behind the (?) on
-   the setup screen. *)
+(* Every dial on the setup screen, explained with concrete numbers, behind
+   the (?) in the parameters card's corner. *)
 let friction_modal ~theme ~close =
   let backdrop =
     Styles.s
@@ -4859,51 +4881,110 @@ let friction_modal ~theme ~close =
        ^ theme.Styles.card_bg
        ^ ";border:"
        ^ theme.Styles.border
-       ^ ";border-radius:6px;max-width:640px;width:100%;padding:24px;"
+       ^ ";border-radius:6px;max-width:880px;width:100%;padding:24px;"
        ^ theme.Styles.shadow)
   in
   let head =
     Styles.s
-      "display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:10px;"
+      "display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:6px;"
   in
   let title_style =
     Styles.s
       ("color:" ^ theme.Styles.text ^ ";font-size:19px;font-weight:800;")
   in
-  let body =
-    Styles.s
-      ("color:"
-       ^ theme.Styles.secondary
-       ^ ";font-size:13.5px;line-height:1.7;")
+  let section title =
+    {%html|
+      <div
+        %{Styles.s
+            (Styles.label theme
+             ^ "margin:18px 0 6px;border-top:1px solid "
+             ^ theme.Styles.hairline
+             ^ ";padding-top:14px;")}>
+        #{title}
+      </div>
+    |}
   in
-  let strong =
-    Styles.s ("color:" ^ theme.Styles.text ^ ";font-weight:600;")
+  let entry ~term ~text =
+    let term_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.blue
+         ^ ";font-size:12.5px;font-weight:700;"
+         ^ Styles.mono)
+    in
+    let text_style =
+      Styles.s
+        ("color:"
+         ^ theme.Styles.secondary
+         ^ ";font-size:13px;line-height:1.65;")
+    in
+    {%html|
+      <div %{Styles.s "margin-bottom:9px;"}>
+        <div %{term_style}>#{term}</div>
+        <div %{text_style}>#{text}</div>
+      </div>
+    |}
   in
   {%html|
     <div %{backdrop} on_click=%{fun _ -> close}>
       <div class="fade" %{panel} on_click=%{fun (_ : _) -> Effect.Ignore}>
         <div %{head}>
-          <span %{title_style}>Market friction, explained</span>
+          <span %{title_style}>What every setting does</span>
           %{secondary_button ~theme ~on_click:(fun _ -> close) "Close"}
         </div>
-        <div %{body}>
-          Market friction describes the market you trade against, not your
-          strategy: <span %{strong}>half spread</span> is the toll for
-          demanding an immediate fill, the
-          <span %{strong}>participation cap</span> is the most of one
-          minute's volume any single order may take, and the
-          <span %{strong}>impact coefficient</span> scales how far your own
-          trading pushes the price.
-        </div>
-        <div %{Styles.s "height:12px;"}></div>
-        <div %{body}>
-          The <span %{strong}>bar model</span> prices fills by formula from
-          each minute's bar; the <span %{strong}>synthetic exchange</span>
-          runs a real limit order book — background traders post around the
-          historical price and your orders match by price-time priority, so
-          impact and queueing emerge from the matching. It is slower,
-          seeded, and reproducible.
-        </div>
+        %{section "your algorithm's dials — how the strategy trades"}
+        %{entry ~term:"pace presets (Passive / Balanced / Aggressive)"
+            ~text:"One-click fills for the two dials below. Passive trades \
+                   slowly and hides in the market's volume; Aggressive \
+                   front-loads and finishes early; Custom means you set \
+                   the numbers yourself."}
+        %{entry ~term:"participation rate (POV only)"
+            ~text:"What share of the market's actual trading POV tries to \
+                   be. 0.0015 means: for every 10,000 shares the market \
+                   trades in a minute, buy about 15. Higher finishes \
+                   sooner but moves the price more. TWAP and VWAP ignore \
+                   this — they follow their own schedules."}
+        %{entry ~term:"urgency (IS only)"
+            ~text:"How much IS front-loads. 0 makes it identical to TWAP \
+                   (even pace); higher values do more of the order early, \
+                   accepting extra impact now to cut the risk of the \
+                   price drifting away later. 1 is mild, 5 is heavy."}
+        %{section "market friction — the market you trade against"}
+        %{entry ~term:"half spread ($0.02)"
+            ~text:"The gap between what buyers bid and sellers ask, \
+                   halved. Every time you demand an immediate fill you \
+                   pay this per share — 2 cents on every share, in every \
+                   aggressive order, before anything else goes wrong. It \
+                   is why trading 10,000 shares instantly starts $200 \
+                   behind."}
+        %{entry ~term:"participation cap (0.10)"
+            ~text:"A liquidity limit: one order can consume at most this \
+                   fraction of a minute's traded volume — 0.10 means 10%. \
+                   If a minute trades 50,000 shares, your order fills at \
+                   most 5,000 in it; the rest must wait for later \
+                   minutes. This is what stops a huge order filling all \
+                   at once."}
+        %{entry ~term:"impact coefficient ($0.25)"
+            ~text:"How hard your own trading pushes the price away from \
+                   you. Taking the full 10% cap in one minute moves your \
+                   fill price about 25 cents against you; taking a \
+                   quarter of the cap costs about half that (it scales \
+                   with the square root of your share). Small orders \
+                   barely feel it; big fast orders pay it in full."}
+        %{section "fill engine — how fills are decided"}
+        %{entry ~term:"bar model"
+            ~text:"A formula: each fill is priced from that minute's \
+                   real bar — its opening price, plus the half spread, \
+                   plus the impact penalty above. Deterministic and \
+                   instant; the same run always fills identically."}
+        %{entry ~term:"synthetic exchange"
+            ~text:"A real (simulated) limit order book instead of a \
+                   formula. Background traders keep posting bids and \
+                   offers around the day's actual price path, and your \
+                   orders match against them in price-time priority — so \
+                   queueing, partial fills and impact emerge from the \
+                   matching itself. Slower, and random — but seeded, so \
+                   the same seed replays the same fills."}
       </div>
     </div>
   |}
