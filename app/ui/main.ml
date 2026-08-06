@@ -2749,7 +2749,11 @@ let help_modal ~theme ~close =
           %{secondary_button ~theme ~on_click:(fun _ -> close) "Close"}
         </div>
         <div %{intro_style}>#{glossary_intro}</div>
-        *{List.map glossary_entries ~f:entry}
+        <div
+          %{Styles.s
+              "display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));column-gap:28px;"}>
+          *{List.map glossary_entries ~f:entry}
+        </div>
       </div>
     </div>
   |}
@@ -3340,20 +3344,11 @@ let choose_day_view
         </div>
       |}
   in
-  let selection_hint =
-    match selection with
-    | Some date ->
-      sprintf
-        "%s selected — your alpha names the symbols"
-        (Date.to_string date)
-    | None -> "select a market day to continue"
-  in
   {%html|
     <div class="page fade" %{Styles.s narrow_page}>
       %{wizard_header ~step:0 ?profile ~on_brand ~theme ~is_dark ~toggle_theme
           ~title:"Choose a market day"
-          ~subtitle:"one day, every bundled symbol — which names trade is \
-                     up to your alpha"
+          ~subtitle:"pick a real historical trading day"
           ~back:None ()}
       <div %{Styles.s two_col}>
         <div %{Styles.card theme "padding:20px;"}>
@@ -3368,7 +3363,6 @@ let choose_day_view
       </div>
       %{nav_footer ~theme
           ~back:("Dashboard", back)
-          ~status:selection_hint
           ~next:("Continue", continue_, Option.is_some selection) ()}
     </div>
   |}
@@ -3995,6 +3989,7 @@ let preset_rows ~theme ~param_text ~set_param_text =
 let setup_view
   ~theme
   ~is_dark
+  ~open_friction_help
   ~date
   ~alpha_text
   ~algo
@@ -4296,11 +4291,36 @@ let setup_view
       </div>
     |}
   in
+  let friction_help_button =
+    let style =
+      Styles.s
+        ("display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:999px;background:"
+         ^ theme.Styles.chip_bg
+         ^ ";color:"
+         ^ theme.Styles.blue
+         ^ ";border:1px solid "
+         ^ theme.Styles.chip_border
+         ^ ";cursor:pointer;font-size:11px;font-weight:800;flex-shrink:0;")
+    in
+    {%html|
+      <button
+        class="btn"
+        %{style}
+        title="What do these settings mean?"
+        on_click=%{fun _ -> open_friction_help}>
+        ?
+      </button>
+    |}
+  in
   let friction_params =
     {%html|
       <div>
-        <div %{Styles.s (Styles.label theme ^ "margin-bottom:8px;")}>
+        <div
+          %{Styles.s
+              (Styles.label theme
+               ^ "margin-bottom:8px;display:flex;align-items:center;gap:6px;")}>
           Market friction · house physics
+          %{friction_help_button}
         </div>
         <div %{Styles.s "display:flex;flex-direction:column;gap:10px;"}>
           %{param_field ~label:"half spread $"
@@ -4319,14 +4339,6 @@ let setup_view
       </div>
     |}
   in
-  let explain =
-    Styles.s
-      ("color:"
-       ^ theme.Styles.faint
-       ^ ";font-size:11px;line-height:1.65;border-top:1px solid "
-       ^ theme.Styles.hairline
-       ^ ";padding-top:12px;margin-top:18px;max-width:100ch;")
-  in
   let params_card =
     {%html|
       <div %{Styles.card theme "padding:20px;"}>
@@ -4337,18 +4349,6 @@ let setup_view
           %{algo_params}
           %{friction_params}
           %{engine_choice}
-        </div>
-        <div %{explain}>
-          Market friction describes the market you trade against, not your
-          strategy: half spread is the toll for demanding an immediate
-          fill, the participation cap is the most of one minute's volume
-          any single order may take, and the impact coefficient scales how
-          far your own trading pushes the price. The bar model prices
-          fills by formula from each minute's bar; the synthetic exchange
-          runs a real limit order book — background traders post around the
-          historical price and your orders match by price-time priority, so
-          impact and queueing emerge from the matching. It is slower,
-          seeded, and reproducible.
         </div>
       </div>
     |}
@@ -4615,7 +4615,9 @@ let results_view
   let symbol_blank = if multi then [ blank ] else [] in
   let with_symbol columns = if multi then "68px " ^ columns else columns in
   let cost_columns =
-    with_symbol "56px 112px 104px 116px 104px 104px 128px 1fr"
+    with_symbol
+      "56px minmax(112px,1fr) minmax(104px,1fr) minmax(116px,1fr) \
+       minmax(104px,1fr) minmax(104px,1fr) minmax(128px,1.2fr) 1fr"
   in
   let cost_row index (row : Replay.result_row) =
     let grading = row.Replay.grading in
@@ -4662,7 +4664,9 @@ let results_view
   (* Results table: the P&L identity, net = gross - shortfall - opportunity,
      plus the baseline comparison. *)
   let results_columns =
-    with_symbol "56px 112px 64px 122px 118px 118px 130px 130px 1fr"
+    with_symbol
+      "56px minmax(112px,1fr) 64px minmax(122px,1fr) minmax(118px,1fr) \
+       minmax(118px,1fr) minmax(130px,1.1fr) minmax(130px,1.1fr) 1fr"
   in
   let results_row index (row : Replay.result_row) =
     let grading = row.Replay.grading in
@@ -4754,48 +4758,6 @@ let results_view
   in
   (* The mockup's on-page glossary: every metric's plain-words line in a
      three-column grid; the modal keeps the long-form detail. *)
-  let glossary_section =
-    let entry (term, plain, (_ : string)) =
-      let cell =
-        Styles.s
-          ("display:flex;flex-direction:column;gap:3px;border-top:1px solid "
-           ^ theme.Styles.hairline
-           ^ ";padding:10px 0 4px;")
-      in
-      let term_style =
-        Styles.s
-          ("color:"
-           ^ theme.Styles.text
-           ^ ";font-size:12px;font-weight:700;"
-           ^ Styles.mono)
-      in
-      let plain_style =
-        Styles.s
-          ("color:"
-           ^ theme.Styles.secondary
-           ^ ";font-size:11.5px;line-height:1.55;")
-      in
-      {%html|
-        <div %{cell}>
-          <span %{term_style}>#{term}</span>
-          <span %{plain_style}>#{plain}</span>
-        </div>
-      |}
-    in
-    {%html|
-      <div %{Styles.card theme "padding:16px 18px 14px;"}>
-        <div %{Styles.s (Styles.kicker theme ^ "margin-bottom:10px;")}>
-          #{sprintf "metrics glossary · %d entries"
-              (List.length glossary_entries)}
-        </div>
-        <div
-          %{Styles.s
-              "display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));column-gap:24px;"}>
-          *{List.map glossary_entries ~f:entry}
-        </div>
-      </div>
-    |}
-  in
   let buttons =
     Styles.s "display:flex;gap:10px;align-items:center;flex-wrap:wrap;"
   in
@@ -4880,7 +4842,6 @@ let results_view
         %{results_totals}
       </div>
       %{actions_card}
-      %{glossary_section}
       <div %{buttons}>
         %{primary_button ~theme ~on_click:(fun _ -> new_sim)
             "New simulation"}
@@ -4897,6 +4858,70 @@ let results_view
                 download (export_name "fills") (Replay.fills_csv replay))
               "↓ Fills CSV"}
         </span>
+      </div>
+    </div>
+  |}
+;;
+
+(* The market-friction and fill-engine explainer, one modal behind the (?) on
+   the setup screen. *)
+let friction_modal ~theme ~close =
+  let backdrop =
+    Styles.s
+      "position:fixed;inset:0;background:rgba(8,12,20,0.55);display:flex;align-items:flex-start;justify-content:center;padding:40px \
+       20px;z-index:50;overflow:auto;"
+  in
+  let panel =
+    Styles.s
+      ("background:"
+       ^ theme.Styles.card_bg
+       ^ ";border:"
+       ^ theme.Styles.border
+       ^ ";border-radius:6px;max-width:640px;width:100%;padding:24px;"
+       ^ theme.Styles.shadow)
+  in
+  let head =
+    Styles.s
+      "display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:10px;"
+  in
+  let title_style =
+    Styles.s
+      ("color:" ^ theme.Styles.text ^ ";font-size:19px;font-weight:800;")
+  in
+  let body =
+    Styles.s
+      ("color:"
+       ^ theme.Styles.secondary
+       ^ ";font-size:13.5px;line-height:1.7;")
+  in
+  let strong =
+    Styles.s ("color:" ^ theme.Styles.text ^ ";font-weight:600;")
+  in
+  {%html|
+    <div %{backdrop} on_click=%{fun _ -> close}>
+      <div class="fade" %{panel} on_click=%{fun (_ : _) -> Effect.Ignore}>
+        <div %{head}>
+          <span %{title_style}>Market friction, explained</span>
+          %{secondary_button ~theme ~on_click:(fun _ -> close) "Close"}
+        </div>
+        <div %{body}>
+          Market friction describes the market you trade against, not your
+          strategy: <span %{strong}>half spread</span> is the toll for
+          demanding an immediate fill, the
+          <span %{strong}>participation cap</span> is the most of one
+          minute's volume any single order may take, and the
+          <span %{strong}>impact coefficient</span> scales how far your own
+          trading pushes the price.
+        </div>
+        <div %{Styles.s "height:12px;"}></div>
+        <div %{body}>
+          The <span %{strong}>bar model</span> prices fills by formula from
+          each minute's bar; the <span %{strong}>synthetic exchange</span>
+          runs a real limit order book — background traders post around the
+          historical price and your orders match by price-time priority, so
+          impact and queueing emerge from the matching. It is slower,
+          seeded, and reproducible.
+        </div>
       </div>
     </div>
   |}
@@ -5412,6 +5437,9 @@ let set_page_background =
 let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let screen, set_screen = Bonsai.state Screen.Landing graph in
   let show_help, set_show_help = Bonsai.state false graph in
+  let show_friction_help, set_show_friction_help =
+    Bonsai.state false graph
+  in
   let selection, set_selection = Bonsai.state (None : Date.t option) graph in
   let alpha_text, set_alpha_text =
     Bonsai.state Embedded_data.demo_alpha graph
@@ -5646,6 +5674,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_show_fills
   and show_help
   and set_show_help
+  and show_friction_help
+  and set_show_friction_help
   and hover
   and set_hover
   and focus
@@ -5761,6 +5791,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
       setup_view
         ~theme
         ~is_dark
+        ~open_friction_help:(set_show_friction_help true)
         ~date
         ~alpha_text
         ~algo
@@ -5843,6 +5874,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let overlay =
     if show_help
     then [ help_modal ~theme ~close:(set_show_help false) ]
+    else if show_friction_help
+    then [ friction_modal ~theme ~close:(set_show_friction_help false) ]
     else []
   in
   let keyed_body =
