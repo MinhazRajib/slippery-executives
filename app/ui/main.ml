@@ -2193,6 +2193,7 @@ let run_record (replay : Replay.t) =
   ; impact_coefficient_cents = Price.to_int_cents fill.impact_coefficient
   ; pov_rate = replay.params.pov_rate
   ; is_urgency = replay.params.is_urgency
+  ; patience = replay.params.patience
   ; engine_name =
       (match replay.params.engine with
        | Execlab_session.Engine_choice.Bar_model -> "bar"
@@ -2221,6 +2222,7 @@ let replay_of_record (record : History.Run_record.t) =
           }
       ; pov_rate = record.pov_rate
       ; is_urgency = record.is_urgency
+      ; patience = record.patience
       ; engine =
           (match record.engine_name with
            | "synthetic" ->
@@ -2444,6 +2446,7 @@ let my_runs_view
     match run.algo_name with
     | "pov" -> sprintf "rate %.4f" run.pov_rate
     | "is" -> sprintf "urgency %.1f" run.is_urgency
+    | "adaptive" -> sprintf "patience %.2f" run.patience
     | (_ : string) -> "—"
   in
   let full_params (run : History.Run_record.t) =
@@ -3404,65 +3407,162 @@ let others_trading ~symbol ~date =
     && List.mem (Dataset.dates_for other) date ~equal:Date.equal)
 ;;
 
+(* Gross alpha for one leg is exactly
+   [side * quantity * (close - arrival price)], so the sign of a name's move
+   from the order's arrival to the close is what decides whether a sample's
+   prediction was right. Reading it off the real session lets a sample stand
+   in for a model that called that day correctly (or, deliberately, one that
+   did not) — which is the point: the platform grades execution, and a sample
+   whose paper alpha is roughly zero grades it against nothing. *)
+let move_to_close ~symbol ~date ~at =
+  match Dataset.load_cached ~symbol ~date with
+  | Error (_ : Error.t) -> 0.
+  | Ok day ->
+    (match
+       List.find day.Trading_day.bars ~f:(fun bar ->
+         Time_ns.Ofday.( >= ) bar.Market_bar.time at)
+     with
+     | None -> 0.
+     | Some bar ->
+       Price.to_float (List.last_exn day.Trading_day.bars).Market_bar.close
+       -. Price.to_float bar.Market_bar.open_)
+;;
+
+let price_at ~symbol ~date ~at =
+  match Dataset.load_cached ~symbol ~date with
+  | Error (_ : Error.t) -> 0.
+  | Ok day ->
+    (match
+       List.find day.Trading_day.bars ~f:(fun bar ->
+         Time_ns.Ofday.( >= ) bar.Market_bar.time at)
+     with
+     | None -> 0.
+     | Some bar -> Price.to_float bar.Market_bar.open_)
+;;
+
+let ofday = Time_ns.Ofday.of_string
+let buy_if positive = if positive then "BUY" else "SELL"
+
+(* A sample is either a model that read the day right or one that read it
+   backwards. Every leg of a sample takes the same view, so its legs never
+   cancel: gross alpha is the sum of [quantity * |move|] with one sign, which
+   keeps the paper alpha decisively large and the capture ratio meaningful.
+   Mixing the two within a sample is what produces the near-zero denominators
+   that make capture read in the thousands of percent. *)
+type view =
+  | Right
+  | Wrong
+
+let side_for view ~symbol ~date ~at =
+  let move = move_to_close ~symbol ~date ~at in
+  match view with
+  | Right -> buy_if (Float.( >= ) move 0.)
+  | Wrong -> buy_if (Float.( < ) move 0.)
+;;
+
 let sample_alphas ~symbol ~date =
   let s = Symbol.to_string symbol in
-  let csv rows =
+  (* [view] fixes whether this sample's model was right; each leg's side then
+     follows that name's own move to the close. *)
+  let csv view rows =
     String.concat
       ~sep:"\n"
-      (List.map rows ~f:(fun (a, side, q, d) ->
-         sprintf "%s,%s,%s,%d,%s" a s side q d))
+      (List.map rows ~f:(fun (arrival, quantity, deadline) ->
+         sprintf
+           "%s,%s,%s,%d,%s"
+           arrival
+           s
+           (side_for view ~symbol ~date ~at:(ofday arrival))
+           quantity
+           deadline))
     ^ "\n"
   in
+  (* A round trip is the one shape whose second leg must oppose the first —
+     it is closing the position, not taking another view. Its gross alpha is
+     [quantity * (price out - price in)], so the direction that makes the
+     trip profitable is the direction the name actually moved between the two
+     times. *)
+  let round_trip ~quantity ~in_at ~in_by ~out_at ~out_by =
+    let rose =
+      Float.( >= )
+        (price_at ~symbol ~date ~at:(ofday out_at))
+        (price_at ~symbol ~date ~at:(ofday in_at))
+    in
+    let first = buy_if rose in
+    let second = buy_if (not rose) in
+    sprintf
+      "%s,%s,%s,%d,%s\n%s,%s,%s,%d,%s\n"
+      in_at
+      s
+      first
+      quantity
+      in_by
+      out_at
+      s
+      second
+      quantity
+      out_by
+  in
   [ ( "A typical day"
-    , "Buy in the morning, sell around noon, buy again after lunch. Start \
-       here."
+    , "Three orders through the session — one view, read off what the name \
+       actually did. Start here."
     , csv
-        [ "10:00:00", "BUY", 5000, "11:00:00"
-        ; "11:30:00", "SELL", 3000, "13:00:00"
-        ; "14:00:00", "BUY", 2000, "14:30:00"
+        Right
+        [ "10:00:00", 5000, "11:00:00"
+        ; "11:30:00", 3000, "13:00:00"
+        ; "14:00:00", 2000, "14:30:00"
         ] )
-  ; ( "A morning of buying"
-    , "8,000 shares to buy as three overlapping orders, all done by 12:30."
+  ; ( "A working morning"
+    , "8,000 shares as three overlapping orders, all finished by 12:30."
     , csv
-        [ "09:45:00", "BUY", 3000, "11:00:00"
-        ; "10:15:00", "BUY", 3000, "12:00:00"
-        ; "11:00:00", "BUY", 2000, "12:30:00"
+        Right
+        [ "09:45:00", 3000, "11:00:00"
+        ; "10:15:00", 3000, "12:00:00"
+        ; "11:00:00", 2000, "12:30:00"
         ] )
-  ; ( "Buy now, sell later"
-    , "Buy 6,000 shares in the morning, then sell them all back in the \
-       afternoon."
+  ; ( "Round trip"
+    , "In at 10:00, back out at 13:00 — the same 6,000 shares, so the paper \
+       profit is just the move between the two."
+    , round_trip
+        ~quantity:6000
+        ~in_at:"10:00:00"
+        ~in_by:"11:30:00"
+        ~out_at:"13:00:00"
+        ~out_by:"15:30:00" )
+  ; ( "Into the close"
+    , "8,000 shares finishing at 15:55 — and a model that read the day \
+       backwards, so you can see what negative alpha costs."
     , csv
-        [ "10:00:00", "BUY", 6000, "11:30:00"
-        ; "13:00:00", "SELL", 6000, "15:30:00"
-        ] )
-  ; ( "Selling into the close"
-    , "8,000 shares to sell as three orders, the last ending at 15:55."
-    , csv
-        [ "13:00:00", "SELL", 2500, "14:30:00"
-        ; "13:45:00", "SELL", 2500, "15:00:00"
-        ; "14:30:00", "SELL", 3000, "15:55:00"
+        Wrong
+        [ "13:00:00", 2500, "14:30:00"
+        ; "13:45:00", 2500, "15:00:00"
+        ; "14:30:00", 3000, "15:55:00"
         ] )
   ; ( "Busy day, six orders"
-    , "Six orders alternating buy, sell, buy, sell — 09:40 through 15:45."
+    , "Six orders from 09:40 to 15:45 — the crowded end of what one name \
+       can carry."
     , csv
-        [ "09:40:00", "BUY", 1500, "10:30:00"
-        ; "10:20:00", "SELL", 1000, "11:15:00"
-        ; "11:00:00", "BUY", 2000, "12:30:00"
-        ; "12:15:00", "SELL", 1500, "13:45:00"
-        ; "13:30:00", "BUY", 1000, "14:30:00"
-        ; "14:45:00", "SELL", 2000, "15:45:00"
+        Right
+        [ "09:40:00", 1500, "10:30:00"
+        ; "10:20:00", 1000, "11:15:00"
+        ; "11:00:00", 2000, "12:30:00"
+        ; "12:15:00", 1500, "13:45:00"
+        ; "13:30:00", 1000, "14:30:00"
+        ; "14:45:00", 2000, "15:45:00"
         ] )
   ; ( "Three at once"
-    , "Two buys and a sell all live together from 11:15 to 12:00."
+    , "Three orders live together from 11:15 to 12:00 — overlapping windows \
+       in one book."
     , csv
-        [ "10:30:00", "BUY", 3000, "12:30:00"
-        ; "11:00:00", "SELL", 2000, "12:00:00"
-        ; "11:15:00", "BUY", 2500, "13:00:00"
+        Right
+        [ "10:30:00", 3000, "12:30:00"
+        ; "11:00:00", 2000, "12:00:00"
+        ; "11:15:00", 2500, "13:00:00"
         ] )
   ]
   @
   (* Only offered when the day actually has other names to trade: a sample
-     that names a symbol with no session for this date would fail on the
+     that named a symbol with no session for this date would fail on the
      first run, which is a poor introduction. *)
   match others_trading ~symbol ~date with
   | [] -> []
@@ -3470,24 +3570,25 @@ let sample_alphas ~symbol ~date =
     let names = symbol :: List.take others 2 in
     let rows =
       List.mapi names ~f:(fun index name ->
-        let arrival, side, quantity, deadline =
+        let arrival, quantity, deadline =
           match index with
-          | 0 -> "10:00:00", "BUY", 5000, "11:30:00"
-          | 1 -> "10:15:00", "SELL", 4000, "12:00:00"
-          | (_ : int) -> "10:45:00", "BUY", 3000, "12:30:00"
+          | 0 -> "10:00:00", 5000, "11:30:00"
+          | 1 -> "10:15:00", 4000, "12:00:00"
+          | (_ : int) -> "10:45:00", 3000, "12:30:00"
         in
         sprintf
           "%s,%s,%s,%d,%s"
           arrival
           (Symbol.to_string name)
-          side
+          (side_for Right ~symbol:name ~date ~at:(ofday arrival))
           quantity
           deadline)
     in
     [ ( sprintf "%d names at once" (List.length names)
       , sprintf
-          "One basket across %s. Each name gets its own book and its own \
-           benchmarks; the chart has a tab per symbol."
+          "One basket across %s, each name called the way it actually went. \
+           Every name gets its own book and its own benchmarks; the chart \
+           has a tab per symbol."
           (String.concat ~sep:", " (List.map names ~f:Symbol.to_string))
       , String.concat ~sep:"\n" rows ^ "\n" )
     ]
@@ -3736,7 +3837,8 @@ let alpha_view
             <span %{Styles.s (Styles.label theme)}>
               Samples — written for #{Symbol.to_string symbol}
             </span>
-            <span %{samples_note}>a run trades what the file names</span>
+            <span %{samples_note}>sides read off this session — a stand-in
+              for a model that called it</span>
           </div>
           <div %{Styles.s "display:flex;flex-direction:column;gap:6px;"}>
             *{List.map (sample_alphas ~symbol ~date) ~f:sample_row}
@@ -3818,6 +3920,19 @@ let algorithm_cards =
       ]
     , [ "Very quiet markets, where the urgency premium is wasted" ]
     , "Anyone with a short-lived signal to capture." )
+  ; ( "adaptive"
+    , "Adaptive"
+    , "Rests when it can, crosses when it must"
+    , [ "The spread is worth more than the wait"
+      ; "You have time and want to be paid for it"
+      ; "Liquidity comes to you if you let it"
+      ]
+    , [ "A market running away from you — patience gets repriced into \
+         crossing anyway"
+      ; "Very short windows, where there is no time to be patient"
+      ]
+    , "The only one here that posts rather than pays; the rest are pure \
+       takers." )
   ; ( "immediate"
     , "Immediate"
     , "Everything at once, right now"
@@ -3827,6 +3942,18 @@ let algorithm_cards =
     , [ "Large orders — you pay the whole impact yourself" ]
     , "The baseline every other run is scored against." )
   ]
+;;
+
+(* Spelled out for a display heading; the numeral is the fallback rather than
+   a table of every English number, since this counts a list that grows one
+   entry at a time. *)
+let in_words = function
+  | 4 -> "Four"
+  | 5 -> "Five"
+  | 6 -> "Six"
+  | 7 -> "Seven"
+  | 8 -> "Eight"
+  | (n : int) -> Int.to_string n
 ;;
 
 let algorithm_detail ~theme ~algo =
@@ -4289,9 +4416,17 @@ let setup_view
               ~value:param_text.Replay.Param_text.urgency
               ~set:(update (fun p v ->
                 { p with Replay.Param_text.urgency = v })) ()}
+          %{param_field ~active:(String.equal algo "adaptive")
+              ~note:"Adaptive only"
+              ~label:"patience"
+              ~value:param_text.Replay.Param_text.patience
+              ~set:(update (fun p v ->
+                { p with Replay.Param_text.patience = v })) ()}
         </div>
         <div %{note}>
-          TWAP and VWAP follow their own schedules and ignore both dials.
+          TWAP and VWAP follow their own schedules and ignore every dial
+          here. Patience runs 0 to 1: at 0 Adaptive never rests, which is
+          TWAP exactly.
         </div>
       </div>
     |}
@@ -5073,8 +5208,9 @@ let landing_how_it_works ~theme =
   |}
 ;;
 
-(* "Five ways to work an order": the algorithm reference data rendered as the
-   mockup's comparison table. *)
+(* The algorithm reference data rendered as the mockup's comparison table;
+   the heading counts the list rather than naming a number that goes stale
+   the next time one is added. *)
 let landing_algo_table ~theme =
   let columns = "110px 1.1fr 1.3fr 1.3fr" in
   let head =
@@ -5140,7 +5276,8 @@ let landing_algo_table ~theme =
   {%html|
     <div>
       <div %{title_row}>
-        <span %{title_style}>Five ways to work an order</span>
+        <span %{title_style}>#{in_words (List.length algorithm_cards)} ways
+          to work an order</span>
       </div>
       <div %{Styles.s "overflow-x:auto;"}>
         <div %{Styles.s "min-width:760px;"}>
@@ -5672,6 +5809,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
                 (Float.of_int record.impact_coefficient_cents /. 100.)
           ; pov_rate = sprintf "%.4f" record.pov_rate
           ; urgency = sprintf "%.1f" record.is_urgency
+          ; patience = sprintf "%.2f" record.patience
           ; engine = record.engine_name
           ; seed = Int.to_string record.engine_seed
           }

@@ -26,6 +26,9 @@ module Run_record = struct
     ; impact_coefficient_cents : int [@sexp.default 25]
     ; pov_rate : float [@sexp.default 0.0015]
     ; is_urgency : float [@sexp.default 1.0]
+    ; patience : float
+         [@sexp.default 0.5]
+         (* Adaptive's; defaulted so history saved before it existed reads *)
     ; engine_name : string [@sexp.default "bar"] (* "bar" | "synthetic" *)
     ; engine_seed : int [@sexp.default 1]
     ; ran_at : string [@sexp.default ""]

@@ -94,7 +94,7 @@ let%expect_test "an unknown algorithm is an error, not an exception" =
     {|
     (Error
      ("unknown algorithm" (other guerrilla)
-      (known "twap, vwap, pov, is, immediate")))
+      (known "twap, vwap, pov, is, adaptive, immediate")))
     |}]
 ;;
 

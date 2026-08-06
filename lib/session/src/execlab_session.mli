@@ -31,6 +31,9 @@ module Params : sig
     { fill_config : Fill_model.Config.t
     ; pov_rate : float (** POV's share of observed tape volume *)
     ; is_urgency : float (** IS front-loading; [0.] is the TWAP limit *)
+    ; patience : float
+    (** {!Execlab_execution.Adaptive}'s appetite for resting rather than
+        crossing; [0.] is the TWAP limit *)
     ; engine : Engine_choice.t
     }
 

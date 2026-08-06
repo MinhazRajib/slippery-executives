@@ -159,8 +159,8 @@ let () =
     eprintf
       "usage: main.exe <alpha.csv>                        (parse only)\n";
     eprintf
-      "       main.exe <alpha.csv> <DATE> [twap|vwap|pov|is|immediate] \
-       [bar|synthetic[:N]]\n";
+      "       main.exe <alpha.csv> <DATE> \
+       [twap|vwap|pov|is|adaptive|immediate] [bar|synthetic[:N]]\n";
     eprintf
       "       main.exe <alpha.csv> <SYMBOL> <DATE> ...    (asserts one \
        symbol)\n";

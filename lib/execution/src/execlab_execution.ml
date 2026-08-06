@@ -1,3 +1,4 @@
+module Adaptive = Adaptive
 module Algorithm_intf = Algorithm_intf
 module Cancel_reason = Cancel_reason
 module Child_order = Child_order
