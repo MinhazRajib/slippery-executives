@@ -134,17 +134,6 @@
       .cell-pop:hover {
         transform: scale(1.08);
       }
-      /* Leaderboard bars sweep out from the left on entry. */
-      .grow-x {
-        transform-origin: left center;
-        animation: grow-x 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
-        animation-delay: 0.25s;
-      }
-      @keyframes grow-x {
-        from {
-          transform: scaleX(0);
-        }
-      }
       /* The landing hero's ambient chart: the price line draws itself in
          once, fills pop as the line reaches them, then only the playhead
          keeps breathing. */
@@ -204,7 +193,6 @@
         .hoverable,
         .page > *,
         .cell-pop,
-        .grow-x,
         .hero-pulse {
           animation: none;
           transition: none;

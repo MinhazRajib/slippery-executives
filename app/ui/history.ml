@@ -18,17 +18,20 @@ module Run_record = struct
         (* fill-weighted across the run's orders; positive is worse *)
     ; completion : float (* filled / ordered, 0 to 1 *)
     ; alpha_text : string
-        (* the exact instructions, so the run can be replayed *)
-    ; half_spread_cents : int
-    ; max_participation : float
-    ; impact_coefficient_cents : int
-    ; pov_rate : float
-    ; is_urgency : float
-    ; engine_name : string (* "bar" | "synthetic" *)
-    ; engine_seed : int
-    ; ran_at : string (* wall-clock label, newest-first tiebreak *)
+         [@sexp.default ""]
+         (* the exact instructions, so the run can be replayed; "" on records
+            saved before configs were stored — Open then errors visibly *)
+    ; half_spread_cents : int [@sexp.default 2]
+    ; max_participation : float [@sexp.default 0.1]
+    ; impact_coefficient_cents : int [@sexp.default 25]
+    ; pov_rate : float [@sexp.default 0.0015]
+    ; is_urgency : float [@sexp.default 1.0]
+    ; engine_name : string [@sexp.default "bar"] (* "bar" | "synthetic" *)
+    ; engine_seed : int [@sexp.default 1]
+    ; ran_at : string [@sexp.default ""]
+    (* wall-clock label, newest-first tiebreak *)
     }
-  [@@deriving sexp, equal]
+  [@@deriving sexp, equal] [@@sexp.allow_extra_fields]
 
   (* Identity for delete/compare: the config plus when it ran. *)
   let id t =
@@ -82,7 +85,7 @@ let save runs =
 ;;
 
 let add run runs =
-  let runs = run :: runs in
+  let runs = List.take (run :: runs) capacity in
   save runs;
   runs
 ;;

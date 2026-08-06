@@ -102,7 +102,7 @@ let my_dashboard_button ~theme ~on_click =
     <button
       class="btn"
       %{style}
-      title="Your dashboard"
+      title="My dashboard"
       on_click=%{fun _ -> on_click}>
       My dashboard
     </button>
@@ -1016,7 +1016,7 @@ let chart
                  (sprintf
                     "YOUR FILL: %s %d shares @ $%.2f (%s, order %d, %s)\n\
                      STOCK THAT MINUTE: opened $%.2f · closed $%.2f\n\
-                     you paid %+.4f vs the open"
+                     %s %+.2f vs the open"
                     (side_str fill.side)
                     (Size.to_int fill.size)
                     fill_price
@@ -1027,6 +1027,9 @@ let chart
                      | Maker -> "maker")
                     bar_open
                     bar_close
+                    (match fill.side with
+                     | Buy -> "you paid"
+                     | Sell -> "you received")
                     (fill_price -. bar_open)))
             ])))
   in
@@ -1920,10 +1923,15 @@ let sim_view
   (* The runner reads the symbols out of the alpha, so the command line is
      the same however many names the file names. *)
   let command =
+    (* Reproduces this run from the CLI, engine included; the fill-model
+       dials are the CLI defaults, so non-default dials are labelled. *)
     sprintf
-      "dune exec bin/main.exe -- <your_alpha.csv> %s %s"
+      "dune exec bin/main.exe -- <your_alpha.csv> %s %s%s"
       (Date.to_string replay.date)
       replay.algo_name
+      (match replay.params.Execlab_session.Params.engine with
+       | Execlab_session.Engine_choice.Bar_model -> ""
+       | Synthetic { seed } -> sprintf " synthetic:%d" seed)
   in
   {%html|
     <div class="page fade" %{page}>
@@ -2366,6 +2374,7 @@ let my_runs_view
   ~on_brand
   ~toggle_theme
   ~runs
+  ~run_error
   ~open_run
   ~rerun
   ~set_baseline
@@ -2389,6 +2398,24 @@ let my_runs_view
   let dim = Styles.s ("color:" ^ theme.Styles.secondary ^ ";") in
   let faint_style =
     Styles.s ("color:" ^ theme.Styles.faint ^ ";font-size:12px;")
+  in
+  let error_banner =
+    match (run_error : Error.t option) with
+    | None -> []
+    | Some error ->
+      [ {%html|
+          <div
+            %{Styles.s
+                ("border:1px solid "
+                 ^ theme.Styles.red
+                 ^ ";border-radius:3px;padding:10px 14px;color:"
+                 ^ theme.Styles.red
+                 ^ ";font-size:12.5px;"
+                 ^ Styles.mono)}>
+            #{Error.to_string_hum error}
+          </div>
+        |}
+      ]
   in
   let params_of (run : History.Run_record.t) =
     match run.algo_name with
@@ -2521,6 +2548,7 @@ let my_runs_view
           ~subtitle:"every simulation you've executed, stored on this \
                      machine"
           ~back:(Some ("← Dashboard", back)) ()}
+      *{error_banner}
       <div %{Styles.card theme "padding-bottom:4px;"}>
         <div
           %{Styles.s
@@ -3234,11 +3262,7 @@ let choose_day_view
                   ~attrs:
                     [ Vdom.Attr.create "points" pts
                     ; Vdom.Attr.create "fill" "none"
-                    ; Vdom.Attr.create
-                        "stroke"
-                        (if Float.( >= ) close open_
-                         then theme.Styles.blue
-                         else theme.Styles.secondary)
+                    ; Vdom.Attr.create "stroke" theme.Styles.blue
                     ; Vdom.Attr.create "stroke-width" "1.4"
                     ]
                   []
@@ -3293,10 +3317,16 @@ let choose_day_view
         <div %{Styles.card theme "padding:20px;"}>
           <div %{title_row}>
             <span %{Styles.s "white-space:nowrap;"}>
-              #{Date.to_string date} ·
-              #{Int.to_string (List.length rows)} symbols trading
+              #{sprintf "%s · %d %s trading"
+                  (Date.to_string date)
+                  (List.length rows)
+                  (if List.length rows = 1 then "symbol" else "symbols")}
             </span>
-            <span %{hint}>your alpha may name any of them — or several</span>
+            <span %{hint}>
+              #{if List.length rows = 1
+                then "your alpha trades this symbol"
+                else "your alpha may name any of them — or several"}
+            </span>
           </div>
           <div %{head}>
             <span>symbol</span>
@@ -4068,6 +4098,24 @@ let setup_view
              ^ ";font-size:11.5px;font-weight:600;"
              ^ Styles.mono)
         in
+        (* Parsing is not enough: every symbol the alpha names must have a
+           bundled session on this date, or the run will fail at start. *)
+        let missing =
+          List.map instructions ~f:(fun instruction ->
+            instruction.Alpha_instruction.symbol)
+          |> List.dedup_and_sort ~compare:Symbol.compare
+          |> List.filter ~f:(fun symbol ->
+            not (List.mem (Dataset.dates_for symbol) date ~equal:Date.equal))
+        in
+        let not_ready =
+          Styles.s
+            ("border:1px solid "
+             ^ theme.Styles.red
+             ^ ";border-radius:3px;padding:8px 12px;margin-top:10px;color:"
+             ^ theme.Styles.red
+             ^ ";font-size:11.5px;font-weight:600;"
+             ^ Styles.mono)
+        in
         [ {%html|
             <div %{line}>
               #{sprintf "%s · %d instructions · %s shares" names
@@ -4075,11 +4123,22 @@ let setup_view
                   (Int.to_string_hum ~delimiter:','  shares)}
             </div>
           |}
-        ; {%html|
-            <div %{ready}>
-              ✓ ready — validated against session #{Date.to_string date}
-            </div>
-          |}
+        ; (match missing with
+           | [] ->
+             {%html|
+               <div %{ready}>
+                 ✓ ready — validated against session #{Date.to_string date}
+               </div>
+             |}
+           | missing ->
+             {%html|
+               <div %{not_ready}>
+                 #{sprintf "✗ no bundled data on %s for: %s"
+                     (Date.to_string date)
+                     (String.concat ~sep:" "
+                        (List.map missing ~f:Symbol.to_string))}
+               </div>
+             |})
         ]
     in
     {%html|
@@ -5364,8 +5423,10 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let runs, set_runs = Bonsai.state (History.load ()) graph in
   (* The run that was on top of the notebook when this one started — the
      baseline the results screen diffs against. *)
-  let previous_run, set_previous_run =
-    Bonsai.state (None : History.Run_record.t option) graph
+  (* [`Auto r] follows the freshest run; [`Pinned r] was chosen in My runs
+     and survives new runs until deleted or unpinned. *)
+  let baseline, set_baseline =
+    Bonsai.state (`Auto (None : History.Run_record.t option)) graph
   in
   let confirm_clear, set_confirm_clear = Bonsai.state false graph in
   let replay, set_replay = Bonsai.state (None : Replay.t option) graph in
@@ -5391,7 +5452,13 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   (* While panning: the cursor's plot ratio at mousedown and the window start
      it was anchored to. *)
   let drag, set_drag = Bonsai.state (None : (float * int) option) graph in
-  let is_dark, set_is_dark = Bonsai.state false graph in
+  let is_dark, set_is_dark =
+    Bonsai.state
+      (match Storage.get Storage.theme_key with
+       | Some "dark" -> true
+       | Some (_ : string) | None -> false)
+      graph
+  in
   let advance =
     let%arr playing and replay and set_minute in
     match replay with
@@ -5425,7 +5492,8 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
     and set_screen
     and set_minute
     and set_playing
-    and set_previous_run in
+    and baseline
+    and set_baseline in
     match selection, Replay.parse_params param_text with
     | None, _ -> set_run_error (Some (Error.of_string "choose a day first"))
     | Some (_ : Date.t), Error error -> set_run_error (Some error)
@@ -5442,9 +5510,15 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
          let%bind.Effect () = set_replay (Some r) in
          let%bind.Effect () = set_minute (fun (_ : int) -> 0) in
          let%bind.Effect () = set_playing true in
-         (* The freshest previous run becomes the comparison baseline unless
-            the user pinned one from My runs. *)
-         let%bind.Effect () = set_previous_run (List.hd runs) in
+         (* The freshest previous run becomes the comparison baseline —
+            unless one was pinned in My runs, which a new run never
+            overrides. *)
+         let%bind.Effect () =
+           match baseline with
+           | `Pinned (_ : History.Run_record.t) -> Effect.Ignore
+           | `Auto (_ : History.Run_record.t option) ->
+             set_baseline (`Auto (List.hd runs))
+         in
          let%bind.Effect () = set_runs (History.add (run_record r) runs) in
          set_screen Screen.Sim)
   in
@@ -5456,7 +5530,13 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   (* Local run actions: everything runs off the history record, which carries
      the complete config. *)
   let open_run =
-    let%arr set_replay and set_run_error and set_minute and set_screen in
+    let%arr set_replay
+    and set_run_error
+    and set_minute
+    and set_selection
+    and set_alpha_text
+    and set_algo
+    and set_screen in
     fun (record : History.Run_record.t) ->
       let%bind.Effect result =
         Effect.of_sync_fun (fun () -> replay_of_record record) ()
@@ -5464,6 +5544,12 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
       match result with
       | Error error -> set_run_error (Some error)
       | Ok r ->
+        (* Restore the run's whole context, not just its results: Results
+           renders only when a day is selected, and Replay/Setup navigation
+           from there must agree with what is on screen. *)
+        let%bind.Effect () = set_selection (Some record.date) in
+        let%bind.Effect () = set_alpha_text record.alpha_text in
+        let%bind.Effect () = set_algo record.algo_name in
         let%bind.Effect () = set_replay (Some r) in
         let%bind.Effect () =
           set_minute (fun (_ : int) -> Replay.last_minute r)
@@ -5473,23 +5559,59 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   (* Rerun: load the run's day and instructions into the wizard and land on
      Setup, so changing the algorithm is one click away. *)
   let rerun_run =
-    let%arr set_selection and set_alpha_text and set_algo and set_screen in
+    let%arr set_selection
+    and set_alpha_text
+    and set_algo
+    and set_param_text
+    and set_screen in
     fun (record : History.Run_record.t) ->
       let%bind.Effect () = set_selection (Some record.date) in
       let%bind.Effect () = set_alpha_text record.alpha_text in
       let%bind.Effect () = set_algo record.algo_name in
+      (* The run's own dials come back with it; a rerun that silently
+         reverted to defaults would not be a rerun. *)
+      let%bind.Effect () =
+        set_param_text
+          { Replay.Param_text.half_spread =
+              sprintf "%.2f" (Float.of_int record.half_spread_cents /. 100.)
+          ; participation = sprintf "%.2f" record.max_participation
+          ; impact =
+              sprintf
+                "%.2f"
+                (Float.of_int record.impact_coefficient_cents /. 100.)
+          ; pov_rate = sprintf "%.4f" record.pov_rate
+          ; urgency = sprintf "%.1f" record.is_urgency
+          ; engine = record.engine_name
+          ; seed = Int.to_string record.engine_seed
+          }
+      in
       set_screen Screen.Setup
   in
   let set_baseline_run =
-    let%arr set_previous_run and set_screen in
+    let%arr set_baseline and set_screen in
     fun (record : History.Run_record.t) ->
-      let%bind.Effect () = set_previous_run (Some record) in
-      set_screen Screen.Dashboard
+      let%bind.Effect () = set_baseline (`Pinned record) in
+      set_screen Screen.My_runs
   in
   let delete_run =
-    let%arr runs and set_runs in
+    let%arr runs and set_runs and baseline and set_baseline in
     fun (record : History.Run_record.t) ->
-      set_runs (History.remove ~id:(History.Run_record.id record) runs)
+      let id = History.Run_record.id record in
+      (* A deleted run cannot stay the comparison baseline. *)
+      let%bind.Effect () =
+        match baseline with
+        | `Pinned pinned when String.equal (History.Run_record.id pinned) id
+          ->
+          set_baseline (`Auto None)
+        | `Auto (Some auto) when String.equal (History.Run_record.id auto) id
+          ->
+          set_baseline (`Auto None)
+        | `Pinned (_ : History.Run_record.t)
+        | `Auto (Some (_ : History.Run_record.t))
+        | `Auto None ->
+          Effect.Ignore
+      in
+      set_runs (History.remove ~id runs)
   in
   let clear_history =
     let%arr confirm_clear and set_confirm_clear and set_runs in
@@ -5513,7 +5635,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and set_param_text
   and run_error
   and runs
-  and previous_run
+  and baseline
   and replay
   and minute
   and playing
@@ -5543,6 +5665,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   and start
   and restart
   and confirm_clear
+  and set_confirm_clear
   and open_run
   and rerun_run
   and set_baseline_run
@@ -5552,9 +5675,18 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
   let toggle_theme =
     let next = if is_dark then Styles.paper else Styles.dark in
     let%bind.Effect () = set_is_dark (not is_dark) in
+    let%bind.Effect () =
+      Effect.of_sync_fun
+        (fun () ->
+          Storage.set Storage.theme_key (if is_dark then "light" else "dark"))
+        ()
+    in
     set_page_background next.Styles.page_bg
   in
-  let goto s = set_screen s in
+  let goto s =
+    (* Navigating away disarms any pending destructive confirmation. *)
+    Effect.Many [ set_confirm_clear false; set_screen s ]
+  in
   let select date = set_selection (Some date) in
   let on_brand = goto Screen.Landing in
   let open_dashboard = goto Screen.Dashboard in
@@ -5601,6 +5733,7 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~profile
         ~on_brand
         ~runs
+        ~run_error
         ~open_run
         ~rerun:rerun_run
         ~set_baseline:set_baseline_run
@@ -5682,7 +5815,10 @@ let app (local_ graph) : Vdom.Node.t Bonsai.t =
         ~theme
         ~is_dark
         ~open_help:(set_show_help true)
-        ~previous_run
+        ~previous_run:
+          (match baseline with
+           | `Pinned record -> Some record
+           | `Auto auto -> auto)
         ~profile
         ~on_brand
         ~to_sim:(goto Screen.Sim)

@@ -1,7 +1,7 @@
 (* Tiny localStorage wrapper: the theme choice and the run history survive
-   page reloads. Values are plain strings; callers own the encoding (Sexp for
-   structured data). Everything degrades silently when storage is unavailable
-   (private browsing, disabled). *)
+   page reloads — the lab's only persistence. Values are plain strings;
+   callers own the encoding (Sexp for structured data). Everything degrades
+   silently when storage is unavailable (private browsing, disabled). *)
 
 open! Core
 open Js_of_ocaml
