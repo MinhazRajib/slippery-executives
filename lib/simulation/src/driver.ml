@@ -148,7 +148,10 @@ let run
                  can fill between the decision and the submission and leave
                  less room than the algorithm counted on — or none. Clamping
                  to what the parent can still take is the same race the
-                 cancel path below resolves: the market got there first. *)
+                 cancel path below resolves: the market got there first. The
+                 rewritten request skips {!Child_order.Request.create}, whose
+                 only check is that the quantity is positive — which the
+                 guard below establishes. *)
               let room =
                 Size.to_int
                   (Parent_order.remaining

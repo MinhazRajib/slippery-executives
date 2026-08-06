@@ -41,8 +41,10 @@ let%expect_test "run config round-trips through its sexp" =
 ;;
 
 (* A run saved before an alpha could name more than one symbol carries
-   [(symbol TSLA)]. It must still read back — a stored notebook and its
-   leaderboard rows outlive the field that wrote them. *)
+   [(symbol TSLA)], and one saved before Adaptive existed carries no
+   [patience] at all. Both must still read back — a stored notebook and its
+   leaderboard rows outlive the fields that wrote them, and {!Store} drops a
+   record it cannot parse rather than reporting it. *)
 let%expect_test "a config written with the old single [symbol] field reads \
                  back"
   =
@@ -57,4 +59,20 @@ let%expect_test "a config written with the old single [symbol] field reads \
   let config = Run_config.t_of_sexp legacy in
   printf !"symbols: %{sexp: Symbol.t list}\n" config.symbols;
   [%expect {| symbols: (TSLA) |}]
+;;
+
+(* The shape a run had on disk before Adaptive added its knob. Reading it
+   must not depend on that knob having existed. *)
+let%expect_test "a config saved before a later field was added still reads" =
+  let stored =
+    Sexp.of_string
+      {|((player qasim) (symbols (TSLA)) (date 2026-07-09)
+         (alpha_text "10:00:00,TSLA,BUY,5000,11:00:00\n") (algo_name twap)
+         (half_spread_cents 2) (max_participation 0.1)
+         (impact_coefficient_cents 25) (pov_rate 0.0015) (is_urgency 2)
+         (engine_name bar) (engine_seed 0))|}
+  in
+  let config = Run_config.t_of_sexp stored in
+  printf "algo: %s, patience: %.2f\n" config.algo_name config.patience;
+  [%expect {| algo: twap, patience: 0.50 |}]
 ;;

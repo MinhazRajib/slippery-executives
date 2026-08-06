@@ -3980,6 +3980,18 @@ let algorithm_cards =
   ]
 ;;
 
+(* Spelled out for a display heading; the numeral is the fallback rather than
+   a table of every English number, since this counts a list that grows one
+   entry at a time. *)
+let in_words = function
+  | 4 -> "Four"
+  | 5 -> "Five"
+  | 6 -> "Six"
+  | 7 -> "Seven"
+  | 8 -> "Eight"
+  | (n : int) -> Int.to_string n
+;;
+
 let algorithm_detail ~theme ~algo =
   match
     List.find algorithm_cards ~f:(fun (key, _, _, _, _, _) ->
@@ -4411,9 +4423,17 @@ let setup_view
               ~value:param_text.Replay.Param_text.urgency
               ~set:(update (fun p v ->
                 { p with Replay.Param_text.urgency = v })) ()}
+          %{param_field ~active:(String.equal algo "adaptive")
+              ~note:"Adaptive only"
+              ~label:"patience"
+              ~value:param_text.Replay.Param_text.patience
+              ~set:(update (fun p v ->
+                { p with Replay.Param_text.patience = v })) ()}
         </div>
         <div %{note}>
-          TWAP and VWAP follow their own schedules and ignore both dials.
+          TWAP and VWAP follow their own schedules and ignore every dial
+          here. Patience runs 0 to 1: at 0 Adaptive never rests, which is
+          TWAP exactly.
         </div>
       </div>
     |}
@@ -5331,7 +5351,8 @@ let landing_algo_table ~theme =
   {%html|
     <div>
       <div %{title_row}>
-        <span %{title_style}>Five ways to work an order</span>
+        <span %{title_style}>#{in_words (List.length algorithm_cards)} ways
+          to work an order</span>
         <span %{aside}>same instructions · same day · different execution</span>
       </div>
       <div %{Styles.s "overflow-x:auto;"}>

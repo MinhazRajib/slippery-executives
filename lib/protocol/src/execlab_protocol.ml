@@ -19,21 +19,45 @@ module Run_config = struct
     }
   [@@deriving sexp, equal]
 
-  (* Runs saved before an alpha could name more than one symbol wrote
-     [(symbol TSLA)]. Rewrite that to today's field rather than dropping the
-     record: a stored notebook and its leaderboard rows outlive the shape of
-     the config that wrote them, and a silently skipped run reads as a lost
-     one. *)
+  (* Fields that arrived after runs were already on disk, with the value to
+     read when a stored config predates them. A run graded before a knob
+     existed cannot have used it — every one of these belongs to an algorithm
+     that did not exist yet — so any value reproduces it; these are the
+     defaults, kept here rather than reaching into {!Execlab_session}, which
+     is downstream of this module. *)
+  let defaults_for_older_configs = [ "patience", Sexp.Atom "0.5" ]
+
+  (* A stored notebook and its leaderboard rows outlive the shape of the
+     config that wrote them, and {!Store} reads them with [Option.try_with]:
+     a record this reader rejects is not an error the user sees, it is a run
+     that quietly disappears. So renamed fields are rewritten and missing
+     ones are filled, rather than either being left to fail. *)
   let t_of_sexp sexp =
     let sexp =
       match sexp with
       | Sexp.Atom (_ : string) -> sexp
       | Sexp.List fields ->
-        Sexp.List
-          (List.map fields ~f:(function
+        (* [symbol] became [symbols] when one alpha could name several. *)
+        let fields =
+          List.map fields ~f:(function
             | Sexp.List [ Sexp.Atom "symbol"; symbol ] ->
               Sexp.List [ Sexp.Atom "symbols"; Sexp.List [ symbol ] ]
-            | field -> field))
+            | field -> field)
+        in
+        let present name =
+          List.exists fields ~f:(function
+            | Sexp.List (Sexp.Atom key :: (_ : Sexp.t list)) ->
+              String.equal key name
+            | Sexp.Atom (_ : string) | List (_ : Sexp.t list) -> false)
+        in
+        Sexp.List
+          (fields
+           @ List.filter_map
+               defaults_for_older_configs
+               ~f:(fun (name, default) ->
+                 if present name
+                 then None
+                 else Some (Sexp.List [ Sexp.Atom name; default ])))
     in
     t_of_sexp sexp
   ;;
