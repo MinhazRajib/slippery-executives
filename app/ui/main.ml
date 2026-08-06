@@ -3604,18 +3604,6 @@ let alpha_view
          ^ theme.Styles.faint
          ^ ";font-size:11.5px;line-height:1.6;margin-top:10px;")
     in
-    let note_box =
-      Styles.s
-        ("border:1px solid "
-         ^ theme.Styles.chip_border
-         ^ ";border-radius:3px;padding:10px 12px;margin-top:12px;color:"
-         ^ theme.Styles.secondary
-         ^ ";font-size:11.5px;line-height:1.6;")
-    in
-    let note_term =
-      Styles.s
-        ("color:" ^ theme.Styles.brown ^ ";font-weight:700;" ^ Styles.mono)
-    in
     {%html|
       <div %{Styles.card theme "padding:20px;"}>
         %{head}
@@ -3623,12 +3611,6 @@ let alpha_view
         <div %{explain}>
           Each instruction is a parent order: arrive at a time, finish by a
           deadline. Malformed rows are flagged with their line number.
-        </div>
-        <div %{note_box}>
-          <span %{note_term}>note</span>
-          — an alpha names its own symbols per line, so one file may trade
-          any name this date has a session for. Each symbol gets its own
-          book and benchmarks; the chart grows a tab per name.
         </div>
       </div>
     |}
